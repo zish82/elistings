@@ -1,0 +1,107 @@
+@page "/bulk-extract"
+@using Client.Services
+@inject ListingService ListingService
+@inject NavigationManager Navigation
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3>Bulk Product Extraction</h3>
+        <a href="/" class="btn btn-outline-secondary">Back to Dashboard</a>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Extract Category Products</h5>
+            <p class="card-text text-muted">
+                Enter a Safelincs category URL (e.g., <em>https://www.safelincs.co.uk/heat-alarms/</em>) to automatically 
+                find and stage all products as local drafts.
+            </p>
+            
+            <div class="mb-4">
+                <div class="input-group input-group-lg">
+                    <span class="input-group-text bg-light text-primary"><i class="bi bi-link-45deg"></i></span>
+                    <input type="text" class="form-control" @bind="categoryUrl" placeholder="https://www.safelincs.co.uk/category-name/" />
+                    <button class="btn btn-primary px-4" type="button" @onclick="HandleBulkExtract" disabled="@isProcessing">
+                        @if (isProcessing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span>Extracting Category...</span>
+                        }
+                        else
+                        {
+                            <span><i class="bi bi-box-arrow-in-down me-2"></i>Bulk Extract</span>
+                        }
+                    </button>
+                </div>
+                <div class="form-text mt-2">
+                    <i class="bi bi-info-circle me-1"></i> This process may take a minute depending on the number of products.
+                </div>
+            </div>
+
+            @if (resultCount.HasValue)
+            {
+                <div class="alert alert-success d-flex align-items-center mb-0">
+                    <i class="bi bi-check-circle-fill fs-4 me-3"></i>
+                    <div>
+                        <strong>Success!</strong> Found and created <strong>@resultCount.Value</strong> new product drafts in your system.
+                        <div class="mt-2 text-decoration-underline" style="cursor: pointer;" @onclick='() => Navigation.NavigateTo("/")'>
+                            View them in your dashboard &rarr;
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger d-flex align-items-center mb-0">
+                    <i class="bi bi-exclamation-triangle-fill fs-4 me-3"></i>
+                    <div>
+                        <strong>Error:</strong> @errorMessage
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="card bg-light border-0">
+        <div class="card-body">
+            <h6 class="fw-bold mb-3"><i class="bi bi-lightbulb me-2 text-warning"></i>How it works</h6>
+            <ol class="small text-muted mb-0">
+                <li>The system visits the category page and identifies all unique product links.</li>
+                <li>Each product is then fully "scraped" for Title, Description, Price, and Images.</li>
+                <li>Everything is saved as a <strong>Draft</strong> in your database.</li>
+                <li>You can then review, edit, and bulk-publish them to eBay from the Dashboard.</li>
+            </ol>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string categoryUrl = "";
+    private bool isProcessing = false;
+    private int? resultCount;
+    private string? errorMessage;
+
+    private async Task HandleBulkExtract()
+    {
+        if (string.IsNullOrWhiteSpace(categoryUrl)) return;
+
+        isProcessing = true;
+        resultCount = null;
+        errorMessage = null;
+
+        try
+        {
+            resultCount = await ListingService.BulkExtractAsync(categoryUrl);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Failed to process category. Ensure the URL is correct and the site is accessible.";
+            Console.WriteLine(ex.Message);
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+}

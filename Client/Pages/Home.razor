@@ -1,0 +1,358 @@
+﻿@page "/"
+@using Shared
+@using Client.Services
+@inject ListingService ListingService
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>Dashboard</PageTitle>
+
+<h1>My Listings</h1>
+
+<div class="mb-3 d-flex justify-content-between align-items-center bg-light p-3 rounded border">
+    <div>
+        <a href="/create-listing" class="btn btn-primary">Create New Listing</a>
+        <a href="/bulk-extract" class="btn btn-outline-primary ms-2"><i class="bi bi-box-arrow-in-down me-1"></i>Bulk Extract Category</a>
+        <button class="btn btn-outline-info ms-2" @onclick="ConnectEbay">Connect Real eBay Account</button>
+    </div>
+    <div class="d-flex align-items-center">
+        <input type="password" class="form-control form-control-sm me-2" @bind="manualToken" placeholder="Paste eBay User Token..." style="width: 250px;" />
+        <button class="btn btn-sm btn-secondary" @onclick="SaveManualToken" disabled="@isSavingToken">Save Token</button>
+    </div>
+</div>
+@if (!string.IsNullOrEmpty(tokenMessage))
+{
+    <div class="alert @tokenMessageCss py-2 small">@tokenMessage</div>
+}
+
+@if (isEbayConnected)
+{
+    <div class="alert alert-success py-2 small">
+        eBay account connected.
+        @if (ebayTokenExpiryUtc.HasValue)
+        {
+            <span class="ms-2">Token expires: @ebayTokenExpiryUtc.Value.ToLocalTime().ToString("g")</span>
+        }
+    </div>
+}
+else
+{
+    <div class="alert alert-warning py-2 small">No eBay account connected yet. Click "Connect Real eBay Account".</div>
+}
+
+@if (listings == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    @if (selectedIds.Any())
+    {
+        <div class="alert alert-primary d-flex justify-content-between align-items-center mb-3">
+            <div><strong>@selectedIds.Count</strong> items selected</div>
+            <div>
+                <button class="btn btn-primary btn-sm" @onclick="BulkPublish" disabled="@isBulkPublishing">
+                    @if (isBulkPublishing)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        <span>Publishing...</span>
+                    }
+                    else
+                    {
+                        <span><i class="bi bi-cloud-upload me-1"></i>Bulk Publish to eBay</span>
+                    }
+                </button>
+                <button class="btn btn-danger btn-sm ms-2" @onclick="BulkDelete" disabled="@isBulkDeleting">
+                    @if (isBulkDeleting)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        <span>Deleting...</span>
+                    }
+                    else
+                    {
+                        <span><i class="bi bi-trash me-1"></i>Bulk Delete</span>
+                    }
+                </button>
+            </div>
+        </div>
+    }
+    
+    @if (!string.IsNullOrEmpty(bulkPublishStatus))
+    {
+        <div class="alert alert-info alert-dismissible fade show" role="alert">
+            @bulkPublishStatus
+            <button type="button" class="btn-close" @onclick='() => bulkPublishStatus = ""'></button>
+        </div>
+    }
+
+    <table class="table align-middle">
+        <thead>
+            <tr>
+                <th style="width: 40px;">
+                    <input type="checkbox" class="form-check-input" @onchange="SelectAll" checked="@(listings.Any() && selectedIds.Count == listings.Count)" />
+                </th>
+                <th>Title</th>
+                <th>Price</th>
+                <th>Status</th>
+                <th>eBay Item ID</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var listing in listings)
+            {
+                <tr>
+                    <td>
+                        <input type="checkbox" class="form-check-input" 
+                               checked="@selectedIds.Contains(listing.Id)" 
+                               @onchange="() => ToggleSelection(listing.Id)" />
+                    </td>
+                    <td><div class="fw-bold">@listing.Title</div></td>
+                    <td>£@listing.Price</td>
+                    <td>
+                        <span class="badge @(listing.Status == "Published" ? "bg-success" : "bg-warning text-dark")">
+                            @listing.Status
+                        </span>
+                    </td>
+                    <td><span class="font-monospace small">@listing.EbayItemId</span></td>
+                    <td class="text-end">
+                        <div class="btn-group" role="group">
+                            <a href="/edit-listing/@listing.Id" class="btn btn-sm btn-outline-secondary">
+                                Edit
+                            </a>
+                            <button class="btn btn-sm @(listing.Status == "Published" ? "btn-outline-success" : "btn-outline-primary")" 
+                                    @onclick="() => Publish(listing.Id)">
+                                @(listing.Status == "Published" ? "Re-sync" : "Publish")
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<ListingDto>? listings;
+
+    protected override async Task OnInitializedAsync()
+    {
+        HandleOAuthCallbackMessage();
+        await LoadEbayStatus();
+        await LoadListings();
+    }
+
+    private bool isEbayConnected;
+    private DateTime? ebayTokenExpiryUtc;
+
+    private async Task LoadEbayStatus()
+    {
+        try
+        {
+            var status = await ListingService.GetEbayAuthStatusAsync();
+            isEbayConnected = status.Connected;
+            ebayTokenExpiryUtc = status.ExpiresAtUtc;
+        }
+        catch
+        {
+            isEbayConnected = false;
+            ebayTokenExpiryUtc = null;
+        }
+    }
+
+    private void HandleOAuthCallbackMessage()
+    {
+        var currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var status = GetQueryParam(currentUri.Query, "ebay");
+        if (string.IsNullOrWhiteSpace(status)) return;
+
+        var message = GetQueryParam(currentUri.Query, "message") ?? string.Empty;
+
+        if (string.Equals(status, "connected", StringComparison.OrdinalIgnoreCase))
+        {
+            tokenMessageCss = "alert-success";
+            tokenMessage = "eBay account connected successfully. You can now publish listings.";
+        }
+        else if (string.Equals(status, "error", StringComparison.OrdinalIgnoreCase))
+        {
+            tokenMessageCss = "alert-danger";
+            tokenMessage = string.IsNullOrWhiteSpace(message) ? "eBay account connection failed." : $"eBay connection failed: {message}";
+        }
+
+        // Remove callback query params from address bar after reading them.
+        Navigation.NavigateTo(currentUri.GetLeftPart(UriPartial.Path), replace: true);
+    }
+
+    private static string? GetQueryParam(string query, string key)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return null;
+        var trimmed = query.StartsWith("?") ? query.Substring(1) : query;
+        foreach (var part in trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var idx = part.IndexOf('=');
+            if (idx <= 0) continue;
+            var k = Uri.UnescapeDataString(part.Substring(0, idx));
+            if (!string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) continue;
+            return Uri.UnescapeDataString(part.Substring(idx + 1));
+        }
+        return null;
+    }
+
+    private async Task LoadListings()
+    {
+        try 
+        {
+            listings = await ListingService.GetListingsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading listings: {ex.Message}");
+            listings = new List<ListingDto>();
+        }
+    }
+
+    private async Task Publish(int id)
+    {
+        try
+        {
+            await ListingService.PublishListingAsync(id);
+            await LoadListings();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error publishing listing: {ex.Message}");
+        }
+    }
+
+    private HashSet<int> selectedIds = new();
+    private bool isBulkPublishing = false;
+    private bool isBulkDeleting = false;
+    private string bulkPublishStatus = "";
+    private string bulkDeleteStatus = "";
+
+    private void ToggleSelection(int id)
+    {
+        if (selectedIds.Contains(id)) selectedIds.Remove(id);
+        else selectedIds.Add(id);
+    }
+
+    private void SelectAll(ChangeEventArgs e)
+    {
+        if (listings == null) return;
+        bool isChecked = (bool)(e.Value ?? false);
+        if (isChecked) selectedIds = new HashSet<int>(listings.Select(l => l.Id));
+        else selectedIds.Clear();
+    }
+
+    private async Task BulkPublish()
+    {
+        if (!selectedIds.Any()) return;
+        isBulkPublishing = true;
+        bulkPublishStatus = "";
+        
+        
+        // Take a copy to avoid concurrent modification issues during iteration if needed
+        var idsToProcess = selectedIds.ToList();
+        
+        try
+        {
+            var (published, failedPub, errors) = await ListingService.BulkPublishAsync(idsToProcess);
+            selectedIds.Clear();
+            bulkPublishStatus = $"Bulk Publish complete. Success: {published}, Failed: {failedPub}";
+            if (errors.Any())
+            {
+                Console.WriteLine("Bulk publish errors:\n" + string.Join("\n", errors));
+            }
+        }
+        catch (Exception ex)
+        {
+            bulkPublishStatus = $"Bulk publish failed: {ex.Message}";
+        }
+        finally
+        {
+            isBulkPublishing = false;
+            await LoadListings();
+        }
+    }
+
+    private async Task BulkDelete()
+    {
+        if (!selectedIds.Any()) return;
+
+        // First confirmation
+        var confirm = await JS.InvokeAsync<bool>("confirm", "Are you sure you want to delete the selected listings?");
+        if (!confirm) return;
+
+        // If any selected are published, show a stronger warning
+        var anyPublished = listings?.Where(l => selectedIds.Contains(l.Id) && string.Equals(l.Status, "Published", StringComparison.OrdinalIgnoreCase)).Any() ?? false;
+        if (anyPublished)
+        {
+            var confirmPublished = await JS.InvokeAsync<bool>("confirm", "WARNING: Some selected listings are Published. Published listings will be marked as Deleted while Drafts will be permanently removed. Are you sure?");
+            if (!confirmPublished) return;
+        }
+
+        isBulkDeleting = true;
+        bulkDeleteStatus = "";
+
+        try
+        {
+            var result = await ListingService.BulkDeleteAsync(selectedIds.ToList());
+            bulkDeleteStatus = $"Bulk Delete complete. Marked: {result.Marked}, Deleted: {result.Deleted}";
+            selectedIds.Clear();
+            await LoadListings();
+        }
+        catch (Exception ex)
+        {
+            bulkDeleteStatus = $"Bulk Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            isBulkDeleting = false;
+        }
+    }
+
+    private string? manualToken;
+    private bool isSavingToken = false;
+    private string? tokenMessage;
+    private string tokenMessageCss = "alert-info";
+
+    private async Task ConnectEbay()
+    {
+        tokenMessage = null;
+        try
+        {
+            var loginUrl = await ListingService.GetEbayLoginUrlAsync("/");
+            Navigation.NavigateTo(loginUrl, forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            tokenMessageCss = "alert-danger";
+            tokenMessage = $"Could not start eBay login: {ex.Message}";
+        }
+    }
+
+    private async Task SaveManualToken()
+    {
+        if (string.IsNullOrWhiteSpace(manualToken)) return;
+        isSavingToken = true;
+        tokenMessage = null;
+        try
+        {
+            await ListingService.SetManualTokenAsync(manualToken);
+            await LoadEbayStatus();
+            tokenMessageCss = "alert-success";
+            tokenMessage = "Token saved successfully! You can now create and publish listings.";
+            manualToken = "";
+        }
+        catch (Exception ex)
+        {
+            tokenMessageCss = "alert-danger";
+            tokenMessage = $"Error saving token: {ex.Message}";
+        }
+        finally
+        {
+            isSavingToken = false;
+        }
+    }
+}
+

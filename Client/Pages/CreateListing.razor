@@ -1,0 +1,763 @@
+@page "/create-listing"
+@page "/edit-listing/{Id:int}"
+@using Shared
+@using Client.Services
+@inject ListingService ListingService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3>@(Id.HasValue ? "Edit Listing" : "Create New Listing")</h3>
+        <a href="/" class="btn btn-outline-secondary">Back to Dashboard</a>
+    </div>
+
+    <!-- URL Extraction UI -->
+    <div class="card mb-4 bg-light">
+        <div class="card-body">
+            <h5 class="card-title">Quick Fill from URL</h5>
+            <p class="card-text small text-muted">Paste a product URL to automatically extract Title and Description.</p>
+            <div class="input-group">
+                <input type="text" class="form-control" @bind="extractionUrl" placeholder="https://example.com/product..." />
+                <button class="btn btn-primary" type="button" @onclick="HandleExtract" disabled="@isExtracting">
+                    @if (isExtracting)
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                        <span class="ms-1">Fetching...</span>
+                    }
+                    else
+                    {
+                        <span>Extract Details</span>
+                    }
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(listing.SourceUrl))
+            {
+                <div class="small mt-2">Listing URL: <a href="@listing.SourceUrl" target="_blank">@listing.SourceUrl</a></div>
+            }
+            @if (!string.IsNullOrEmpty(extractionError))
+            {
+                <div class="text-danger small mt-2">@extractionError</div>
+            }
+        </div>
+    </div>
+
+    <EditForm Model="@listing" OnValidSubmit="HandleValidSubmit" class="row g-3">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="col-md-12">
+            <label for="title" class="form-label">Product Title</label>
+            <div class="input-group">
+                <InputText id="title" class="form-control" @bind-Value="listing.Title" required />
+                <button class="btn btn-outline-info" type="button" @onclick="HandleSuggestCategories" disabled="@(isSuggesting || string.IsNullOrWhiteSpace(listing.Title))">
+                    @if (isSuggesting)
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                    }
+                    else
+                    {
+                        <span>✨ Suggest Category</span>
+                    }
+                </button>
+            </div>
+            @if (suggestions.Any())
+            {
+                <div class="mt-2 p-2 border rounded bg-white shadow-sm">
+                    <div class="small text-muted mb-2">Select a suggested category:</div>
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var s in suggestions)
+                        {
+                            <button type="button" class="btn btn-sm btn-outline-secondary text-start" @onclick="() => SelectSuggestion(s)">
+                                <strong>@s.CategoryId</strong> - @s.CategoryName
+                                <br/><small class="text-muted">@string.Join(" > ", s.CategoryPath)</small>
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="col-md-4">
+            <label for="price" class="form-label">Selling Price (Inc VAT and Postage)</label>
+            <InputNumber id="price" class="form-control" @bind-Value="listing.Price" step="0.01" />
+            @if (extractedIncVat > 0 || extractedExVat > 0)
+            {
+                <div class="small mt-1 text-muted">
+                    @if (extractedIncVat > 0) { <span>Inc VAT: £@extractedIncVat</span> }
+                    @if (extractedExVat > 0) { <span class="d-block">Ex VAT: £@extractedExVat</span> }
+                </div>
+            }
+            <ValidationMessage For="@(() => listing.Price)" />
+        </div>
+
+        <div class="col-md-8">
+            <label for="category" class="form-label">eBay Category ID</label>
+            <InputText id="category" class="form-control" @bind-Value="listing.CategoryId" placeholder="e.g. 57013" />
+            <div class="small mt-1">
+                <span class="text-muted">Need to find an ID? </span>
+                <a href="https://www.ebay.co.uk/n/all-categories" target="_blank" class="text-decoration-none small">eBay UK Category Tree</a>
+            </div>
+            
+            <div class="mt-2 p-2 bg-light border rounded small">
+                <strong>Common Fire Safety IDs (eBay UK):</strong>
+                <ul class="mb-0 mt-1 list-unstyled">
+                    <li>🚒 <strong>57013</strong> - Fire Extinguishers (Preferred)</li>
+                    <li>💨 <strong>185116</strong> - Smoke Alarms</li>
+                    <li>⚠️ <strong>103284</strong> - CO Alarms</li>
+                    <li>🔥 <strong>185114</strong> - Fire Blankets</li>
+                    <li>📦 <strong>46538</strong> - Other Fire Protection (Catch-all)</li>
+                </ul>
+            </div>
+            
+            @if (!string.IsNullOrEmpty(extractedCategory))
+            {
+                <div class="mt-2 small text-success">
+                    <strong>Extracted Keyword:</strong> @extractedCategory
+                </div>
+            }
+        </div>
+
+        <div class="col-md-4">
+            <label for="brand" class="form-label">Brand</label>
+            <InputText id="brand" class="form-control" @bind-Value="listing.Brand" placeholder="e.g. Generic" />
+        </div>
+
+        <div class="col-md-4">
+            <label for="sourcePrice" class="form-label">Source Price</label>
+            <InputNumber id="sourcePrice" class="form-control" @bind-Value="listing.SourcePrice" step="0.01" />
+            <div class="small text-muted">Price from Source (used for calculations).</div>
+        </div>
+
+        <div class="col-md-4">
+            <label for="sourceCode" class="form-label">Source Product Code</label>
+            <InputText id="sourceCode" class="form-control" @bind-Value="listing.SourceProductCode" />
+        </div>
+
+        <div class="col-md-4">
+            <label for="type" class="form-label">Type (eBay Aspect)</label>
+            <InputText id="type" class="form-control" @bind-Value="listing.Type" placeholder="e.g. Fire Extinguisher" />
+        </div>
+
+        <div class="col-md-4">
+            <label for="colour" class="form-label">Colour (eBay Aspect)</label>
+            <InputText id="colour" class="form-control" @bind-Value="listing.Colour" placeholder="e.g. Red, Black" />
+        </div>
+
+        <div class="col-md-12">
+            <label class="form-label">Images</label>
+            <div class="d-flex flex-wrap gap-2 mb-3 p-3 border rounded bg-light" style="min-height: 100px;">
+                @if (listing.ImageUrls.Count == 0)
+                {
+                    <span class="text-muted small">No images added yet. Extract from URL or add manually.</span>
+                }
+                @foreach (var imageUrl in listing.ImageUrls)
+                {
+                    <div class="position-relative">
+                        <img src="@imageUrl" class="rounded border shadow-sm" style="width: 100px; height: 100px; object-fit: cover;" />
+                        <button type="button" class="btn btn-danger btn-sm position-absolute top-0 end-0 rounded-circle" 
+                                style="line-height: 1; padding: 2px 6px; transform: translate(50%, -50%);"
+                                @onclick="() => listing.ImageUrls.Remove(imageUrl)">
+                            &times;
+                        </button>
+                    </div>
+                }
+            </div>
+
+            <div class="input-group mb-3">
+                <input type="text" class="form-control form-control-sm" @bind="newImageUrl" placeholder="Paste image URL here..." />
+                <button class="btn btn-outline-primary btn-sm" type="button" @onclick="AddImageUrl">Add URL</button>
+            </div>
+            
+            <div class="mb-3">
+                <label for="imageUpload" class="form-label small text-muted">Or upload manual images (JPG, PNG)</label>
+                <InputFile id="imageUpload" class="form-control form-control-sm" OnChange="HandleFileSelected" multiple />
+            </div>
+        </div>
+
+        <div class="col-md-12">
+            <label id="description-label" for="description" class="form-label">Description (HTML / Rich Text)</label>
+            <div id="description" @ref="quillElement" style="height: 300px;" class="border rounded shadow-sm"></div>
+        </div>
+
+        <div class="col-12 mt-4">
+            <div class="p-4 border rounded bg-white shadow-sm">
+                <h5 class="text-primary mb-3">eBay Business Policies</h5>
+                <p class="small text-muted mb-4">Select your policies from the dropdowns below. These are fetched directly from your eBay account.</p>
+                
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="payment" class="form-label font-weight-bold">Payment Policy</label>
+                        <InputSelect id="payment" class="form-select" @bind-Value="listing.PaymentPolicyId">
+                            <option value="">-- Select Payment Policy --</option>
+                            @foreach (var policy in paymentPolicies)
+                            {
+                                <option value="@policy.PolicyId">@policy.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+
+                    <div class="col-md-4">
+                        <label for="shipping" class="form-label font-weight-bold">Fulfillment Policy (Shipping)</label>
+                        <InputSelect id="shipping" class="form-select" @bind-Value="listing.FulfillmentPolicyId">
+                            <option value="">-- Select Shipping Policy --</option>
+                            @foreach (var policy in fulfillmentPolicies)
+                            {
+                                <option value="@policy.PolicyId">@policy.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+
+                    <div class="col-md-4">
+                        <label for="return" class="form-label font-weight-bold">Return Policy</label>
+                        <InputSelect id="return" class="form-select" @bind-Value="listing.ReturnPolicyId">
+                            <option value="">-- Select Return Policy --</option>
+                            @foreach (var policy in returnPolicies)
+                            {
+                                <option value="@policy.PolicyId">@policy.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 mt-4 mb-5">
+            <button type="submit" class="btn btn-success btn-lg px-4 shadow-sm">
+                @(Id.HasValue ? "Save Changes" : "Save as Draft")
+            </button>
+            <button type="button" class="btn btn-primary btn-lg px-4 shadow-sm ms-2" 
+                    @onclick="HandleSaveAndPublish" disabled="@isPublishing">
+                @if (isPublishing)
+                {
+                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                    <span class="ms-1">@publishStatusShort</span>
+                }
+                else
+                {
+                    @(Id.HasValue && listingStatus == "Published" ? "Save & Re-sync" : "Save & Publish")
+                }
+            </button>
+            <a href="/" class="btn btn-link text-secondary ms-2">Discard Changes</a>
+
+            @if (!string.IsNullOrEmpty(publishStatus))
+            {
+                <div class="mt-3 p-3 rounded bg-white border shadow-sm d-block" style="max-width: 500px;">
+                    @if (publishStatus.Contains("Success"))
+                    {
+                        <div class="text-success fw-bold"><i class="bi bi-check-circle-fill me-2"></i>@publishStatus</div>
+                    }
+                    else if (publishStatus.Contains("Error"))
+                    {
+                        <div class="text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>@publishStatus</div>
+                    }
+                    else
+                    {
+                        <div class="text-primary"><div class="spinner-border spinner-border-sm me-2" role="status"></div>@publishStatus</div>
+                    }
+                </div>
+            }
+        </div>
+    </EditForm>
+</div>
+
+<div class="container mt-3">
+    <div class="d-flex align-items-center mb-2">
+        <button class="btn btn-sm btn-outline-primary me-2" @onclick="PreviewFees" disabled="@isFetchingFees">Preview Fees</button>
+        @if (isFetchingFees)
+        {
+            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+            <div class="small text-muted ms-2">Fetching fee estimate...</div>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(feeError))
+    {
+        <div class="alert alert-danger">@feeError</div>
+    }
+
+    @if (feePayload.HasValue)
+    {
+        <div class="card mb-3">
+            <div class="card-body">
+                <h5 class="card-title">Fee Estimate</h5>
+                <div class="mb-2">Total Fees: <strong>£@feeTotal</strong></div>
+                @if (listing.SourcePrice.HasValue)
+                {
+                    var cost = listing.SourcePrice.Value;
+                    var net = listing.Price - feeTotal - cost;
+                    <div class="mb-2">Source Price: £@cost</div>
+                    <div class="mb-2">Estimated Net (Price - Fees - Source): <strong>£@net</strong></div>
+                }
+
+                @if (feeBreakdown.Any())
+                {
+                    <ul class="list-unstyled small">
+                        @foreach (var item in feeBreakdown)
+                        {
+                            <li>@item.Label: £@item.Amount</li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public int? Id { get; set; }
+
+    private CreateListingRequest listing = new();
+    private ElementReference quillElement;
+    private bool isQuillReady = false;
+    private string extractionUrl = "";
+    private string newImageUrl = "";
+    private bool isExtracting = false;
+    private string? extractionError;
+    private string? extractedCategory;
+    private decimal extractedIncVat;
+    private decimal extractedExVat;
+    private bool isSuggesting = false;
+    private List<CategorySuggestionDto> suggestions = new();
+
+    private List<EbayPolicyDto> paymentPolicies = new();
+    private List<EbayPolicyDto> fulfillmentPolicies = new();
+    private List<EbayPolicyDto> returnPolicies = new();
+
+    private string listingStatus = "Draft";
+
+    private string publishStatus = "";
+    private string publishStatusShort = "Processing...";
+    private bool isPublishing = false;
+
+    private bool isFetchingFees = false;
+    private string feeError = "";
+    private System.Text.Json.JsonElement? feePayload = null;
+    private decimal feeTotal = 0m;
+    private List<(string Label, decimal Amount)> feeBreakdown = new();
+
+    
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPolicies();
+
+        if (Id.HasValue)
+        {
+            try
+            {
+                var existing = await ListingService.GetListingAsync(Id.Value);
+                // Populate the existing listing instance rather than replacing it (preserve editor DOM)
+                listing.Title = existing.Title;
+                listing.Description = existing.Description;
+                listing.Price = existing.Price;
+                listing.CategoryId = existing.CategoryId;
+                listing.FulfillmentPolicyId = existing.FulfillmentPolicyId;
+                listing.PaymentPolicyId = existing.PaymentPolicyId;
+                listing.ReturnPolicyId = existing.ReturnPolicyId;
+                listing.SourceUrl = existing.SourceUrl;
+                listing.Type = existing.Type;
+                listing.Brand = existing.Brand;
+                listing.Colour = existing.Colour;
+                listing.ImageUrls = existing.ImageUrls ?? new List<string>();
+                listingStatus = existing.Status;
+                extractionUrl = existing.SourceUrl ?? "";
+
+                // If the editor was already initialized, set its content now
+                if (isQuillReady && !string.IsNullOrEmpty(listing.Description))
+                {
+                    await JS.InvokeVoidAsync("quillInterop.setHtml", quillElement, listing.Description);
+                }
+
+                listing.SourcePrice = existing.SourcePrice;
+                listing.SourceProductCode = existing.SourceProductCode;
+
+                Console.WriteLine($"[Edit] Loaded Listing {Id}: Payment={listing.PaymentPolicyId}, Shipping={listing.FulfillmentPolicyId}, Returns={listing.ReturnPolicyId}, SourceUrl={listing.SourceUrl}");
+            }
+            catch (Exception)
+            {
+                Navigation.NavigateTo("/");
+            }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                try
+                {
+                    var ready = await JS.InvokeAsync<bool>("quillInterop.createEditor", quillElement, "Describe your product in detail...");
+                    isQuillReady = ready;
+
+                    if (isQuillReady && !string.IsNullOrEmpty(listing.Description))
+                    {
+                        await JS.InvokeVoidAsync("quillInterop.setHtml", quillElement, listing.Description);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Quill init failed: {ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Quill init failed: {ex.Message}");
+            }
+        }
+    }
+
+    private void AddImageUrl()
+    {
+        if (!string.IsNullOrWhiteSpace(newImageUrl))
+        {
+            if (!listing.ImageUrls.Contains(newImageUrl))
+            {
+                listing.ImageUrls.Add(newImageUrl);
+            }
+            newImageUrl = "";
+        }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        var files = e.GetMultipleFiles(10); // Limit to 10 images
+        foreach (var file in files)
+        {
+            if (file.Size > 5 * 1024 * 1024) continue; // Skip files > 5MB
+
+            var buffer = new byte[file.Size];
+            await file.OpenReadStream(5 * 1024 * 1024).ReadAsync(buffer);
+            var base64 = Convert.ToBase64String(buffer);
+            var dataUrl = $"data:{file.ContentType};base64,{base64}";
+            
+            if (!listing.ImageUrls.Contains(dataUrl))
+            {
+                listing.ImageUrls.Add(dataUrl);
+            }
+        }
+    }
+
+    private async Task LoadPolicies()
+    {
+        try
+        {
+            paymentPolicies = await ListingService.GetPaymentPoliciesAsync();
+            fulfillmentPolicies = await ListingService.GetFulfillmentPoliciesAsync();
+            returnPolicies = await ListingService.GetReturnPoliciesAsync();
+
+            // Auto-select defaults for NEW listings only (not edits)
+            if (!Id.HasValue)
+            {
+                try
+                {
+                    var defaults = await ListingService.GetDefaultPoliciesAsync();
+
+                    if (!string.IsNullOrEmpty(defaults.PaymentPolicyId))
+                    {
+                        listing.PaymentPolicyId = defaults.PaymentPolicyId;
+                        if (!paymentPolicies.Any(p => p.PolicyId == defaults.PaymentPolicyId))
+                        {
+                            paymentPolicies.Insert(0, new EbayPolicyDto { PolicyId = defaults.PaymentPolicyId, Name = "Default (configured)" });
+                        }
+                    }
+                    else if (string.IsNullOrEmpty(listing.PaymentPolicyId))
+                    {
+                        listing.PaymentPolicyId = paymentPolicies.FirstOrDefault(p => p.Name.Contains("Standard", StringComparison.OrdinalIgnoreCase))?.PolicyId;
+                    }
+
+                    if (!string.IsNullOrEmpty(defaults.FulfillmentPolicyId))
+                    {
+                        listing.FulfillmentPolicyId = defaults.FulfillmentPolicyId;
+                        if (!fulfillmentPolicies.Any(p => p.PolicyId == defaults.FulfillmentPolicyId))
+                        {
+                            fulfillmentPolicies.Insert(0, new EbayPolicyDto { PolicyId = defaults.FulfillmentPolicyId, Name = "Default (configured)" });
+                        }
+                    }
+                    else if (string.IsNullOrEmpty(listing.FulfillmentPolicyId))
+                    {
+                        listing.FulfillmentPolicyId = fulfillmentPolicies.FirstOrDefault(p => p.Name.Contains("Royal Mail 48", StringComparison.OrdinalIgnoreCase))?.PolicyId;
+                    }
+
+                    if (!string.IsNullOrEmpty(defaults.ReturnPolicyId))
+                    {
+                        listing.ReturnPolicyId = defaults.ReturnPolicyId;
+                        if (!returnPolicies.Any(p => p.PolicyId == defaults.ReturnPolicyId))
+                        {
+                            returnPolicies.Insert(0, new EbayPolicyDto { PolicyId = defaults.ReturnPolicyId, Name = "Default (configured)" });
+                        }
+                    }
+                    else if (string.IsNullOrEmpty(listing.ReturnPolicyId))
+                    {
+                        listing.ReturnPolicyId = returnPolicies.FirstOrDefault(p => p.Name.Contains("Returns Accepted", StringComparison.OrdinalIgnoreCase))?.PolicyId;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error fetching default policies: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading policies: {ex.Message}");
+        }
+    }
+
+    private async Task HandleExtract()
+    {
+        if (string.IsNullOrWhiteSpace(extractionUrl)) return;
+
+        isExtracting = true;
+        extractionError = null;
+        extractedCategory = null;
+        extractedIncVat = 0;
+        extractedExVat = 0;
+
+        // Preserve the existing listing instance to avoid losing the editor DOM; reset fields in place
+        var currentPolicies = new { 
+            Payment = listing.PaymentPolicyId, 
+            Fulfillment = listing.FulfillmentPolicyId, 
+            Return = listing.ReturnPolicyId 
+        };
+
+        listing.Title = string.Empty;
+        listing.Description = string.Empty;
+        listing.Brand = string.Empty;
+        listing.Type = string.Empty;
+        listing.Colour = string.Empty;
+        listing.ImageUrls = new List<string>();
+        listing.Price = 0;
+        listing.CategoryId = null;
+        listing.SourceUrl = extractionUrl;
+        listing.PaymentPolicyId = currentPolicies.Payment;
+        listing.FulfillmentPolicyId = currentPolicies.Fulfillment;
+        listing.ReturnPolicyId = currentPolicies.Return;
+
+        suggestions.Clear();
+
+        try
+        {
+            var details = await ListingService.ExtractDetailsAsync(extractionUrl);
+            if (!string.IsNullOrEmpty(details.Title)) listing.Title = details.Title;
+            if (!string.IsNullOrEmpty(details.Description)) listing.Description = details.Description;
+            if (!string.IsNullOrEmpty(details.Category)) extractedCategory = details.Category;
+            if (!string.IsNullOrEmpty(details.Brand)) listing.Brand = details.Brand;
+            
+            if (details.PriceIncVat.HasValue) 
+            {
+                extractedIncVat = details.PriceIncVat.Value;
+                listing.Price = extractedIncVat; // Prioritize inc VAT for textbox
+            }
+            if (details.PriceExVat.HasValue) 
+            {
+                extractedExVat = details.PriceExVat.Value;
+                if (listing.Price == 0) listing.Price = extractedExVat; // Fallback
+            }
+            
+            if (listing.Price == 0) listing.Price = 0.99m; // Final default if nothing extracted
+            
+            if (details.ImageUrls != null && details.ImageUrls.Any())
+            {
+                listing.ImageUrls = details.ImageUrls.ToList();
+            }
+
+            // Set description into the Quill editor if ready
+            if (!string.IsNullOrEmpty(details.Description))
+            {
+                listing.Description = details.Description;
+                if (isQuillReady)
+                {
+                    await JS.InvokeVoidAsync("quillInterop.setHtml", quillElement, listing.Description);
+                }
+            }
+
+            // Source product code (extracted). Do NOT auto-fill SourcePrice; users will enter Source Price manually.
+            listing.SourceProductCode = details.ProductCode;
+            
+            // Keep the source URL on the listing (so it will be saved) but clear the input box
+            extractionUrl = "";
+        }
+        catch (Exception ex)
+        {
+            extractionError = "Could not extract details. The site might be blocking automated requests.";
+            Console.WriteLine(ex.Message);
+        }
+        finally
+        {
+            isExtracting = false;
+        }
+    }
+
+    private async Task HandleSuggestCategories()
+    {
+        if (string.IsNullOrWhiteSpace(listing.Title)) return;
+        
+        isSuggesting = true;
+        try
+        {
+            suggestions = await ListingService.GetCategorySuggestionsAsync(listing.Title);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching suggestions: {ex.Message}");
+        }
+        finally
+        {
+            isSuggesting = false;
+        }
+    }
+
+    private void SelectSuggestion(CategorySuggestionDto suggestion)
+    {
+        listing.CategoryId = suggestion.CategoryId;
+        suggestions.Clear();
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        // If Quill is available, read HTML from it into listing.Description
+        if (isQuillReady)
+        {
+            listing.Description = await JS.InvokeAsync<string>("quillInterop.getHtml", quillElement);
+        }
+
+        if (Id.HasValue)
+        {
+            await ListingService.UpdateListingAsync(Id.Value, listing);
+        }
+        else
+        {
+            await ListingService.CreateListingAsync(listing);
+        }
+        Navigation.NavigateTo("/");
+    }
+
+    private async Task HandleSaveAndPublish()
+    {
+        // If Quill is available, read HTML from it into listing.Description
+        if (isQuillReady)
+        {
+            listing.Description = await JS.InvokeAsync<string>("quillInterop.getHtml", quillElement);
+        }
+
+        isPublishing = true;
+        publishStatus = "Step 1/2: Saving local changes...";
+        publishStatusShort = "Saving...";
+        StateHasChanged();
+
+        try
+        {
+            int listingId;
+            if (Id.HasValue)
+            {
+                await ListingService.UpdateListingAsync(Id.Value, listing);
+                listingId = Id.Value;
+            }
+            else
+            {
+                var newListing = await ListingService.CreateListingAsync(listing);
+                listingId = newListing.Id;
+            }
+
+            publishStatus = "Step 2/2: Publishing to eBay... This may take a few seconds.";
+            publishStatusShort = "Publishing...";
+            StateHasChanged();
+
+            await ListingService.PublishListingAsync(listingId);
+            
+            publishStatus = "Success! Listing updated on eBay. ✅";
+            StateHasChanged();
+            
+            await Task.Delay(2000);
+            Navigation.NavigateTo("/");
+        }
+        catch (Exception ex)
+        {
+            publishStatus = $"Error: {ex.Message} ❌";
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+
+    private async Task PreviewFees()
+    {
+        feeError = "";
+        feePayload = null;
+        feeBreakdown.Clear();
+        feeTotal = 0m;
+        isFetchingFees = true;
+        try
+        {
+            var dto = new Shared.ListingDto
+            {
+                Title = listing.Title,
+                Description = listing.Description,
+                Price = listing.Price,
+                CategoryId = listing.CategoryId,
+                FulfillmentPolicyId = listing.FulfillmentPolicyId,
+                PaymentPolicyId = listing.PaymentPolicyId,
+                ReturnPolicyId = listing.ReturnPolicyId,
+                Type = listing.Type,
+                Brand = listing.Brand,
+                Colour = listing.Colour,
+                ImageUrls = listing.ImageUrls
+            };
+
+            var payload = await ListingService.GetFeeEstimateAsync(dto);
+            feePayload = payload;
+
+            // Parse feeSummaries if present
+            if (payload.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                var root = payload;
+                if (root.TryGetProperty("feeSummaries", out var fs) && fs.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var item in fs.EnumerateArray())
+                    {
+                        string label = item.TryGetProperty("feeType", out var ft) ? ft.GetString() ?? "Fee" : "Fee";
+                        decimal amt = 0m;
+                        if (item.TryGetProperty("fee", out var feeNode) && feeNode.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        {
+                            if (feeNode.TryGetProperty("value", out var v))
+                            {
+                                var s = v.GetString() ?? v.GetRawText();
+                                if (decimal.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                                {
+                                    amt = parsed;
+                                }
+                            }
+                        }
+                        feeBreakdown.Add((label, amt));
+                        feeTotal += amt;
+                    }
+                }
+                else if (root.TryGetProperty("total", out var tot) && tot.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    if (tot.TryGetProperty("value", out var v))
+                    {
+                        var s = v.GetString() ?? v.GetRawText();
+                        if (decimal.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                        {
+                            feeTotal = parsed;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            feeError = ex.Message;
+        }
+        finally
+        {
+            isFetchingFees = false;
+        }
+    }
+}

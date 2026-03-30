@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.2" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.2" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shared\Shared.csproj" />
+    <ProjectReference Include="..\Client\Client.csproj" />
+  </ItemGroup>
+
+  <Target Name="CopyClientWwwroot" AfterTargets="Build">
+    <ItemGroup>
+      <ClientWwwrootFiles Include="$(MSBuildThisFileDirectory)..\Client\wwwroot\**\*.*" />
+      <ClientFrameworkFiles Include="$(MSBuildThisFileDirectory)..\Client\bin\$(Configuration)\net10.0\wwwroot\_framework\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ClientWwwrootFiles)" DestinationFolder="$(OutputPath)wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(ClientFrameworkFiles)" DestinationFolder="$(OutputPath)wwwroot\_framework\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
