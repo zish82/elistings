@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Client</title>
+    <base href="/" />
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link href="Client.styles.css" rel="stylesheet" />
+    <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+</head>
+
+<body>
+    <div id="app">
+        <svg class="loading-progress">
+            <circle r="40%" cx="50%" cy="50%" />
+            <circle r="40%" cx="50%" cy="50%" />
+        </svg>
+        <div class="loading-progress-text"></div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+
+    <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+    <script>
+        window.quillInterop = {
+            createEditor: function (element, placeholder) {
+                return new Promise(function (resolve, reject) {
+                    try {
+                        if (!element) return resolve(false);
+                        if (element.__quill) return resolve(true);
+
+                        if (typeof Quill === 'undefined') {
+                            console.error('Quill is not loaded');
+                            return reject('Quill not loaded');
+                        }
+
+                        var quill = new Quill(element, {
+                            theme: 'snow',
+                            placeholder: placeholder || '',
+                            modules: {
+                                toolbar: [
+                                    ['bold', 'italic', 'underline', 'strike', 'clean'],
+                                    [{ 'header': [1, 2, 3, false] }, { 'size': ['small', false, 'large', 'huge'] }, { 'font': [] }],
+                                    [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'indent': '-1' }, { 'indent': '+1' }],
+                                    [{ 'align': [] }, { 'direction': 'rtl' }],
+                                    [{ 'color': [] }, { 'background': [] }]
+                                ]
+                            }
+                        });
+
+                        element.__quill = quill;
+
+                        // Add tooltip titles to toolbar controls for usability
+                        try {
+                            var toolbar = element.parentNode && element.parentNode.querySelector('.ql-toolbar');
+                            if (!toolbar) {
+                                // Quill may insert toolbar as previousSibling
+                                if (element.previousSibling && element.previousSibling.classList && element.previousSibling.classList.contains('ql-toolbar')) toolbar = element.previousSibling;
+                            }
+
+                            if (toolbar) {
+                                var btns = toolbar.querySelectorAll('button');
+                                btns.forEach(function (b) {
+                                    if (b.classList.contains('ql-bold')) b.title = 'Bold (Ctrl+B)';
+                                    else if (b.classList.contains('ql-italic')) b.title = 'Italic (Ctrl+I)';
+                                    else if (b.classList.contains('ql-underline')) b.title = 'Underline (Ctrl+U)';
+                                    else if (b.classList.contains('ql-strike')) b.title = 'Strike-through';
+                                    else if (b.classList.contains('ql-list')) {
+                                        var val = b.value || b.getAttribute('value');
+                                        if (val === 'ordered') b.title = 'Ordered list';
+                                        else if (val === 'bullet') b.title = 'Bulleted list';
+                                        else b.title = 'List';
+                                    }
+                                    else if (b.classList.contains('ql-indent')) {
+                                        var ival = b.value || b.getAttribute('value');
+                                        if (ival === '-1') b.title = 'Decrease indent';
+                                        else if (ival === '+1') b.title = 'Increase indent';
+                                    }
+                                    else if (b.classList.contains('ql-clean')) b.title = 'Remove formatting';
+                                    else if (b.classList.contains('ql-link')) b.title = 'Insert link';
+                                    else if (b.classList.contains('ql-image')) b.title = 'Insert image';
+                                    else if (b.classList.contains('ql-code-block')) b.title = 'Code block';
+                                    else if (b.classList.contains('ql-blockquote')) b.title = 'Block quote';
+                                    else if (b.classList.contains('ql-direction')) b.title = 'Text direction (RTL)';
+                                });
+
+                                var selects = toolbar.querySelectorAll('select');
+                                selects.forEach(function (s) {
+                                    if (s.classList.contains('ql-header')) {
+                                        s.title = 'Heading';
+                                        Array.from(s.options).forEach(function (opt) {
+                                            if (opt.value === '1') opt.title = 'Heading 1';
+                                            else if (opt.value === '2') opt.title = 'Heading 2';
+                                            else if (opt.value === '3') opt.title = 'Heading 3';
+                                            else opt.title = 'Normal';
+                                        });
+                                    }
+                                    if (s.classList.contains('ql-size')) {
+                                        s.title = 'Font size';
+                                        Array.from(s.options).forEach(function (opt) {
+                                            if (opt.value === 'small') opt.title = 'Small';
+                                            else if (opt.value === 'large') opt.title = 'Large';
+                                            else if (opt.value === 'huge') opt.title = 'Huge';
+                                            else opt.title = 'Normal';
+                                        });
+                                    }
+                                    if (s.classList.contains('ql-font')) s.title = 'Font family';
+                                    if (s.classList.contains('ql-align')) s.title = 'Text alignment';
+                                    if (s.classList.contains('ql-color')) s.title = 'Text color';
+                                    if (s.classList.contains('ql-background')) s.title = 'Background color';
+                                });
+                            }
+                        } catch (t) { console.warn('Failed to set Quill toolbar tooltips', t); }
+
+                        // Quill initializes synchronously; resolve on next tick
+                        setTimeout(function () { resolve(true); }, 0);
+                    } catch (err) {
+                        reject(err);
+                    }
+                });
+            },
+            getHtml: function (element) {
+                var q = element && element.__quill;
+                return q ? q.root.innerHTML : '';
+            },
+            setHtml: function (element, html) {
+                var q = element && element.__quill;
+                if (q) {
+                    // Use Quill API to import HTML safely and keep toolbar intact
+                    q.clipboard.dangerouslyPasteHTML(html || '', 'silent');
+                }
+            },
+            destroyEditor: function (element) {
+                var q = element && element.__quill;
+                if (q) {
+                    try { /* Quill has no destroy API; remove reference */ } catch (e) { }
+                    element.__quill = null;
+                    element.innerHTML = '';
+                }
+            }
+        };
+    </script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+
+</html>

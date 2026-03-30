@@ -1,0 +1,21 @@
+## Ignore build outputs and Blazor published assets
+bin/
+obj/
+**/bin/
+**/obj/
+
+# Blazor framework artifacts
+**/wwwroot/_framework/
+
+# Local DB
+*.db
+app.db
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+
+# Temporary
+*.tmp

@@ -1,0 +1,14 @@
+**/.git
+**/.github
+**/.vs
+**/.vscode
+**/bin
+**/obj
+**/TestResults
+**/*.user
+**/*.suo
+**/*.cache
+**/*.nupkg
+**/*.db
+**/*.db-shm
+**/*.db-wal
