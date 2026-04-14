@@ -191,9 +191,9 @@ else
         {
             var idx = part.IndexOf('=');
             if (idx <= 0) continue;
-            var k = Uri.UnescapeDataString(part.Substring(0, idx));
+            var k = Uri.UnescapeDataString(part.Substring(0, idx).Replace("+", " "));
             if (!string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) continue;
-            return Uri.UnescapeDataString(part.Substring(idx + 1));
+            return Uri.UnescapeDataString(part.Substring(idx + 1).Replace("+", " "));
         }
         return null;
     }
