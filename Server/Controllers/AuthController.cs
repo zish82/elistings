@@ -5,6 +5,7 @@ using Server.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -14,6 +15,14 @@ namespace Server.Controllers;
 [Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
+    private sealed class PendingOAuthState
+    {
+        public string ReturnUrl { get; set; } = "/";
+        public DateTime ExpiresAtUtc { get; set; }
+    }
+
+    private static readonly ConcurrentDictionary<string, PendingOAuthState> PendingStates = new();
+
     private readonly EbaySettings _settings;
     private readonly AppDbContext _context;
     private readonly HttpClient _httpClient;
@@ -32,6 +41,7 @@ public class AuthController : ControllerBase
         var baseUrl = _settings.IsSandbox ? "https://auth.sandbox.ebay.com/oauth2/authorize" : "https://auth.ebay.com/oauth2/authorize";
         var scope = "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.account";
         var state = Guid.NewGuid().ToString("N");
+        var expiry = DateTime.UtcNow.AddMinutes(15);
 
         var safeReturnUrl = string.IsNullOrWhiteSpace(returnUrl) ? "/" : returnUrl;
         if (!Uri.IsWellFormedUriString(safeReturnUrl, UriKind.Relative))
@@ -39,12 +49,29 @@ public class AuthController : ControllerBase
             safeReturnUrl = "/";
         }
 
+        // Keep pending OAuth state server-side so callback validation also works
+        // when the callback domain differs (e.g., localhost + ngrok during local testing).
+        PendingStates[state] = new PendingOAuthState
+        {
+            ReturnUrl = safeReturnUrl,
+            ExpiresAtUtc = expiry
+        };
+
+        // Opportunistic cleanup of old states.
+        foreach (var kv in PendingStates)
+        {
+            if (kv.Value.ExpiresAtUtc <= DateTime.UtcNow)
+            {
+                PendingStates.TryRemove(kv.Key, out _);
+            }
+        }
+
         Response.Cookies.Append("ebay_oauth_state", state, new CookieOptions
         {
             HttpOnly = true,
             Secure = Request.IsHttps,
             SameSite = SameSiteMode.Lax,
-            Expires = DateTimeOffset.UtcNow.AddMinutes(15)
+            Expires = expiry
         });
 
         Response.Cookies.Append("ebay_oauth_return", safeReturnUrl, new CookieOptions
@@ -52,7 +79,7 @@ public class AuthController : ControllerBase
             HttpOnly = true,
             Secure = Request.IsHttps,
             SameSite = SameSiteMode.Lax,
-            Expires = DateTimeOffset.UtcNow.AddMinutes(15)
+            Expires = expiry
         });
         
         var queryParams = new List<string>
@@ -75,10 +102,28 @@ public class AuthController : ControllerBase
     [HttpGet("callback")]
     public async Task<IActionResult> Callback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error, [FromQuery(Name = "error_description")] string? errorDescription)
     {
-        var returnUrl = Request.Cookies["ebay_oauth_return"] ?? "/";
-        if (!Uri.IsWellFormedUriString(returnUrl, UriKind.Relative))
+        var cookieReturnUrl = Request.Cookies["ebay_oauth_return"];
+        var cookieState = Request.Cookies["ebay_oauth_state"];
+
+        string returnUrl = "/";
+        PendingOAuthState? pending = null;
+
+        if (!string.IsNullOrWhiteSpace(state) && PendingStates.TryRemove(state, out var pendingState))
         {
-            returnUrl = "/";
+            pending = pendingState;
+            if (pending.ExpiresAtUtc <= DateTime.UtcNow)
+            {
+                pending = null;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(cookieReturnUrl) && Uri.IsWellFormedUriString(cookieReturnUrl, UriKind.Relative))
+        {
+            returnUrl = cookieReturnUrl;
+        }
+        else if (pending != null && Uri.IsWellFormedUriString(pending.ReturnUrl, UriKind.Relative))
+        {
+            returnUrl = pending.ReturnUrl;
         }
 
         // Always remove short-lived oauth cookies once callback is hit.
@@ -106,17 +151,20 @@ public class AuthController : ControllerBase
             return Redirect(BuildRedirect("error", "No OAuth authorization code provided by eBay."));
         }
 
-        var expectedState = Request.Cookies["ebay_oauth_state"];
-        if (string.IsNullOrWhiteSpace(expectedState) || string.IsNullOrWhiteSpace(state))
+        if (string.IsNullOrWhiteSpace(state) || pending == null)
         {
             return Redirect(BuildRedirect("error", "OAuth state missing or invalid."));
         }
 
-        var expectedStateBytes = Encoding.UTF8.GetBytes(expectedState);
-        var stateBytes = Encoding.UTF8.GetBytes(state);
-        if (!CryptographicOperations.FixedTimeEquals(expectedStateBytes, stateBytes))
+        // If a state cookie is available, require it to match too (extra defense).
+        if (!string.IsNullOrWhiteSpace(cookieState))
         {
-            return Redirect(BuildRedirect("error", "OAuth state validation failed."));
+            var expectedStateBytes = Encoding.UTF8.GetBytes(cookieState);
+            var stateBytes = Encoding.UTF8.GetBytes(state);
+            if (!CryptographicOperations.FixedTimeEquals(expectedStateBytes, stateBytes))
+            {
+                return Redirect(BuildRedirect("error", "OAuth state validation failed."));
+            }
         }
 
         var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";

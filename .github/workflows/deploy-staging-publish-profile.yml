@@ -1,0 +1,132 @@
+name: Build and Deploy (Publish Profile, Staging Optional)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Deployment target (production by default, staging optional)
+        required: true
+        type: choice
+        default: production
+        options:
+          - production
+          - staging
+      image_tag:
+        description: Existing image tag to deploy (leave empty to deploy current commit SHA)
+        required: false
+        default: ""
+
+env:
+  IMAGE_NAME: directshop
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve deployment settings
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            target="${{ github.event.inputs.target_environment }}"
+            requested_tag="${{ github.event.inputs.image_tag }}"
+          else
+            target="production"
+            requested_tag=""
+          fi
+
+          if [ -n "$requested_tag" ]; then
+            deploy_tag="$requested_tag"
+            build_needed="false"
+          else
+            deploy_tag="${{ github.sha }}"
+            build_needed="true"
+          fi
+
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "deploy_tag=$deploy_tag" >> "$GITHUB_OUTPUT"
+          echo "build_needed=$build_needed" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: ${{ steps.resolve.outputs.build_needed == 'true' }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ACR
+        if: ${{ steps.resolve.outputs.build_needed == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push image
+        if: ${{ steps.resolve.outputs.build_needed == 'true' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Validate staging settings
+        if: ${{ steps.resolve.outputs.target == 'staging' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}" ] || [ -z "${{ secrets.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}" ]; then
+            echo "Staging target selected but staging publish-profile secrets are missing." >&2
+            echo "Set AZURE_WEBAPP_STAGING_SLOT and AZURE_WEBAPP_STAGING_PUBLISH_PROFILE, or deploy to production." >&2
+            exit 1
+          fi
+
+      - name: Deploy image to production with publish profile
+        if: ${{ steps.resolve.outputs.target == 'production' }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PROD_PUBLISH_PROFILE }}
+          images: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.deploy_tag }}
+
+      - name: Deploy image to staging slot with publish profile
+        if: ${{ steps.resolve.outputs.target == 'staging' }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          slot-name: ${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}
+          images: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.deploy_tag }}
+
+      - name: Warm up production (best effort)
+        if: ${{ steps.resolve.outputs.target == 'production' }}
+        shell: bash
+        run: |
+          set +e
+          curl -sS -m 30 "https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net" > /dev/null
+          set -e
+
+      - name: Warm up staging slot (best effort)
+        if: ${{ steps.resolve.outputs.target == 'staging' }}
+        shell: bash
+        run: |
+          set +e
+          curl -sS -m 30 "https://${{ secrets.AZURE_WEBAPP_NAME }}-${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}.azurewebsites.net" > /dev/null
+          set -e
+
+      - name: Deployment URL (production)
+        if: ${{ steps.resolve.outputs.target == 'production' }}
+        run: echo "Production deployed: https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+
+      - name: Deployment URL (staging)
+        if: ${{ steps.resolve.outputs.target == 'staging' }}
+        run: echo "Staging deployed: https://${{ secrets.AZURE_WEBAPP_NAME }}-${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}.azurewebsites.net"
