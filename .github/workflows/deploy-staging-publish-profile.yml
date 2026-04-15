@@ -125,8 +125,8 @@ jobs:
 
       - name: Deployment URL (production)
         if: ${{ steps.resolve.outputs.target == 'production' }}
-        run: echo "Production deployed: https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        run: 'echo "Production deployed: https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net"'
 
       - name: Deployment URL (staging)
         if: ${{ steps.resolve.outputs.target == 'staging' }}
-        run: echo "Staging deployed: https://${{ secrets.AZURE_WEBAPP_NAME }}-${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}.azurewebsites.net"
+        run: 'echo "Staging deployed: https://${{ secrets.AZURE_WEBAPP_NAME }}-${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}.azurewebsites.net"'
