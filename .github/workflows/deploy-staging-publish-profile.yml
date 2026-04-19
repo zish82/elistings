@@ -79,15 +79,49 @@ jobs:
             ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Validate staging settings
-        if: ${{ steps.resolve.outputs.target == 'staging' }}
+      - name: Validate deployment settings
         shell: bash
+        env:
+          TARGET: ${{ steps.resolve.outputs.target }}
+          PROD_PROFILE: ${{ secrets.AZURE_WEBAPP_PROD_PUBLISH_PROFILE }}
+          STAGING_SLOT: ${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}
+          STAGING_PROFILE: ${{ secrets.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}
         run: |
           set -euo pipefail
-          if [ -z "${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}" ] || [ -z "${{ secrets.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}" ]; then
-            echo "Staging target selected but staging publish-profile secrets are missing." >&2
-            echo "Set AZURE_WEBAPP_STAGING_SLOT and AZURE_WEBAPP_STAGING_PUBLISH_PROFILE, or deploy to production." >&2
-            exit 1
+          has_kudu_url() {
+            echo "$1" | grep -Eq "publishUrl=|scm\\.azurewebsites\\.net"
+          }
+
+          if [ "$TARGET" = "production" ]; then
+            if [ -z "$PROD_PROFILE" ]; then
+              echo "Missing AZURE_WEBAPP_PROD_PUBLISH_PROFILE secret." >&2
+              exit 1
+            fi
+
+            if ! has_kudu_url "$PROD_PROFILE"; then
+              echo "AZURE_WEBAPP_PROD_PUBLISH_PROFILE does not look like a valid App Service publish profile XML (kudu URL missing)." >&2
+              echo "Download a fresh publish profile from the App Service in Azure Portal and re-save the secret." >&2
+              exit 1
+            fi
+          fi
+
+          if [ "$TARGET" = "staging" ]; then
+            if [ -z "$STAGING_SLOT" ] || [ -z "$STAGING_PROFILE" ]; then
+              echo "Staging target selected but staging secrets are missing." >&2
+              echo "Set AZURE_WEBAPP_STAGING_SLOT and AZURE_WEBAPP_STAGING_PUBLISH_PROFILE, or deploy to production." >&2
+              exit 1
+            fi
+
+            if [ "$STAGING_SLOT" = "production" ]; then
+              echo "AZURE_WEBAPP_STAGING_SLOT is set to 'production'. Use the real slot name (for example: staging)." >&2
+              exit 1
+            fi
+
+            if ! has_kudu_url "$STAGING_PROFILE"; then
+              echo "AZURE_WEBAPP_STAGING_PUBLISH_PROFILE does not look like a valid slot publish profile XML (kudu URL missing)." >&2
+              echo "Download a fresh publish profile for the staging slot and re-save the secret." >&2
+              exit 1
+            fi
           fi
 
       - name: Deploy image to production with publish profile
