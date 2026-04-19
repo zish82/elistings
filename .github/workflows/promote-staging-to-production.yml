@@ -1,4 +1,4 @@
-name: Promote Staging Slot to Production
+name: Manual | Promote Staging Slot to Production
 
 on:
   workflow_dispatch:

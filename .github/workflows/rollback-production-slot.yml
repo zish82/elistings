@@ -1,4 +1,4 @@
-name: Rollback Production via Staging Slot
+name: Manual | Rollback Production via Staging Slot
 
 on:
   workflow_dispatch:

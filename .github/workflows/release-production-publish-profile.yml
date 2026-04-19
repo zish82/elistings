@@ -1,4 +1,4 @@
-name: Release Production (Publish Profile)
+name: Manual | Release Production (Publish Profile)
 
 on:
   workflow_dispatch:

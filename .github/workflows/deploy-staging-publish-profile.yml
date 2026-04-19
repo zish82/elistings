@@ -1,4 +1,4 @@
-name: Build and Deploy (Publish Profile, Staging Optional)
+name: Auto | Build and Deploy (Publish Profile)
 
 on:
   push:

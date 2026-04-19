@@ -1,9 +1,6 @@
-name: Build and Deploy to Staging Slot
+name: Manual | Build and Deploy to Staging Slot (AZURE_CREDENTIALS)
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 env:
