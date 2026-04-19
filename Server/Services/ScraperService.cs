@@ -1,7 +1,9 @@
 using HtmlAgilityPack;
 using Shared;
+using System.Net;
 using System.Net.Http;
 using System.Linq;
+using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
 
 namespace Server.Services;
@@ -13,8 +15,52 @@ public class ScraperService
     public ScraperService(HttpClient httpClient)
     {
         _httpClient = httpClient;
-        // Some sites block default .NET user agent
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+        // Some sites block default .NET user agent and minimal headers.
+        if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
+        {
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36");
+        }
+
+        if (!_httpClient.DefaultRequestHeaders.Accept.Any())
+        {
+            _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
+            _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/xhtml+xml"));
+            _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/xml", 0.9));
+            _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*", 0.8));
+        }
+
+        if (!_httpClient.DefaultRequestHeaders.AcceptLanguage.Any())
+        {
+            _httpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-GB,en;q=0.9,en-US;q=0.8");
+        }
+
+        if (!_httpClient.DefaultRequestHeaders.AcceptEncoding.Any())
+        {
+            _httpClient.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip, deflate, br");
+        }
+
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Cache-Control", "no-cache");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Pragma", "no-cache");
+    }
+
+    private async Task<string> FetchHtmlAsync(string url)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        var host = new Uri(url).Host;
+        request.Headers.Referrer = new Uri($"https://{host}/");
+        request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "document");
+        request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "navigate");
+        request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "none");
+        request.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
+
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            throw new InvalidOperationException("The target website blocked this request (HTTP 403). This often happens when scraping from Azure datacenter IPs. Try another source URL, use a scraping proxy, or run extraction from an allowlisted IP.");
+        }
+
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync();
     }
 
     private string ResolveUrl(string baseUrl, string? relativeUrl)
@@ -58,7 +104,7 @@ public class ScraperService
 
     public async Task<ExtractedDetailsDto> ExtractDetailsAsync(string url)
     {
-        var html = await _httpClient.GetStringAsync(url);
+        var html = await FetchHtmlAsync(url);
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
 
@@ -294,7 +340,7 @@ public class ScraperService
     public async Task<List<string>> ExtractProductLinksAsync(string categoryUrl)
     {
         Console.WriteLine($"[Scraper] Extracting product links from category: {categoryUrl}");
-        var html = await _httpClient.GetStringAsync(categoryUrl);
+        var html = await FetchHtmlAsync(categoryUrl);
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
 
