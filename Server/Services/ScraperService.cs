@@ -1,4 +1,5 @@
 using HtmlAgilityPack;
+using Microsoft.Extensions.Configuration;
 using Shared;
 using System.Net;
 using System.Net.Http;
@@ -11,10 +12,20 @@ namespace Server.Services;
 public class ScraperService
 {
     private readonly HttpClient _httpClient;
+    private readonly string? _proxyUrlTemplate;
+    private readonly string? _proxyApiKey;
+    private readonly HashSet<string> _proxyFallbackDomains;
 
-    public ScraperService(HttpClient httpClient)
+    public ScraperService(HttpClient httpClient, IConfiguration configuration)
     {
         _httpClient = httpClient;
+        _proxyUrlTemplate = configuration["Scraper:ProxyUrlTemplate"];
+        _proxyApiKey = configuration["Scraper:ProxyApiKey"];
+        _proxyFallbackDomains = (configuration["Scraper:ProxyFallbackDomains"] ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(d => d.ToLowerInvariant())
+            .ToHashSet();
+
         // Some sites block default .NET user agent and minimal headers.
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
         {
@@ -43,6 +54,45 @@ public class ScraperService
         _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Pragma", "no-cache");
     }
 
+    private bool ShouldUseProxyFallback(string url)
+    {
+        if (_proxyFallbackDomains.Count == 0) return false;
+
+        var host = new Uri(url).Host.ToLowerInvariant();
+        return _proxyFallbackDomains.Any(domain =>
+            host.Equals(domain, StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string? BuildProxyUrl(string targetUrl)
+    {
+        if (string.IsNullOrWhiteSpace(_proxyUrlTemplate)) return null;
+
+        var template = _proxyUrlTemplate;
+        if (template.Contains("{key}", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(_proxyApiKey)) return null;
+            template = template.Replace("{key}", Uri.EscapeDataString(_proxyApiKey));
+        }
+
+        if (!template.Contains("{url}", StringComparison.OrdinalIgnoreCase)) return null;
+        return template.Replace("{url}", Uri.EscapeDataString(targetUrl));
+    }
+
+    private async Task<string> FetchViaProxyAsync(string url)
+    {
+        var proxyUrl = BuildProxyUrl(url);
+        if (string.IsNullOrWhiteSpace(proxyUrl))
+        {
+            throw new InvalidOperationException("Direct fetch was blocked (HTTP 403), and no scraping proxy is configured. Set Scraper:ProxyUrlTemplate (and Scraper:ProxyApiKey if required).\nExample template: https://api.scraperapi.com/?api_key={key}&url={url}&country_code=uk");
+        }
+
+        using var proxyRequest = new HttpRequestMessage(HttpMethod.Get, proxyUrl);
+        using var proxyResponse = await _httpClient.SendAsync(proxyRequest, HttpCompletionOption.ResponseHeadersRead);
+        proxyResponse.EnsureSuccessStatusCode();
+        return await proxyResponse.Content.ReadAsStringAsync();
+    }
+
     private async Task<string> FetchHtmlAsync(string url)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -56,7 +106,13 @@ public class ScraperService
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         if (response.StatusCode == HttpStatusCode.Forbidden)
         {
-            throw new InvalidOperationException("The target website blocked this request (HTTP 403). This often happens when scraping from Azure datacenter IPs. Try another source URL, use a scraping proxy, or run extraction from an allowlisted IP.");
+            if (ShouldUseProxyFallback(url))
+            {
+                Console.WriteLine($"[Scraper] Direct fetch blocked for {url}. Retrying via configured proxy for matched domain.");
+                return await FetchViaProxyAsync(url);
+            }
+
+            throw new InvalidOperationException("The target website blocked this request (HTTP 403). Proxy fallback is domain-restricted and this domain is not allowlisted. Add it to Scraper:ProxyFallbackDomains or use another source URL.");
         }
 
         response.EnsureSuccessStatusCode();
