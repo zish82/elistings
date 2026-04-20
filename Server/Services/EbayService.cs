@@ -346,7 +346,17 @@ public class EbayService : IEbayService
 
     private async Task<List<EbayPolicyDto>> FetchPoliciesAsync(string urlPart, string jsonKey)
     {
-        var token = await GetOAuthTokenAsync();
+        string token;
+        try
+        {
+            token = await GetOAuthTokenAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"eBay {urlPart} policy fetch skipped: {ex.Message}");
+            return new List<EbayPolicyDto>();
+        }
+
         var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
         
         var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/sell/account/v1/{urlPart}_policy?marketplace_id=EBAY_GB");
@@ -475,7 +485,17 @@ public class EbayService : IEbayService
     {
         if (string.IsNullOrWhiteSpace(title)) return new List<CategorySuggestionDto>();
 
-        var token = await GetOAuthTokenAsync();
+        string token;
+        try
+        {
+            token = await GetOAuthTokenAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"eBay category suggestions skipped: {ex.Message}");
+            return new List<CategorySuggestionDto>();
+        }
+
         // UK Category Tree ID is 3.
         var treeId = "3"; 
         var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";

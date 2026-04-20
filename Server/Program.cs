@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Server.Data;
+using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,7 +20,14 @@ builder.Services.Configure<Server.Configuration.EbaySettings>(
 
 builder.Services.AddHttpClient<Server.Services.IEbayService, Server.Services.EbayService>();
 builder.Services.AddHttpClient<Server.Services.IMarketplaceImageService, Server.Services.EbayImageService>();
-builder.Services.AddHttpClient<Server.Services.ScraperService>();
+builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.SafelincsProductScraper>();
+builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.EdenHorticultureProductScraper>();
+builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.GenericProductScraper>();
+builder.Services.AddHttpClient<Server.Services.IScraperService, Server.Services.ScraperService>()
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+    });
 
 builder.Services.AddCors(options =>
 {
