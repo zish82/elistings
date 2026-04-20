@@ -12,11 +12,11 @@ namespace Server.Controllers;
 public class ListingsController : ControllerBase
 {
     private readonly AppDbContext _context;
-    private readonly Services.ScraperService _scraperService;
+    private readonly IScraperService _scraperService;
     private readonly IEbayService _ebayService;
     private readonly Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> _ebaySettings;
 
-    public ListingsController(AppDbContext context, Services.ScraperService scraperService, IEbayService ebayService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings)
+    public ListingsController(AppDbContext context, IScraperService scraperService, IEbayService ebayService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings)
     {
         _context = context;
         _scraperService = scraperService;

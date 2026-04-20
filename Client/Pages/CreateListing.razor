@@ -558,8 +558,10 @@
                 extractedExVat = details.PriceExVat.Value;
                 if (listing.Price == 0) listing.Price = extractedExVat; // Fallback
             }
-            
-            if (listing.Price == 0) listing.Price = 0.99m; // Final default if nothing extracted
+
+            var isEdenSource = !string.IsNullOrWhiteSpace(listing.SourceUrl)
+                               && listing.SourceUrl.Contains("edenhorticulture.co.uk", StringComparison.OrdinalIgnoreCase);
+            if (listing.Price == 0 && !isEdenSource) listing.Price = 0.99m; // Keep existing fallback for other domains
             
             if (details.ImageUrls != null && details.ImageUrls.Any())
             {
