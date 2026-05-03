@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Server.Configuration;
 using Server.Data;
 using Server.Services;
+using Shared;
 using Microsoft.EntityFrameworkCore;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -20,6 +21,7 @@ public class AuthController : ControllerBase
     private sealed class PendingOAuthState
     {
         public int UserId { get; set; }
+        public string? AccountName { get; set; }
         public string ReturnUrl { get; set; } = "/";
         public DateTime ExpiresAtUtc { get; set; }
     }
@@ -41,7 +43,7 @@ public class AuthController : ControllerBase
 
     [Authorize]
     [HttpGet("login-url")]
-    public ActionResult<LoginUrlResponse> GetLoginUrl([FromQuery] string? returnUrl = "/")
+    public ActionResult<LoginUrlResponse> GetLoginUrl([FromQuery] string? returnUrl = "/", [FromQuery] string? accountName = null)
     {
         var userId = _currentUserService.UserId;
         if (userId == null)
@@ -66,6 +68,7 @@ public class AuthController : ControllerBase
         PendingStates[state] = new PendingOAuthState
         {
             UserId = userId.Value,
+            AccountName = NormalizeAccountName(accountName),
             ReturnUrl = safeReturnUrl,
             ExpiresAtUtc = expiry
         };
@@ -211,10 +214,18 @@ public class AuthController : ControllerBase
         if (result == null) return Redirect(BuildRedirect("error", "Failed to parse eBay token response."));
 
         // Save to DB
-        var existingToken = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == pending.UserId);
+        var accountName = string.IsNullOrWhiteSpace(pending.AccountName)
+            ? $"eBay Account {(await _context.EbayTokens.CountAsync(t => t.UserId == pending.UserId)) + 1}"
+            : pending.AccountName!;
+        var existingToken = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == pending.UserId && t.Name == accountName);
         if (existingToken == null)
         {
-            existingToken = new EbayTokenInfo { UserId = pending.UserId };
+            existingToken = new EbayTokenInfo 
+            { 
+                UserId = pending.UserId,
+                Name = accountName,
+                IsDefault = !await _context.EbayTokens.AnyAsync(t => t.UserId == pending.UserId && t.IsDefault)
+            };
             _context.EbayTokens.Add(existingToken);
         }
 
@@ -236,7 +247,7 @@ public class AuthController : ControllerBase
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
 
-        var token = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value);
+        var token = await _context.EbayTokens.Where(t => t.UserId == userId.Value).OrderByDescending(t => t.IsDefault).ThenBy(t => t.Id).FirstOrDefaultAsync();
         if (token == null)
         {
             return Ok(new AuthStatusResponse { Connected = false });
@@ -261,10 +272,18 @@ public class AuthController : ControllerBase
 
             if (string.IsNullOrEmpty(request.Token)) return BadRequest("Token is required");
 
-            var existingToken = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value);
+            var accountName = NormalizeAccountName(request.AccountName);
+            var existingToken = !string.IsNullOrWhiteSpace(accountName)
+                ? await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value && t.Name == accountName)
+                : null;
             if (existingToken == null)
             {
-                existingToken = new EbayTokenInfo { UserId = userId.Value };
+                existingToken = new EbayTokenInfo 
+                { 
+                    UserId = userId.Value,
+                    Name = string.IsNullOrWhiteSpace(accountName) ? $"eBay Account {(await _context.EbayTokens.CountAsync(t => t.UserId == userId.Value)) + 1}" : accountName!,
+                    IsDefault = !await _context.EbayTokens.AnyAsync(t => t.UserId == userId.Value && t.IsDefault)
+                };
                 _context.EbayTokens.Add(existingToken);
             }
 
@@ -282,11 +301,61 @@ public class AuthController : ControllerBase
             return StatusCode(500, $"Internal Error: {ex.Message}");
         }
     }
+
+    [Authorize]
+    [HttpGet("accounts")]
+    public async Task<ActionResult<List<EbayAccountDto>>> GetAccounts()
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var accounts = await _context.EbayTokens
+            .Where(t => t.UserId == userId.Value)
+            .OrderByDescending(t => t.IsDefault)
+            .ThenBy(t => t.Name)
+            .Select(t => new EbayAccountDto
+            {
+                Id = t.Id,
+                Name = t.Name,
+                IsDefault = t.IsDefault,
+                IsConnected = t.ExpiryTime > DateTime.UtcNow,
+                ExpiresAtUtc = t.ExpiryTime
+            })
+            .ToListAsync();
+
+        return Ok(accounts);
+    }
+
+    [Authorize]
+    [HttpPost("accounts/{id:int}/default")]
+    public async Task<IActionResult> SetDefaultAccount(int id)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var account = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value && t.Id == id);
+        if (account == null) return NotFound();
+
+        var accounts = await _context.EbayTokens.Where(t => t.UserId == userId.Value).ToListAsync();
+        foreach (var item in accounts)
+        {
+            item.IsDefault = item.Id == id;
+        }
+
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    private static string? NormalizeAccountName(string? accountName)
+    {
+        return string.IsNullOrWhiteSpace(accountName) ? null : accountName.Trim();
+    }
 }
 
 public class ManualTokenRequest
 {
     public string Token { get; set; } = string.Empty;
+    public string? AccountName { get; set; }
 }
 
 public class EbayOAuthResponse
