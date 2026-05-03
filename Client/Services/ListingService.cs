@@ -67,19 +67,32 @@ public class ListingService
         return await GetAsync<ExtractedDetailsDto>($"api/listings/extract?url={Uri.EscapeDataString(url)}") ?? new ExtractedDetailsDto();
     }
 
-    public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync()
+    public async Task<List<EbayAccountDto>> GetEbayAccountsAsync()
     {
-        return await GetAsync<List<EbayPolicyDto>>("api/ebaypolicies/payment") ?? new List<EbayPolicyDto>();
+        return await GetAsync<List<EbayAccountDto>>("api/auth/accounts") ?? new List<EbayAccountDto>();
     }
 
-    public async Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync()
+    public async Task SetDefaultEbayAccountAsync(int accountId)
     {
-        return await GetAsync<List<EbayPolicyDto>>("api/ebaypolicies/fulfillment") ?? new List<EbayPolicyDto>();
+        await SendAsync<object>(HttpMethod.Post, $"api/auth/accounts/{accountId}/default");
     }
 
-    public async Task<List<EbayPolicyDto>> GetReturnPoliciesAsync()
+    public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null)
     {
-        return await GetAsync<List<EbayPolicyDto>>("api/ebaypolicies/return") ?? new List<EbayPolicyDto>();
+        var suffix = accountId.HasValue ? $"?accountId={accountId.Value}" : string.Empty;
+        return await GetAsync<List<EbayPolicyDto>>($"api/ebaypolicies/payment{suffix}") ?? new List<EbayPolicyDto>();
+    }
+
+    public async Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync(int? accountId = null)
+    {
+        var suffix = accountId.HasValue ? $"?accountId={accountId.Value}" : string.Empty;
+        return await GetAsync<List<EbayPolicyDto>>($"api/ebaypolicies/fulfillment{suffix}") ?? new List<EbayPolicyDto>();
+    }
+
+    public async Task<List<EbayPolicyDto>> GetReturnPoliciesAsync(int? accountId = null)
+    {
+        var suffix = accountId.HasValue ? $"?accountId={accountId.Value}" : string.Empty;
+        return await GetAsync<List<EbayPolicyDto>>($"api/ebaypolicies/return{suffix}") ?? new List<EbayPolicyDto>();
     }
 
     public async Task<Shared.EbayDefaultPoliciesDto> GetDefaultPoliciesAsync()
@@ -87,11 +100,11 @@ public class ListingService
         return await GetAsync<Shared.EbayDefaultPoliciesDto>("api/ebay/default-policies") ?? new Shared.EbayDefaultPoliciesDto();
     }
 
-    public async Task SetManualTokenAsync(string token)
+    public async Task SetManualTokenAsync(string token, string? accountName = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "api/auth/manual-token")
         {
-            Content = JsonContent.Create(new { Token = token })
+            Content = JsonContent.Create(new { Token = token, AccountName = accountName })
         };
         request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
         using var response = await _http.SendAsync(request);
@@ -102,9 +115,14 @@ public class ListingService
         }
     }
 
-    public async Task<string> GetEbayLoginUrlAsync(string returnUrl = "/")
+    public async Task<string> GetEbayLoginUrlAsync(string returnUrl = "/", string? accountName = null)
     {
-        var response = await GetAsync<LoginUrlResponse>($"api/auth/login-url?returnUrl={Uri.EscapeDataString(returnUrl)}");
+        var url = $"api/auth/login-url?returnUrl={Uri.EscapeDataString(returnUrl)}";
+        if (!string.IsNullOrWhiteSpace(accountName))
+        {
+            url += $"&accountName={Uri.EscapeDataString(accountName)}";
+        }
+        var response = await GetAsync<LoginUrlResponse>(url);
         if (response == null || string.IsNullOrWhiteSpace(response.LoginUrl))
         {
             throw new Exception("Failed to get eBay login URL.");
@@ -133,9 +151,14 @@ public class ListingService
         return await response.Content.ReadFromJsonAsync<ListingDto>() ?? throw new Exception("Failed to deserialize response");
     }
 
-    public async Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title)
+    public async Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title, int? accountId = null)
     {
-        return await GetAsync<List<CategorySuggestionDto>>($"api/ebaypolicies/category-suggestions?title={Uri.EscapeDataString(title)}") ?? new List<CategorySuggestionDto>();
+        var url = $"api/ebaypolicies/category-suggestions?title={Uri.EscapeDataString(title)}";
+        if (accountId.HasValue)
+        {
+            url += $"&accountId={accountId.Value}";
+        }
+        return await GetAsync<List<CategorySuggestionDto>>(url) ?? new List<CategorySuggestionDto>();
     }
 
     public async Task<int> BulkExtractAsync(string categoryUrl)

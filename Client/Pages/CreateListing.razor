@@ -94,6 +94,18 @@
         </div>
 
         <div class="col-md-8">
+            <label for="ebayAccount" class="form-label">eBay Account</label>
+            <select id="ebayAccount" class="form-select" value="@(listing.EbayAccountId?.ToString() ?? string.Empty)" @onchange="OnEbayAccountChanged">
+                <option value="">-- Select eBay Account --</option>
+                @foreach (var account in ebayAccounts)
+                {
+                    <option value="@account.Id">@account.Name@(account.IsDefault ? " (Default)" : string.Empty)</option>
+                }
+            </select>
+            <div class="small text-muted mt-1">Drafts default to your default account, but you can override it for this listing.</div>
+        </div>
+
+        <div class="col-md-8">
             <label for="category" class="form-label">eBay Category ID</label>
             <InputText id="category" class="form-control" @bind-Value="listing.CategoryId" placeholder="e.g. 57013" />
             <div class="small mt-1">
@@ -326,6 +338,7 @@
     private List<EbayPolicyDto> paymentPolicies = new();
     private List<EbayPolicyDto> fulfillmentPolicies = new();
     private List<EbayPolicyDto> returnPolicies = new();
+    private List<EbayAccountDto> ebayAccounts = new();
 
     private string listingStatus = "Draft";
 
@@ -348,7 +361,7 @@
             return;
         }
 
-        await LoadPolicies();
+        await LoadEbayAccounts();
 
         if (Id.HasValue)
         {
@@ -356,6 +369,7 @@
             {
                 var existing = await ListingService.GetListingAsync(Id.Value);
                 // Populate the existing listing instance rather than replacing it (preserve editor DOM)
+            listing.EbayAccountId = existing.EbayAccountId;
                 listing.Title = existing.Title;
                 listing.Description = existing.Description;
                 listing.Price = existing.Price;
@@ -387,6 +401,8 @@
                 Navigation.NavigateTo("/");
             }
         }
+
+        await LoadPolicies();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -452,9 +468,9 @@
     {
         try
         {
-            paymentPolicies = await ListingService.GetPaymentPoliciesAsync();
-            fulfillmentPolicies = await ListingService.GetFulfillmentPoliciesAsync();
-            returnPolicies = await ListingService.GetReturnPoliciesAsync();
+            paymentPolicies = await ListingService.GetPaymentPoliciesAsync(listing.EbayAccountId);
+            fulfillmentPolicies = await ListingService.GetFulfillmentPoliciesAsync(listing.EbayAccountId);
+            returnPolicies = await ListingService.GetReturnPoliciesAsync(listing.EbayAccountId);
 
             // Auto-select defaults for NEW listings only (not edits)
             if (!Id.HasValue)
@@ -512,6 +528,31 @@
         {
             Console.WriteLine($"Error loading policies: {ex.Message}");
         }
+    }
+
+    private async Task LoadEbayAccounts()
+    {
+        try
+        {
+            ebayAccounts = await ListingService.GetEbayAccountsAsync();
+            if (!Id.HasValue && !listing.EbayAccountId.HasValue)
+            {
+                listing.EbayAccountId = ebayAccounts.FirstOrDefault(a => a.IsDefault)?.Id ?? ebayAccounts.FirstOrDefault()?.Id;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading eBay accounts: {ex.Message}");
+            ebayAccounts = new List<EbayAccountDto>();
+        }
+    }
+
+    private async Task OnEbayAccountChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        listing.EbayAccountId = int.TryParse(value, out var accountId) ? accountId : null;
+        await LoadPolicies();
+        suggestions.Clear();
     }
 
     private async Task HandleExtract()
@@ -608,7 +649,7 @@
         isSuggesting = true;
         try
         {
-            suggestions = await ListingService.GetCategorySuggestionsAsync(listing.Title);
+            suggestions = await ListingService.GetCategorySuggestionsAsync(listing.Title, listing.EbayAccountId);
         }
         catch (Exception ex)
         {
@@ -705,6 +746,7 @@
         {
             var dto = new Shared.ListingDto
             {
+                EbayAccountId = listing.EbayAccountId,
                 Title = listing.Title,
                 Description = listing.Description,
                 Price = listing.Price,

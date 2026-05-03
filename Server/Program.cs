@@ -150,6 +150,8 @@ using (var scope = app.Services.CreateScope())
             CREATE TABLE IF NOT EXISTS ""EbayTokens"" (
                 ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_EbayTokens"" PRIMARY KEY AUTOINCREMENT,
                 ""UserId"" INTEGER NOT NULL DEFAULT 0,
+                ""Name"" TEXT NOT NULL DEFAULT 'eBay Account',
+                ""IsDefault"" INTEGER NOT NULL DEFAULT 0,
                 ""AccessToken"" TEXT NOT NULL,
                 ""RefreshToken"" TEXT NOT NULL,
                 ""ExpiryTime"" TEXT NOT NULL,
@@ -161,7 +163,7 @@ using (var scope = app.Services.CreateScope())
             CREATE INDEX IF NOT EXISTS ""IX_EbayTokens_UserId"" ON ""EbayTokens"" (""UserId"");
         ");
 
-        // Ensure EbayTokens table has UserId for per-user token storage.
+        // Ensure EbayTokens table has account metadata for multi-account per-user storage.
         var ebayTokenColumns = new List<string>();
         var conn2 = db.Database.GetDbConnection();
         if (conn2.State != System.Data.ConnectionState.Open) conn2.Open();
@@ -181,9 +183,27 @@ using (var scope = app.Services.CreateScope())
                 cmd.CommandText = @"ALTER TABLE ""EbayTokens"" ADD COLUMN ""UserId"" INTEGER NOT NULL DEFAULT 0;";
                 cmd.ExecuteNonQuery();
             }
+
+            if (!ebayTokenColumns.Any(c => c.Equals("Name", StringComparison.OrdinalIgnoreCase)))
+            {
+                cmd.CommandText = @"ALTER TABLE ""EbayTokens"" ADD COLUMN ""Name"" TEXT NOT NULL DEFAULT 'eBay Account';";
+                cmd.ExecuteNonQuery();
+            }
+
+            if (!ebayTokenColumns.Any(c => c.Equals("IsDefault", StringComparison.OrdinalIgnoreCase)))
+            {
+                cmd.CommandText = @"ALTER TABLE ""EbayTokens"" ADD COLUMN ""IsDefault"" INTEGER NOT NULL DEFAULT 0;";
+                cmd.ExecuteNonQuery();
+            }
         }
 
         // Backfill legacy single-token setups to the first user when exactly one user exists.
+        db.Database.ExecuteSqlRaw(@"
+            UPDATE ""EbayTokens""
+            SET ""Name"" = 'Default eBay Account'
+            WHERE COALESCE(TRIM(""Name""), '') = '';
+        ");
+
         db.Database.ExecuteSqlRaw(@"
             UPDATE ""EbayTokens""
             SET ""UserId"" = (SELECT ""Id"" FROM ""Users"" ORDER BY ""Id"" LIMIT 1)
@@ -191,8 +211,21 @@ using (var scope = app.Services.CreateScope())
               AND 1 = (SELECT COUNT(*) FROM ""Users"");
         ");
 
+        db.Database.ExecuteSqlRaw(@"
+            UPDATE ""EbayTokens""
+            SET ""IsDefault"" = 1
+            WHERE ""Id"" IN (
+                SELECT et.""Id""
+                FROM ""EbayTokens"" et
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM ""EbayTokens"" other
+                    WHERE other.""UserId"" = et.""UserId"" AND other.""IsDefault"" = 1
+                )
+            );
+        ");
+
         // Ensure Listings table has required columns (completely silent raw SQL)
-        var requiredColumns = new[] { "OwnerUserId", "Type", "Brand", "Colour", "ImageUrlsJson", "Sku", "EbayOfferId", "SourceUrl", "SourcePrice", "SourceProductCode" };
+        var requiredColumns = new[] { "OwnerUserId", "EbayAccountId", "Type", "Brand", "Colour", "ImageUrlsJson", "Sku", "EbayOfferId", "SourceUrl", "SourcePrice", "SourceProductCode" };
         var existingColumns = new List<string>();
         
         try 
@@ -227,6 +260,10 @@ using (var scope = app.Services.CreateScope())
                             {
                                 cmd.CommandText = $@"ALTER TABLE ""{actualTableName}"" ADD COLUMN ""{col}"" REAL NULL;";
                             }
+                            else if (string.Equals(col, "EbayAccountId", StringComparison.OrdinalIgnoreCase))
+                            {
+                                cmd.CommandText = $@"ALTER TABLE ""{actualTableName}"" ADD COLUMN ""{col}"" INTEGER NULL;";
+                            }
                             else if (string.Equals(col, "OwnerUserId", StringComparison.OrdinalIgnoreCase))
                             {
                                 cmd.CommandText = $@"ALTER TABLE ""{actualTableName}"" ADD COLUMN ""{col}"" INTEGER NOT NULL DEFAULT 0;";
@@ -252,6 +289,30 @@ using (var scope = app.Services.CreateScope())
         catch (Exception ex)
         {
             Console.WriteLine($"[Migration] Fatal error during manual migration: {ex.Message}");
+        }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                UPDATE ""Listings""
+                SET ""EbayAccountId"" = (
+                    SELECT et.""Id""
+                    FROM ""EbayTokens"" et
+                    WHERE et.""UserId"" = ""Listings"".""OwnerUserId""
+                    ORDER BY et.""IsDefault"" DESC, et.""Id""
+                    LIMIT 1
+                )
+                WHERE ""EbayAccountId"" IS NULL
+                  AND EXISTS (
+                    SELECT 1
+                    FROM ""EbayTokens"" et
+                    WHERE et.""UserId"" = ""Listings"".""OwnerUserId""
+                );
+            ");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Migration] Listing eBay account backfill error: {ex.Message}");
         }
     }
     catch (Exception ex)

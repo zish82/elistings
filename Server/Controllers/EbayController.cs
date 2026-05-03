@@ -45,6 +45,7 @@ public class EbayController : ControllerBase
             var dto = new ListingDto
             {
                 Id = listing.Id,
+                EbayAccountId = listing.EbayAccountId,
                 Title = listing.Title,
                 Description = listing.Description,
                 Price = listing.Price,
@@ -72,6 +73,7 @@ public class EbayController : ControllerBase
             return Ok(new ListingDto
             {
                 Id = listing.Id,
+                EbayAccountId = listing.EbayAccountId,
                 Title = listing.Title,
                 Description = listing.Description,
                 Price = listing.Price,

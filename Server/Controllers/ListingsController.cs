@@ -28,6 +28,16 @@ public class ListingsController : ControllerBase
         _currentUserService = currentUserService;
     }
 
+    private int? GetDefaultEbayAccountId(int userId)
+    {
+        return _context.EbayTokens
+            .Where(t => t.UserId == userId)
+            .OrderByDescending(t => t.IsDefault)
+            .ThenBy(t => t.Id)
+            .Select(t => (int?)t.Id)
+            .FirstOrDefault();
+    }
+
     [HttpGet("extract")]
     public async Task<ActionResult<ExtractedDetailsDto>> ExtractFromUrl([FromQuery] string url)
     {
@@ -58,6 +68,8 @@ public class ListingsController : ControllerBase
             .Select(l => new ListingDto
             {
                 Id = l.Id,
+                EbayAccountId = l.EbayAccountId,
+                EbayAccountName = _context.EbayTokens.Where(t => t.Id == l.EbayAccountId).Select(t => t.Name).FirstOrDefault(),
                 OwnerUserId = l.OwnerUserId,
                 OwnerEmail = _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefault(),
                 Title = l.Title,
@@ -94,6 +106,8 @@ public class ListingsController : ControllerBase
         return Ok(new ListingDto
         {
             Id = l.Id,
+            EbayAccountId = l.EbayAccountId,
+            EbayAccountName = await _context.EbayTokens.Where(t => t.Id == l.EbayAccountId).Select(t => t.Name).FirstOrDefaultAsync(),
             OwnerUserId = l.OwnerUserId,
             OwnerEmail = await _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefaultAsync(),
             Title = l.Title,
@@ -145,6 +159,7 @@ public class ListingsController : ControllerBase
         var listing = new Listing
         {
             OwnerUserId = userId.Value,
+            EbayAccountId = request.EbayAccountId ?? GetDefaultEbayAccountId(userId.Value),
             Title = request.Title,
             Description = request.Description,
             Price = request.Price,
@@ -169,6 +184,7 @@ public class ListingsController : ControllerBase
         return CreatedAtAction(nameof(GetListing), new { id = listing.Id }, new ListingDto 
         { 
             Id = listing.Id, 
+            EbayAccountId = listing.EbayAccountId,
             OwnerUserId = listing.OwnerUserId,
             Title = listing.Title, 
             Description = listing.Description, 
@@ -197,6 +213,7 @@ public class ListingsController : ControllerBase
         listing.Title = request.Title;
         listing.Description = request.Description;
         listing.Price = request.Price;
+        listing.EbayAccountId = request.EbayAccountId ?? GetDefaultEbayAccountId(listing.OwnerUserId);
         listing.CategoryId = request.CategoryId;
         listing.FulfillmentPolicyId = request.FulfillmentPolicyId;
         listing.PaymentPolicyId = request.PaymentPolicyId;
@@ -234,6 +251,7 @@ public class ListingsController : ControllerBase
                     var listing = new Listing
                     {
                         OwnerUserId = _currentUserService.UserId ?? 0,
+                        EbayAccountId = _currentUserService.UserId is int currentUserId ? GetDefaultEbayAccountId(currentUserId) : null,
                         Title = details.Title,
                         Description = details.Description,
                         Price = details.PriceIncVat ?? details.Price ?? 0.99m,
@@ -354,6 +372,7 @@ public class ListingsController : ControllerBase
                 var dto = new ListingDto
                 {
                     Id = listingEntity.Id,
+                    EbayAccountId = listingEntity.EbayAccountId,
                     Title = listingEntity.Title,
                     Description = listingEntity.Description,
                     Price = listingEntity.Price,

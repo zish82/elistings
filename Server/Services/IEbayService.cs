@@ -5,12 +5,12 @@ namespace Server.Services;
 public interface IEbayService
 {
     Task<EbayListingResponse> CreateListingAsync(ListingDto listing);
-    Task<string> GetOAuthTokenAsync();
+    Task<string> GetOAuthTokenAsync(int? accountId = null);
     
-    Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync();
-    Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync();
-    Task<List<EbayPolicyDto>> GetReturnPoliciesAsync();
+    Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null);
+    Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync(int? accountId = null);
+    Task<List<EbayPolicyDto>> GetReturnPoliciesAsync(int? accountId = null);
     
-    Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title);
+    Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title, int? accountId = null);
     Task<System.Text.Json.Nodes.JsonNode?> GetFeeEstimateAsync(Shared.ListingDto listing);
 }

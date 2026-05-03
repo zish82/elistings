@@ -53,7 +53,7 @@ public class EbayService : IEbayService
             return placeholder;
         }
 
-        var token = await GetOAuthTokenAsync();
+        var token = await GetOAuthTokenAsync(listing.EbayAccountId);
         var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
 
         var payload = new
@@ -109,7 +109,7 @@ public class EbayService : IEbayService
 
     public async Task<EbayListingResponse> CreateListingAsync(ListingDto listing)
     {
-        var token = await GetOAuthTokenAsync();
+        var token = await GetOAuthTokenAsync(listing.EbayAccountId);
         
         // 1. Create/Update Inventory Item
         // Use persistent SKU for the listing if available, else generate one.
@@ -135,7 +135,7 @@ public class EbayService : IEbayService
                 {
                     try 
                     {
-                        var ebayUrl = await imageService.UploadImageFromUrlAsync(url);
+                        var ebayUrl = await imageService.UploadImageFromUrlAsync(url, listing.EbayAccountId);
                         finalImageUrls.Add(ebayUrl);
                     }
                     catch (Exception ex)
@@ -337,21 +337,21 @@ public class EbayService : IEbayService
         };
     }
 
-    public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync() 
-        => await FetchPoliciesAsync("payment", "paymentPolicies");
+    public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null) 
+        => await FetchPoliciesAsync("payment", "paymentPolicies", accountId);
 
-    public async Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync()
-        => await FetchPoliciesAsync("fulfillment", "fulfillmentPolicies");
+    public async Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync(int? accountId = null)
+        => await FetchPoliciesAsync("fulfillment", "fulfillmentPolicies", accountId);
 
-    public async Task<List<EbayPolicyDto>> GetReturnPoliciesAsync()
-        => await FetchPoliciesAsync("return", "returnPolicies");
+    public async Task<List<EbayPolicyDto>> GetReturnPoliciesAsync(int? accountId = null)
+        => await FetchPoliciesAsync("return", "returnPolicies", accountId);
 
-    private async Task<List<EbayPolicyDto>> FetchPoliciesAsync(string urlPart, string jsonKey)
+    private async Task<List<EbayPolicyDto>> FetchPoliciesAsync(string urlPart, string jsonKey, int? accountId)
     {
         string token;
         try
         {
-            token = await GetOAuthTokenAsync();
+            token = await GetOAuthTokenAsync(accountId);
         }
         catch (Exception ex)
         {
@@ -426,7 +426,7 @@ public class EbayService : IEbayService
         }
     }
 
-    public async Task<string> GetOAuthTokenAsync()
+    public async Task<string> GetOAuthTokenAsync(int? accountId = null)
     {
         // 1. Try manual override from appsettings (for dev/temp use)
         if (!string.IsNullOrEmpty(_settings.UserToken) && _settings.UserToken != "PASTE_YOUR_USER_TOKEN_HERE")
@@ -443,7 +443,7 @@ public class EbayService : IEbayService
         // 2. Load from Database
         using var scope = _serviceProvider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<Server.Data.AppDbContext>();
-        var tokenInfo = await context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value);
+        var tokenInfo = await ResolveTokenInfoAsync(context, userId.Value, accountId);
 
         if (tokenInfo == null)
             throw new Exception("eBay account not connected. Please login first.");
@@ -456,6 +456,20 @@ public class EbayService : IEbayService
 
         // 4. If expired, try refresh
         return await RefreshTokenAsync(tokenInfo, context);
+    }
+
+    private static async Task<Server.Data.EbayTokenInfo?> ResolveTokenInfoAsync(Server.Data.AppDbContext context, int userId, int? accountId)
+    {
+        if (accountId.HasValue)
+        {
+            return await context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId && t.Id == accountId.Value);
+        }
+
+        return await context.EbayTokens
+            .Where(t => t.UserId == userId)
+            .OrderByDescending(t => t.IsDefault)
+            .ThenBy(t => t.Id)
+            .FirstOrDefaultAsync();
     }
 
     private async Task<string> RefreshTokenAsync(Server.Data.EbayTokenInfo tokenInfo, Server.Data.AppDbContext context)
@@ -489,14 +503,14 @@ public class EbayService : IEbayService
         return tokenInfo.AccessToken;
     }
 
-    public async Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title)
+    public async Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title, int? accountId = null)
     {
         if (string.IsNullOrWhiteSpace(title)) return new List<CategorySuggestionDto>();
 
         string token;
         try
         {
-            token = await GetOAuthTokenAsync();
+            token = await GetOAuthTokenAsync(accountId);
         }
         catch (Exception ex)
         {

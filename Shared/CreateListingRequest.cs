@@ -2,6 +2,7 @@ namespace Shared;
 
 public class CreateListingRequest
 {
+    public int? EbayAccountId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     [System.ComponentModel.DataAnnotations.Range(0.99, 1000000.00, ErrorMessage = "Price must be at least £0.99 for eBay UK.")]
