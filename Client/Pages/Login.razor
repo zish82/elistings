@@ -1,0 +1,77 @@
+@page "/login"
+@using Client.Services
+@using Shared
+@inject AuthService AuthService
+@inject NavigationManager Navigation
+
+<div class="container mt-5" style="max-width: 480px;">
+    <div class="card shadow-sm">
+        <div class="card-body p-4">
+            <h3 class="mb-3">Sign In</h3>
+            <p class="text-muted small">Use your email address and password to access your listings.</p>
+
+            <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input class="form-control" @bind="email" autocomplete="username" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <input class="form-control" type="password" @bind="password" autocomplete="current-password" />
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <div class="alert alert-danger py-2">@errorMessage</div>
+            }
+
+            <button class="btn btn-primary w-100" @onclick="HandleLogin" disabled="@isSubmitting">
+                @(isSubmitting ? "Signing in..." : "Sign In")
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? ReturnUrl { get; set; }
+
+    private string email = string.Empty;
+    private string password = string.Empty;
+    private bool isSubmitting;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var session = await AuthService.GetSessionAsync(true);
+        if (!session.HasUsers)
+        {
+            Navigation.NavigateTo("/setup-admin", replace: true);
+            return;
+        }
+
+        if (session.IsAuthenticated)
+        {
+            Navigation.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl, replace: true);
+        }
+    }
+
+    private async Task HandleLogin()
+    {
+        errorMessage = null;
+        isSubmitting = true;
+        try
+        {
+            await AuthService.LoginAsync(new LoginRequest { Email = email, Password = password });
+            Navigation.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl, replace: true);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+}

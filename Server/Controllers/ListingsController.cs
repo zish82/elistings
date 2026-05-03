@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Server.Data;
@@ -9,19 +10,22 @@ namespace Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ListingsController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IScraperService _scraperService;
     private readonly IEbayService _ebayService;
     private readonly Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> _ebaySettings;
+    private readonly ICurrentUserService _currentUserService;
 
-    public ListingsController(AppDbContext context, IScraperService scraperService, IEbayService ebayService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings)
+    public ListingsController(AppDbContext context, IScraperService scraperService, IEbayService ebayService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings, ICurrentUserService currentUserService)
     {
         _context = context;
         _scraperService = scraperService;
         _ebayService = ebayService;
         _ebaySettings = ebaySettings;
+        _currentUserService = currentUserService;
     }
 
     [HttpGet("extract")]
@@ -42,10 +46,20 @@ public class ListingsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<List<ListingDto>>> GetListings()
     {
-        var listings = await _context.Listings
+        var query = _context.Listings.AsQueryable();
+        if (!_currentUserService.CanViewAllListings)
+        {
+            var userId = _currentUserService.UserId;
+            if (userId == null) return Unauthorized();
+            query = query.Where(l => l.OwnerUserId == userId.Value);
+        }
+
+        var listings = await query
             .Select(l => new ListingDto
             {
                 Id = l.Id,
+                OwnerUserId = l.OwnerUserId,
+                OwnerEmail = _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefault(),
                 Title = l.Title,
                 Description = l.Description,
                 Price = l.Price,
@@ -74,12 +88,14 @@ public class ListingsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<ListingDto>> GetListing(int id)
     {
-        var l = await _context.Listings.FindAsync(id);
+        var l = await FindAccessibleListing(id);
         if (l == null) return NotFound();
 
         return Ok(new ListingDto
         {
             Id = l.Id,
+            OwnerUserId = l.OwnerUserId,
+            OwnerEmail = await _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefaultAsync(),
             Title = l.Title,
             Description = l.Description,
             Price = l.Price,
@@ -105,6 +121,9 @@ public class ListingsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ListingDto>> CreateListing(CreateListingRequest request)
     {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
         string GetDefault(string provided, string type)
         {
             if (!string.IsNullOrEmpty(provided)) return provided;
@@ -125,6 +144,7 @@ public class ListingsController : ControllerBase
 
         var listing = new Listing
         {
+            OwnerUserId = userId.Value,
             Title = request.Title,
             Description = request.Description,
             Price = request.Price,
@@ -149,6 +169,7 @@ public class ListingsController : ControllerBase
         return CreatedAtAction(nameof(GetListing), new { id = listing.Id }, new ListingDto 
         { 
             Id = listing.Id, 
+            OwnerUserId = listing.OwnerUserId,
             Title = listing.Title, 
             Description = listing.Description, 
             Price = listing.Price,
@@ -170,7 +191,7 @@ public class ListingsController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateListing(int id, CreateListingRequest request)
     {
-        var listing = await _context.Listings.FindAsync(id);
+        var listing = await FindAccessibleListing(id);
         if (listing == null) return NotFound();
 
         listing.Title = request.Title;
@@ -212,6 +233,7 @@ public class ListingsController : ControllerBase
                     
                     var listing = new Listing
                     {
+                        OwnerUserId = _currentUserService.UserId ?? 0,
                         Title = details.Title,
                         Description = details.Description,
                         Price = details.PriceIncVat ?? details.Price ?? 0.99m,
@@ -252,7 +274,15 @@ public class ListingsController : ControllerBase
 
         try
         {
-            var toProcess = await _context.Listings.Where(l => ids.Contains(l.Id)).ToListAsync();
+            var query = _context.Listings.Where(l => ids.Contains(l.Id));
+            if (!_currentUserService.CanViewAllListings)
+            {
+                var userId = _currentUserService.UserId;
+                if (userId == null) return Unauthorized();
+                query = query.Where(l => l.OwnerUserId == userId.Value);
+            }
+
+            var toProcess = await query.ToListAsync();
             var marked = 0;
             var deleted = 0;
 
@@ -279,6 +309,19 @@ public class ListingsController : ControllerBase
         }
     }
 
+    private async Task<Listing?> FindAccessibleListing(int id)
+    {
+        var query = _context.Listings.Where(l => l.Id == id);
+        if (!_currentUserService.CanViewAllListings)
+        {
+            var userId = _currentUserService.UserId;
+            if (userId == null) return null;
+            query = query.Where(l => l.OwnerUserId == userId.Value);
+        }
+
+        return await query.FirstOrDefaultAsync();
+    }
+
     [HttpPost("bulk-publish")]
     public async Task<ActionResult> BulkPublish([FromBody] List<int> ids)
     {
@@ -292,11 +335,11 @@ public class ListingsController : ControllerBase
         {
             try
             {
-                var listingEntity = await _context.Listings.FindAsync(id);
+                var listingEntity = await FindAccessibleListing(id);
                 if (listingEntity == null)
                 {
                     failed++;
-                    errors.Add($"Listing {id} not found");
+                    errors.Add($"Listing {id} not found or access denied");
                     continue;
                 }
 

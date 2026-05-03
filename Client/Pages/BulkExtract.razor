@@ -1,5 +1,6 @@
 @page "/bulk-extract"
 @using Client.Services
+@inject AuthService AuthService
 @inject ListingService ListingService
 @inject NavigationManager Navigation
 
@@ -81,6 +82,11 @@
     private bool isProcessing = false;
     private int? resultCount;
     private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthService.EnsureAuthenticatedAsync("/bulk-extract");
+    }
 
     private async Task HandleBulkExtract()
     {

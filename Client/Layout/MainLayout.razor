@@ -1,4 +1,7 @@
 ﻿@inherits LayoutComponentBase
+@inject Client.Services.AuthService AuthService
+@inject NavigationManager Navigation
+
 <div class="page">
     <div class="sidebar">
         <NavMenu />
@@ -6,7 +9,11 @@
 
     <main>
         <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+            @if (currentUser != null)
+            {
+                <span class="small text-muted">@currentUser.Email (@currentUser.Role)</span>
+                <button class="btn btn-link" @onclick="Logout">Logout</button>
+            }
         </div>
 
         <article class="content px-4">
@@ -14,3 +21,19 @@
         </article>
     </main>
 </div>
+
+@code {
+    private Shared.CurrentUserDto? currentUser;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var session = await AuthService.GetSessionAsync();
+        currentUser = session.User;
+    }
+
+    private async Task Logout()
+    {
+        await AuthService.LogoutAsync();
+        Navigation.NavigateTo("/login", replace: true);
+    }
+}

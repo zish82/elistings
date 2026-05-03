@@ -1,4 +1,7 @@
 using System.Text.Json;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -13,6 +16,26 @@ namespace Server.Tests;
 
 public class ListingsControllerTests
 {
+    private static ICurrentUserService CreateCurrentUserService(int userId = 1, bool canViewAllListings = false)
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.SetupGet(x => x.IsAuthenticated).Returns(true);
+        currentUser.SetupGet(x => x.UserId).Returns(userId);
+        currentUser.SetupGet(x => x.Email).Returns("tester@example.com");
+        currentUser.SetupGet(x => x.Role).Returns(AuthRoles.Lister);
+        currentUser.SetupGet(x => x.CanManageUsers).Returns(false);
+        currentUser.SetupGet(x => x.CanViewAllListings).Returns(canViewAllListings);
+        currentUser.Setup(x => x.GetCurrentUserDto()).Returns(new CurrentUserDto
+        {
+            Id = userId,
+            Email = "tester@example.com",
+            Role = AuthRoles.Lister,
+            CanManageUsers = false,
+            CanViewAllListings = canViewAllListings
+        });
+        return currentUser.Object;
+    }
+
     private AppDbContext CreateContext(string dbName)
     {
         var opts = new DbContextOptionsBuilder<AppDbContext>()
@@ -33,8 +56,9 @@ public class ListingsControllerTests
             DefaultReturnPolicyId = "ret-789"
         });
 
-        var scraperMock = new Mock<ScraperService>(MockBehavior.Strict, (object)null!);
-        var controller = new ListingsController(ctx, scraperMock.Object, settings);
+        var scraperMock = new Mock<IScraperService>(MockBehavior.Strict);
+        var ebayMock = new Mock<IEbayService>(MockBehavior.Strict);
+        var controller = new ListingsController(ctx, scraperMock.Object, ebayMock.Object, settings, CreateCurrentUserService());
 
         var req = new CreateListingRequest
         {
@@ -52,6 +76,7 @@ public class ListingsControllerTests
         Assert.Equal("pay-123", saved.PaymentPolicyId);
         Assert.Equal("ship-456", saved.FulfillmentPolicyId);
         Assert.Equal("ret-789", saved.ReturnPolicyId);
+        Assert.Equal(1, saved.OwnerUserId);
     }
 
     [Fact]
@@ -66,6 +91,7 @@ public class ListingsControllerTests
             Description = "D",
             Price = 5.00m,
             Status = "Draft",
+            OwnerUserId = 1,
             ImageUrlsJson = JsonSerializer.Serialize(new List<string>()),
         };
         ctx.Listings.Add(listing);
@@ -78,19 +104,20 @@ public class ListingsControllerTests
             DefaultReturnPolicyId = "ret-ghi"
         });
 
-        var scraperMock = new Mock<ScraperService>(MockBehavior.Strict, (object)null!);
+         var scraperMock = new Mock<IScraperService>(MockBehavior.Strict);
 
         var ebayMock = new Mock<IEbayService>();
         ebayMock.Setup(s => s.CreateListingAsync(It.IsAny<ListingDto>()))
                .ReturnsAsync(new EbayListingResponse { Sku = "SKU1", OfferId = "OF1", ListingId = "L1" });
 
-        var controller = new ListingsController(ctx, scraperMock.Object, ebayMock.Object, settings);
+         var controller = new ListingsController(ctx, scraperMock.Object, ebayMock.Object, settings, CreateCurrentUserService());
 
         var ids = new List<int> { listing.Id };
         var response = await controller.BulkPublish(ids);
 
         // After publish, listing should be marked Published and have ebay fields
         var updated = await ctx.Listings.FindAsync(listing.Id);
+        Assert.NotNull(updated);
         Assert.Equal("Published", updated.Status);
         Assert.Equal("L1", updated.EbayItemId);
         Assert.Equal("OF1", updated.EbayOfferId);

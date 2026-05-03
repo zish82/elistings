@@ -2,6 +2,7 @@
 @page "/edit-listing/{Id:int}"
 @using Shared
 @using Client.Services
+@inject AuthService AuthService
 @inject ListingService ListingService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -342,6 +343,11 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (!await AuthService.EnsureAuthenticatedAsync(Navigation.ToBaseRelativePath(Navigation.Uri).Insert(0, "/")))
+        {
+            return;
+        }
+
         await LoadPolicies();
 
         if (Id.HasValue)

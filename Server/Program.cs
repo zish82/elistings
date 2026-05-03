@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Server.Data;
 using System.Net;
@@ -8,6 +10,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient();
 
 var sqliteConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Data Source=app.db";
@@ -17,6 +21,41 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.Configure<Server.Configuration.EbaySettings>(
     builder.Configuration.GetSection("EbaySettings"));
+
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.Cookie.Name = "elistings.auth";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        options.Events.OnRedirectToLogin = context =>
+        {
+            if (context.Request.Path.StartsWithSegments("/api"))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            }
+
+            context.Response.Redirect(context.RedirectUri);
+            return Task.CompletedTask;
+        };
+        options.Events.OnRedirectToAccessDenied = context =>
+        {
+            if (context.Request.Path.StartsWithSegments("/api"))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            }
+
+            context.Response.Redirect(context.RedirectUri);
+            return Task.CompletedTask;
+        };
+    });
+
+builder.Services.AddAuthorization();
+builder.Services.AddSingleton<Server.Services.IPasswordHasher, Server.Services.PasswordHasher>();
+builder.Services.AddScoped<Server.Services.ICurrentUserService, Server.Services.CurrentUserService>();
 
 builder.Services.AddHttpClient<Server.Services.IEbayService, Server.Services.EbayService>();
 builder.Services.AddHttpClient<Server.Services.IMarketplaceImageService, Server.Services.EbayImageService>();
@@ -31,13 +70,25 @@ builder.Services.AddHttpClient<Server.Services.IScraperService, Server.Services.
 
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll",
-        builder => builder.AllowAnyOrigin()
-                          .AllowAnyMethod()
-                          .AllowAnyHeader());
+    options.AddPolicy("ClientCors", policy =>
+        policy.WithOrigins(
+                "http://localhost:5046",
+                "https://localhost:7099",
+                "http://localhost:5197",
+                "https://localhost:7138")
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials());
 });
 
 var app = builder.Build();
+
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+forwardedHeadersOptions.KnownNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -49,16 +100,19 @@ if (app.Environment.IsDevelopment())
 app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
 
+app.UseForwardedHeaders(forwardedHeadersOptions);
+
 // Some browsers request /favicon.ico even when index.html specifies a PNG favicon.
 app.MapGet("/favicon.ico", () => Results.Redirect("/favicon.png"));
 
-app.UseCors("AllowAll");
+app.UseCors("ClientCors");
 
 app.UseHttpsRedirection();
 
 // Enable routing middleware so endpoint routing can execute mapped endpoints
 app.UseRouting();
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.UseEndpoints(endpoints =>
@@ -77,8 +131,25 @@ using (var scope = app.Services.CreateScope())
     try 
     {
         db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""Users"" (
+                ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_Users"" PRIMARY KEY AUTOINCREMENT,
+                ""Email"" TEXT NOT NULL,
+                ""PasswordHash"" TEXT NOT NULL,
+                ""PasswordSalt"" TEXT NOT NULL,
+                ""Role"" TEXT NOT NULL,
+                ""IsActive"" INTEGER NOT NULL DEFAULT 1,
+                ""CreatedAt"" TEXT NOT NULL
+            );
+        ");
+
+        db.Database.ExecuteSqlRaw(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Users_Email"" ON ""Users"" (""Email"");
+        ");
+
+        db.Database.ExecuteSqlRaw(@"
             CREATE TABLE IF NOT EXISTS ""EbayTokens"" (
                 ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_EbayTokens"" PRIMARY KEY AUTOINCREMENT,
+                ""UserId"" INTEGER NOT NULL DEFAULT 0,
                 ""AccessToken"" TEXT NOT NULL,
                 ""RefreshToken"" TEXT NOT NULL,
                 ""ExpiryTime"" TEXT NOT NULL,
@@ -86,8 +157,42 @@ using (var scope = app.Services.CreateScope())
             );
         ");
 
+        db.Database.ExecuteSqlRaw(@"
+            CREATE INDEX IF NOT EXISTS ""IX_EbayTokens_UserId"" ON ""EbayTokens"" (""UserId"");
+        ");
+
+        // Ensure EbayTokens table has UserId for per-user token storage.
+        var ebayTokenColumns = new List<string>();
+        var conn2 = db.Database.GetDbConnection();
+        if (conn2.State != System.Data.ConnectionState.Open) conn2.Open();
+        using (var cmd = conn2.CreateCommand())
+        {
+            cmd.CommandText = @"PRAGMA table_info(""EbayTokens"");";
+            using (var reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    ebayTokenColumns.Add(reader["name"].ToString() ?? "");
+                }
+            }
+
+            if (!ebayTokenColumns.Any(c => c.Equals("UserId", StringComparison.OrdinalIgnoreCase)))
+            {
+                cmd.CommandText = @"ALTER TABLE ""EbayTokens"" ADD COLUMN ""UserId"" INTEGER NOT NULL DEFAULT 0;";
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        // Backfill legacy single-token setups to the first user when exactly one user exists.
+        db.Database.ExecuteSqlRaw(@"
+            UPDATE ""EbayTokens""
+            SET ""UserId"" = (SELECT ""Id"" FROM ""Users"" ORDER BY ""Id"" LIMIT 1)
+            WHERE ""UserId"" = 0
+              AND 1 = (SELECT COUNT(*) FROM ""Users"");
+        ");
+
         // Ensure Listings table has required columns (completely silent raw SQL)
-        var requiredColumns = new[] { "Type", "Brand", "Colour", "ImageUrlsJson", "Sku", "EbayOfferId", "SourceUrl", "SourcePrice", "SourceProductCode" };
+        var requiredColumns = new[] { "OwnerUserId", "Type", "Brand", "Colour", "ImageUrlsJson", "Sku", "EbayOfferId", "SourceUrl", "SourcePrice", "SourceProductCode" };
         var existingColumns = new List<string>();
         
         try 
@@ -121,6 +226,10 @@ using (var scope = app.Services.CreateScope())
                             if (string.Equals(col, "SourcePrice", StringComparison.OrdinalIgnoreCase))
                             {
                                 cmd.CommandText = $@"ALTER TABLE ""{actualTableName}"" ADD COLUMN ""{col}"" REAL NULL;";
+                            }
+                            else if (string.Equals(col, "OwnerUserId", StringComparison.OrdinalIgnoreCase))
+                            {
+                                cmd.CommandText = $@"ALTER TABLE ""{actualTableName}"" ADD COLUMN ""{col}"" INTEGER NOT NULL DEFAULT 0;";
                             }
                             else
                             {

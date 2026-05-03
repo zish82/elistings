@@ -14,12 +14,14 @@ public class EbayService : IEbayService
     private readonly EbaySettings _settings;
     private readonly HttpClient _httpClient;
     private readonly IServiceProvider _serviceProvider;
+    private readonly ICurrentUserService _currentUserService;
 
-    public EbayService(IOptions<EbaySettings> settings, HttpClient httpClient, IServiceProvider serviceProvider)
+    public EbayService(IOptions<EbaySettings> settings, HttpClient httpClient, IServiceProvider serviceProvider, ICurrentUserService currentUserService)
     {
         _settings = settings.Value;
         _httpClient = httpClient;
         _serviceProvider = serviceProvider;
+        _currentUserService = currentUserService;
     }
 
     public async Task<System.Text.Json.Nodes.JsonNode?> GetFeeEstimateAsync(Shared.ListingDto listing)
@@ -432,10 +434,16 @@ public class EbayService : IEbayService
             return _settings.UserToken;
         }
 
+        var userId = _currentUserService.UserId;
+        if (userId == null)
+        {
+            throw new Exception("No authenticated user context found for eBay token.");
+        }
+
         // 2. Load from Database
         using var scope = _serviceProvider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<Server.Data.AppDbContext>();
-        var tokenInfo = await context.EbayTokens.FirstOrDefaultAsync();
+        var tokenInfo = await context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value);
 
         if (tokenInfo == null)
             throw new Exception("eBay account not connected. Please login first.");
