@@ -1,7 +1,10 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Server.Configuration;
 using Server.Data;
+using Server.Services;
+using Shared;
 using Microsoft.EntityFrameworkCore;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -17,6 +20,8 @@ public class AuthController : ControllerBase
 {
     private sealed class PendingOAuthState
     {
+        public int UserId { get; set; }
+        public string? AccountName { get; set; }
         public string ReturnUrl { get; set; } = "/";
         public DateTime ExpiresAtUtc { get; set; }
     }
@@ -26,17 +31,26 @@ public class AuthController : ControllerBase
     private readonly EbaySettings _settings;
     private readonly AppDbContext _context;
     private readonly HttpClient _httpClient;
+    private readonly ICurrentUserService _currentUserService;
 
-    public AuthController(IOptions<EbaySettings> settings, AppDbContext context, HttpClient httpClient)
+    public AuthController(IOptions<EbaySettings> settings, AppDbContext context, HttpClient httpClient, ICurrentUserService currentUserService)
     {
         _settings = settings.Value;
         _context = context;
         _httpClient = httpClient;
+        _currentUserService = currentUserService;
     }
 
+    [Authorize]
     [HttpGet("login-url")]
-    public ActionResult<LoginUrlResponse> GetLoginUrl([FromQuery] string? returnUrl = "/")
+    public ActionResult<LoginUrlResponse> GetLoginUrl([FromQuery] string? returnUrl = "/", [FromQuery] string? accountName = null)
     {
+        var userId = _currentUserService.UserId;
+        if (userId == null)
+        {
+            return Unauthorized();
+        }
+
         // For eBay OAuth 2.0, the redirect_uri parameter MUST be the RuName string itself
         var baseUrl = _settings.IsSandbox ? "https://auth.sandbox.ebay.com/oauth2/authorize" : "https://auth.ebay.com/oauth2/authorize";
         var scope = "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.account";
@@ -53,6 +67,8 @@ public class AuthController : ControllerBase
         // when the callback domain differs (e.g., localhost + ngrok during local testing).
         PendingStates[state] = new PendingOAuthState
         {
+            UserId = userId.Value,
+            AccountName = NormalizeAccountName(accountName),
             ReturnUrl = safeReturnUrl,
             ExpiresAtUtc = expiry
         };
@@ -99,6 +115,7 @@ public class AuthController : ControllerBase
         return Ok(new LoginUrlResponse { LoginUrl = url });
     }
 
+    [AllowAnonymous]
     [HttpGet("callback")]
     public async Task<IActionResult> Callback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error, [FromQuery(Name = "error_description")] string? errorDescription)
     {
@@ -156,6 +173,11 @@ public class AuthController : ControllerBase
             return Redirect(BuildRedirect("error", "OAuth state missing or invalid."));
         }
 
+        if (pending.UserId <= 0)
+        {
+            return Redirect(BuildRedirect("error", "No valid local user context for OAuth callback."));
+        }
+
         // If a state cookie is available, require it to match too (extra defense).
         if (!string.IsNullOrWhiteSpace(cookieState))
         {
@@ -192,10 +214,18 @@ public class AuthController : ControllerBase
         if (result == null) return Redirect(BuildRedirect("error", "Failed to parse eBay token response."));
 
         // Save to DB
-        var existingToken = await _context.EbayTokens.FirstOrDefaultAsync();
+        var accountName = string.IsNullOrWhiteSpace(pending.AccountName)
+            ? $"eBay Account {(await _context.EbayTokens.CountAsync(t => t.UserId == pending.UserId)) + 1}"
+            : pending.AccountName!;
+        var existingToken = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == pending.UserId && t.Name == accountName);
         if (existingToken == null)
         {
-            existingToken = new EbayTokenInfo();
+            existingToken = new EbayTokenInfo 
+            { 
+                UserId = pending.UserId,
+                Name = accountName,
+                IsDefault = !await _context.EbayTokens.AnyAsync(t => t.UserId == pending.UserId && t.IsDefault)
+            };
             _context.EbayTokens.Add(existingToken);
         }
 
@@ -210,10 +240,14 @@ public class AuthController : ControllerBase
         return Redirect(BuildRedirect("connected"));
     }
 
+    [Authorize]
     [HttpGet("status")]
     public async Task<ActionResult<AuthStatusResponse>> GetStatus()
     {
-        var token = await _context.EbayTokens.FirstOrDefaultAsync();
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var token = await _context.EbayTokens.Where(t => t.UserId == userId.Value).OrderByDescending(t => t.IsDefault).ThenBy(t => t.Id).FirstOrDefaultAsync();
         if (token == null)
         {
             return Ok(new AuthStatusResponse { Connected = false });
@@ -227,17 +261,29 @@ public class AuthController : ControllerBase
         });
     }
 
+    [Authorize]
     [HttpPost("manual-token")]
     public async Task<IActionResult> SetManualToken([FromBody] ManualTokenRequest request)
     {
         try
         {
+            var userId = _currentUserService.UserId;
+            if (userId == null) return Unauthorized();
+
             if (string.IsNullOrEmpty(request.Token)) return BadRequest("Token is required");
 
-            var existingToken = await _context.EbayTokens.FirstOrDefaultAsync();
+            var accountName = NormalizeAccountName(request.AccountName);
+            var existingToken = !string.IsNullOrWhiteSpace(accountName)
+                ? await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value && t.Name == accountName)
+                : null;
             if (existingToken == null)
             {
-                existingToken = new EbayTokenInfo();
+                existingToken = new EbayTokenInfo 
+                { 
+                    UserId = userId.Value,
+                    Name = string.IsNullOrWhiteSpace(accountName) ? $"eBay Account {(await _context.EbayTokens.CountAsync(t => t.UserId == userId.Value)) + 1}" : accountName!,
+                    IsDefault = !await _context.EbayTokens.AnyAsync(t => t.UserId == userId.Value && t.IsDefault)
+                };
                 _context.EbayTokens.Add(existingToken);
             }
 
@@ -255,11 +301,61 @@ public class AuthController : ControllerBase
             return StatusCode(500, $"Internal Error: {ex.Message}");
         }
     }
+
+    [Authorize]
+    [HttpGet("accounts")]
+    public async Task<ActionResult<List<EbayAccountDto>>> GetAccounts()
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var accounts = await _context.EbayTokens
+            .Where(t => t.UserId == userId.Value)
+            .OrderByDescending(t => t.IsDefault)
+            .ThenBy(t => t.Name)
+            .Select(t => new EbayAccountDto
+            {
+                Id = t.Id,
+                Name = t.Name,
+                IsDefault = t.IsDefault,
+                IsConnected = t.ExpiryTime > DateTime.UtcNow,
+                ExpiresAtUtc = t.ExpiryTime
+            })
+            .ToListAsync();
+
+        return Ok(accounts);
+    }
+
+    [Authorize]
+    [HttpPost("accounts/{id:int}/default")]
+    public async Task<IActionResult> SetDefaultAccount(int id)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var account = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value && t.Id == id);
+        if (account == null) return NotFound();
+
+        var accounts = await _context.EbayTokens.Where(t => t.UserId == userId.Value).ToListAsync();
+        foreach (var item in accounts)
+        {
+            item.IsDefault = item.Id == id;
+        }
+
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    private static string? NormalizeAccountName(string? accountName)
+    {
+        return string.IsNullOrWhiteSpace(accountName) ? null : accountName.Trim();
+    }
 }
 
 public class ManualTokenRequest
 {
     public string Token { get; set; } = string.Empty;
+    public string? AccountName { get; set; }
 }
 
 public class EbayOAuthResponse

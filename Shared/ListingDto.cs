@@ -3,6 +3,10 @@ namespace Shared;
 public class ListingDto
 {
     public int Id { get; set; }
+    public int? EbayAccountId { get; set; }
+    public string? EbayAccountName { get; set; }
+    public int OwnerUserId { get; set; }
+    public string? OwnerEmail { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public decimal Price { get; set; }

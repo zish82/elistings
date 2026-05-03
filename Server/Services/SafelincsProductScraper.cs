@@ -58,13 +58,31 @@ public class SafelincsProductScraper : ProductScraperBase
 
         details.Brand = (brand ?? string.Empty).Trim();
 
-        var descNode = doc.DocumentNode.SelectSingleNode("//div[@itemprop='description']")
-                       ?? doc.DocumentNode.SelectSingleNode("//div[contains(@class,'product-description')]")
-                       ?? doc.DocumentNode.SelectSingleNode("//div[contains(@class, 'tab-content')]");
+        var descriptionCandidates = doc.DocumentNode.SelectNodes(
+            "//*[contains(concat(' ', normalize-space(@class), ' '), ' description ')]"
+            + "|//div[@itemprop='description']"
+            + "|//div[contains(@class,'product-description')]"
+            + "|//section[contains(@class,'product-description')]"
+            + "|//div[contains(@id,'description')]"
+            + "|//div[contains(@class,'tab-content')]"
+        );
 
-        if (descNode != null)
+        if (descriptionCandidates != null)
         {
-            details.Description = NormalizeHtmlFragment(descNode.InnerHtml, url);
+            foreach (var candidate in descriptionCandidates)
+            {
+                if (candidate == null || IsReviewContent(candidate))
+                {
+                    continue;
+                }
+
+                var normalized = NormalizeHtmlFragment(candidate.InnerHtml, url);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    details.Description = normalized;
+                    break;
+                }
+            }
         }
 
         if (string.IsNullOrWhiteSpace(details.Description))
@@ -124,6 +142,34 @@ public class SafelincsProductScraper : ProductScraperBase
         var ogImage = doc.DocumentNode.SelectSingleNode("//meta[@property='og:image']")?.GetAttributeValue("content", "");
         if (!string.IsNullOrEmpty(ogImage)) imageUrls.Add(ResolveUrl(url, ogImage));
 
+        var mainImage = doc.DocumentNode.SelectSingleNode("//img[@id='listing-image']")?.GetAttributeValue("src", null);
+        if (!string.IsNullOrWhiteSpace(mainImage))
+        {
+            imageUrls.Add(ResolveUrl(url, NormalizeSafelincsImageUrl(mainImage)));
+        }
+
+        var galleryAnchors = doc.DocumentNode.SelectNodes("//div[contains(@class,'images')]//a[@data-src]");
+        if (galleryAnchors != null)
+        {
+            foreach (var anchor in galleryAnchors)
+            {
+                var src = anchor.GetAttributeValue("data-src", null);
+                if (string.IsNullOrWhiteSpace(src)) continue;
+                imageUrls.Add(ResolveUrl(url, NormalizeSafelincsImageUrl(src)));
+            }
+        }
+
+        var galleryMetaImages = doc.DocumentNode.SelectNodes("//div[contains(@class,'images')]//meta[@itemprop='image']");
+        if (galleryMetaImages != null)
+        {
+            foreach (var meta in galleryMetaImages)
+            {
+                var src = meta.GetAttributeValue("content", null);
+                if (string.IsNullOrWhiteSpace(src)) continue;
+                imageUrls.Add(ResolveUrl(url, NormalizeSafelincsImageUrl(src)));
+            }
+        }
+
         var safelincsImgNodes = doc.DocumentNode.SelectNodes("//ul[contains(@class, 'product-thumbs')]//img")
                                  ?? doc.DocumentNode.SelectNodes("//div[contains(@class,'product-gallery')]//img")
                                  ?? doc.DocumentNode.SelectNodes("//div[contains(@class,'product-image')]//img")
@@ -138,7 +184,7 @@ public class SafelincsProductScraper : ProductScraperBase
                           ?? img.GetAttributeValue("src", null)
                           ?? img.GetAttributeValue("srcset", null);
                 if (string.IsNullOrEmpty(src)) continue;
-                src = src.Replace("small", "large");
+                src = NormalizeSafelincsImageUrl(src.Replace("small", "large"));
                 imageUrls.Add(ResolveUrl(url, src));
             }
         }
@@ -204,5 +250,24 @@ public class SafelincsProductScraper : ProductScraperBase
 
         var hyphenCount = path.Count(c => c == '-');
         return hyphenCount >= 3 && path.Length > 15;
+    }
+
+    private static bool IsReviewContent(HtmlNode node)
+    {
+        var marker = ((node.GetAttributeValue("id", "") + " "
+                     + node.GetAttributeValue("class", "") + " "
+                     + node.InnerText)
+                     ?? string.Empty)
+                     .ToLowerInvariant();
+
+        return marker.Contains("customer review")
+            || marker.Contains("customer-reviews")
+            || marker.Contains("reviews")
+            || marker.Contains("rating");
+    }
+
+    private static string NormalizeSafelincsImageUrl(string src)
+    {
+        return src.Replace("/100x100", "/530x530");
     }
 }

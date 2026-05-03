@@ -1,0 +1,181 @@
+@page "/users"
+@using Client.Services
+@using Shared
+@inject AuthService AuthService
+@inject NavigationManager Navigation
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3>Users</h3>
+        <a href="/" class="btn btn-outline-secondary">Back to Dashboard</a>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="alert @(messageIsError ? "alert-danger" : "alert-success") py-2">@message</div>
+    }
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Add User</h5>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <input class="form-control" placeholder="Email" @bind="newUser.Email" />
+                </div>
+                <div class="col-md-3">
+                    <input class="form-control" type="password" placeholder="Password" @bind="newUser.Password" />
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" @bind="newUser.Role">
+                        @foreach (var role in roles)
+                        {
+                            <option value="@role">@role</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-2 d-flex align-items-center">
+                    <div class="form-check me-3">
+                        <input class="form-check-input" type="checkbox" @bind="newUser.IsActive" />
+                        <label class="form-check-label">Active</label>
+                    </div>
+                    <button class="btn btn-primary" @onclick="CreateUser" disabled="@isSaving">Add</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h5 class="card-title">Existing Users</h5>
+            @if (users == null)
+            {
+                <p><em>Loading...</em></p>
+            }
+            else
+            {
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Active</th>
+                            <th>Created</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var user in users)
+                        {
+                            var edit = GetEditModel(user);
+                            <tr>
+                                <td><input class="form-control form-control-sm" @bind="edit.Email" /></td>
+                                <td>
+                                    <select class="form-select form-select-sm" @bind="edit.Role">
+                                        @foreach (var role in roles)
+                                        {
+                                            <option value="@role">@role</option>
+                                        }
+                                    </select>
+                                </td>
+                                <td><input class="form-check-input" type="checkbox" @bind="edit.IsActive" /></td>
+                                <td>@user.CreatedAt.ToLocalTime().ToString("g")</td>
+                                <td class="text-end">
+                                    <div class="input-group input-group-sm justify-content-end">
+                                        <input class="form-control" style="max-width: 180px;" type="password" placeholder="New password (optional)" @bind="edit.Password" />
+                                        <button class="btn btn-outline-primary" @onclick="() => SaveUser(user.Id)">Save</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<UserDto>? users;
+    private readonly string[] roles = AuthRoles.All;
+    private readonly CreateUserRequest newUser = new();
+    private readonly Dictionary<int, UpdateUserRequest> editModels = new();
+    private bool isSaving;
+    private string? message;
+    private bool messageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.EnsureAdminAsync("/users"))
+        {
+            return;
+        }
+
+        await LoadUsers();
+    }
+
+    private async Task LoadUsers()
+    {
+        users = await AuthService.GetUsersAsync();
+        editModels.Clear();
+        foreach (var user in users)
+        {
+            editModels[user.Id] = new UpdateUserRequest
+            {
+                Email = user.Email,
+                Role = user.Role,
+                IsActive = user.IsActive
+            };
+        }
+    }
+
+    private UpdateUserRequest GetEditModel(UserDto user) => editModels[user.Id];
+
+    private async Task CreateUser()
+    {
+        message = null;
+        messageIsError = false;
+        isSaving = true;
+        try
+        {
+            await AuthService.CreateUserAsync(newUser);
+            newUser.Email = string.Empty;
+            newUser.Password = string.Empty;
+            newUser.Role = AuthRoles.Lister;
+            newUser.IsActive = true;
+            await LoadUsers();
+            message = "User created.";
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            messageIsError = true;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SaveUser(int id)
+    {
+        message = null;
+        messageIsError = false;
+        isSaving = true;
+        try
+        {
+            await AuthService.UpdateUserAsync(id, editModels[id]);
+            editModels[id].Password = null;
+            await LoadUsers();
+            message = "User updated.";
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            messageIsError = true;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

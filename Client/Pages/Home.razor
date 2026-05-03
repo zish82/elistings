@@ -1,6 +1,7 @@
 ﻿@page "/"
 @using Shared
 @using Client.Services
+@inject AuthService AuthService
 @inject ListingService ListingService
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
@@ -13,10 +14,16 @@
     <div>
         <a href="/create-listing" class="btn btn-primary">Create New Listing</a>
         <a href="/bulk-extract" class="btn btn-outline-primary ms-2"><i class="bi bi-box-arrow-in-down me-1"></i>Bulk Extract Category</a>
+        @if (currentUser?.CanManageUsers == true)
+        {
+            <a href="/users" class="btn btn-outline-secondary ms-2">Users</a>
+        }
+        <input type="text" class="form-control form-control-sm d-inline-block ms-2" @bind="newAccountName" placeholder="Account label" style="width: 180px;" />
         <button class="btn btn-outline-info ms-2" @onclick="ConnectEbay">Connect Real eBay Account</button>
     </div>
     <div class="d-flex align-items-center">
         <input type="password" class="form-control form-control-sm me-2" @bind="manualToken" placeholder="Paste eBay User Token..." style="width: 250px;" />
+        <input type="text" class="form-control form-control-sm me-2" @bind="newAccountName" placeholder="Account label" style="width: 180px;" />
         <button class="btn btn-sm btn-secondary" @onclick="SaveManualToken" disabled="@isSavingToken">Save Token</button>
     </div>
 </div>
@@ -25,14 +32,56 @@
     <div class="alert @tokenMessageCss py-2 small">@tokenMessage</div>
 }
 
-@if (isEbayConnected)
+@if (ebayAccounts.Any())
 {
     <div class="alert alert-success py-2 small">
-        eBay account connected.
+        @($"{ebayAccounts.Count} eBay account(s) connected.")
         @if (ebayTokenExpiryUtc.HasValue)
         {
-            <span class="ms-2">Token expires: @ebayTokenExpiryUtc.Value.ToLocalTime().ToString("g")</span>
+            <span class="ms-2">Default token expires: @ebayTokenExpiryUtc.Value.ToLocalTime().ToString("g")</span>
         }
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body py-3">
+            <h6 class="mb-3">eBay Accounts</h6>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Expires</th>
+                            <th class="text-end">Default</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var account in ebayAccounts)
+                        {
+                            <tr>
+                                <td>@account.Name</td>
+                                <td>
+                                    <span class="badge @(account.IsConnected ? "bg-success" : "bg-warning text-dark")">
+                                        @(account.IsConnected ? "Connected" : "Expired")
+                                    </span>
+                                </td>
+                                <td>@(account.ExpiresAtUtc?.ToLocalTime().ToString("g") ?? "-")</td>
+                                <td class="text-end">
+                                    @if (account.IsDefault)
+                                    {
+                                        <span class="badge bg-primary">Default</span>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-outline-primary btn-sm" @onclick="() => SetDefaultAccount(account.Id)">Make Default</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 }
 else
@@ -46,6 +95,23 @@ else
 }
 else
 {
+    <div class="row g-2 align-items-end mb-3">
+        <div class="col-sm-6 col-md-4 col-lg-3">
+            <label for="ebayAccountFilter" class="form-label small text-muted">Filter by eBay account</label>
+            <select id="ebayAccountFilter" class="form-select form-select-sm" value="@(selectedEbayAccountFilterId?.ToString() ?? string.Empty)" @onchange="OnEbayAccountFilterChanged">
+                <option value="">All accounts</option>
+                <option value="0">No account selected</option>
+                @foreach (var account in ebayAccounts)
+                {
+                    <option value="@account.Id">@account.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-sm-6 col-md-4 col-lg-3">
+            <div class="small text-muted">Showing @FilteredListings.Count of @listings.Count listing(s)</div>
+        </div>
+    </div>
+
     @if (selectedIds.Any())
     {
         <div class="alert alert-primary d-flex justify-content-between align-items-center mb-3">
@@ -89,17 +155,22 @@ else
         <thead>
             <tr>
                 <th style="width: 40px;">
-                    <input type="checkbox" class="form-check-input" @onchange="SelectAll" checked="@(listings.Any() && selectedIds.Count == listings.Count)" />
+                    <input type="checkbox" class="form-check-input" @onchange="SelectAll" checked="@(FilteredListings.Any() && FilteredListings.All(l => selectedIds.Contains(l.Id)))" />
                 </th>
                 <th>Title</th>
                 <th>Price</th>
+                @if (currentUser?.CanViewAllListings == true)
+                {
+                    <th>Owner</th>
+                }
+                <th>eBay Account</th>
                 <th>Status</th>
                 <th>eBay Item ID</th>
                 <th class="text-end">Actions</th>
             </tr>
         </thead>
         <tbody>
-            @foreach (var listing in listings)
+            @foreach (var listing in FilteredListings)
             {
                 <tr>
                     <td>
@@ -109,6 +180,20 @@ else
                     </td>
                     <td><div class="fw-bold">@listing.Title</div></td>
                     <td>£@listing.Price</td>
+                    @if (currentUser?.CanViewAllListings == true)
+                    {
+                        <td>@listing.OwnerEmail</td>
+                    }
+                    <td>
+                        @if (!string.IsNullOrWhiteSpace(listing.EbayAccountName))
+                        {
+                            <span class="badge bg-info text-dark">@listing.EbayAccountName</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted small">Unassigned</span>
+                        }
+                    </td>
                     <td>
                         <span class="badge @(listing.Status == "Published" ? "bg-success" : "bg-warning text-dark")">
                             @listing.Status
@@ -134,28 +219,45 @@ else
 
 @code {
     private List<ListingDto>? listings;
+    private CurrentUserDto? currentUser;
+    private List<EbayAccountDto> ebayAccounts = new();
+    private int? selectedEbayAccountFilterId;
+
+    private List<ListingDto> FilteredListings =>
+        listings?
+            .Where(listing =>
+                !selectedEbayAccountFilterId.HasValue
+                    || (selectedEbayAccountFilterId.Value == 0
+                        ? !listing.EbayAccountId.HasValue
+                        : listing.EbayAccountId == selectedEbayAccountFilterId.Value))
+            .ToList()
+        ?? new List<ListingDto>();
 
     protected override async Task OnInitializedAsync()
     {
+        if (!await AuthService.EnsureAuthenticatedAsync("/"))
+        {
+            return;
+        }
+
+        currentUser = (await AuthService.GetSessionAsync()).User;
         HandleOAuthCallbackMessage();
-        await LoadEbayStatus();
+        await LoadEbayAccounts();
         await LoadListings();
     }
 
-    private bool isEbayConnected;
     private DateTime? ebayTokenExpiryUtc;
 
-    private async Task LoadEbayStatus()
+    private async Task LoadEbayAccounts()
     {
         try
         {
-            var status = await ListingService.GetEbayAuthStatusAsync();
-            isEbayConnected = status.Connected;
-            ebayTokenExpiryUtc = status.ExpiresAtUtc;
+            ebayAccounts = await ListingService.GetEbayAccountsAsync();
+            ebayTokenExpiryUtc = ebayAccounts.FirstOrDefault(a => a.IsDefault)?.ExpiresAtUtc;
         }
         catch
         {
-            isEbayConnected = false;
+            ebayAccounts = new List<EbayAccountDto>();
             ebayTokenExpiryUtc = null;
         }
     }
@@ -236,12 +338,31 @@ else
         else selectedIds.Add(id);
     }
 
+    private void OnEbayAccountFilterChanged(ChangeEventArgs e)
+    {
+        var rawValue = e.Value?.ToString();
+        selectedEbayAccountFilterId = int.TryParse(rawValue, out var accountId) ? accountId : null;
+        selectedIds.RemoveWhere(id => FilteredListings.All(listing => listing.Id != id));
+    }
+
     private void SelectAll(ChangeEventArgs e)
     {
-        if (listings == null) return;
+        if (!FilteredListings.Any()) return;
         bool isChecked = (bool)(e.Value ?? false);
-        if (isChecked) selectedIds = new HashSet<int>(listings.Select(l => l.Id));
-        else selectedIds.Clear();
+        if (isChecked)
+        {
+            foreach (var listing in FilteredListings)
+            {
+                selectedIds.Add(listing.Id);
+            }
+        }
+        else
+        {
+            foreach (var listing in FilteredListings)
+            {
+                selectedIds.Remove(listing.Id);
+            }
+        }
     }
 
     private async Task BulkPublish()
@@ -312,6 +433,7 @@ else
     }
 
     private string? manualToken;
+    private string? newAccountName;
     private bool isSavingToken = false;
     private string? tokenMessage;
     private string tokenMessageCss = "alert-info";
@@ -321,7 +443,7 @@ else
         tokenMessage = null;
         try
         {
-            var loginUrl = await ListingService.GetEbayLoginUrlAsync("/");
+            var loginUrl = await ListingService.GetEbayLoginUrlAsync("/", newAccountName);
             Navigation.NavigateTo(loginUrl, forceLoad: true);
         }
         catch (Exception ex)
@@ -338,11 +460,12 @@ else
         tokenMessage = null;
         try
         {
-            await ListingService.SetManualTokenAsync(manualToken);
-            await LoadEbayStatus();
+            await ListingService.SetManualTokenAsync(manualToken, newAccountName);
+            await LoadEbayAccounts();
             tokenMessageCss = "alert-success";
             tokenMessage = "Token saved successfully! You can now create and publish listings.";
             manualToken = "";
+            newAccountName = "";
         }
         catch (Exception ex)
         {
@@ -352,6 +475,20 @@ else
         finally
         {
             isSavingToken = false;
+        }
+    }
+
+    private async Task SetDefaultAccount(int accountId)
+    {
+        try
+        {
+            await ListingService.SetDefaultEbayAccountAsync(accountId);
+            await LoadEbayAccounts();
+        }
+        catch (Exception ex)
+        {
+            tokenMessageCss = "alert-danger";
+            tokenMessage = $"Error updating default account: {ex.Message}";
         }
     }
 }

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Server.Data;
@@ -9,17 +10,20 @@ namespace Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class EbayController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IEbayService _ebayService;
     private readonly Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> _ebaySettings;
+    private readonly ICurrentUserService _currentUserService;
 
-    public EbayController(AppDbContext context, IEbayService ebayService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings)
+    public EbayController(AppDbContext context, IEbayService ebayService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings, ICurrentUserService currentUserService)
     {
         _context = context;
         _ebayService = ebayService;
         _ebaySettings = ebaySettings;
+        _currentUserService = currentUserService;
     }
 
     [HttpPost("publish/{id}")]
@@ -27,12 +31,21 @@ public class EbayController : ControllerBase
     {
         try
         {
-            var listing = await _context.Listings.FindAsync(id);
+            var query = _context.Listings.Where(l => l.Id == id);
+            if (!_currentUserService.CanViewAllListings)
+            {
+                var userId = _currentUserService.UserId;
+                if (userId == null) return Unauthorized();
+                query = query.Where(l => l.OwnerUserId == userId.Value);
+            }
+
+            var listing = await query.FirstOrDefaultAsync();
             if (listing == null) return NotFound();
 
             var dto = new ListingDto
             {
                 Id = listing.Id,
+                EbayAccountId = listing.EbayAccountId,
                 Title = listing.Title,
                 Description = listing.Description,
                 Price = listing.Price,
@@ -60,6 +73,7 @@ public class EbayController : ControllerBase
             return Ok(new ListingDto
             {
                 Id = listing.Id,
+                EbayAccountId = listing.EbayAccountId,
                 Title = listing.Title,
                 Description = listing.Description,
                 Price = listing.Price,

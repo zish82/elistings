@@ -7,15 +7,28 @@ public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
+    public DbSet<AppUser> Users { get; set; }
     public DbSet<Listing> Listings { get; set; }
     public DbSet<EbayTokenInfo> EbayTokens { get; set; }
     public DbSet<Policy> Policies { get; set; }
 }
 
+public class AppUser
+{
+    public int Id { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public string PasswordHash { get; set; } = string.Empty;
+    public string PasswordSalt { get; set; } = string.Empty;
+    public string Role { get; set; } = Shared.AuthRoles.Lister;
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class Listing
 {
-    // ... (rest of Listing class remains same)
     public int Id { get; set; }
+    public int OwnerUserId { get; set; }
+    public int? EbayAccountId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public decimal Price { get; set; }
@@ -50,6 +63,9 @@ public class Policy
 public class EbayTokenInfo
 {
     public int Id { get; set; }
+    public int UserId { get; set; }
+    public string Name { get; set; } = "eBay Account";
+    public bool IsDefault { get; set; }
     public string AccessToken { get; set; } = string.Empty;
     public string RefreshToken { get; set; } = string.Empty;
     public DateTime ExpiryTime { get; set; }

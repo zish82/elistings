@@ -20,7 +20,7 @@ public class EbayImageService : IMarketplaceImageService
         _ebayService = ebayService;
     }
 
-    public async Task<string> UploadImageFromUrlAsync(string imageUrl)
+    public async Task<string> UploadImageFromUrlAsync(string imageUrl, int? accountId = null)
     {
         if (imageUrl.StartsWith("data:image", StringComparison.OrdinalIgnoreCase))
         {
@@ -29,7 +29,7 @@ public class EbayImageService : IMarketplaceImageService
             if (parts.Length != 2) throw new Exception("Invalid base64 image data.");
             
             var imageData = Convert.FromBase64String(parts[1]);
-            return await UploadImageAsync(imageData, "uploaded_image.jpg");
+            return await UploadImageAsync(imageData, "uploaded_image.jpg", accountId);
         }
 
         Console.WriteLine($"[ImageService] Downloading image from: {imageUrl}");
@@ -40,12 +40,12 @@ public class EbayImageService : IMarketplaceImageService
         var fileName = Path.GetFileName(new Uri(imageUrl).LocalPath);
         if (string.IsNullOrEmpty(fileName)) fileName = "image.jpg";
 
-        return await UploadImageAsync(data, fileName);
+        return await UploadImageAsync(data, fileName, accountId);
     }
 
-    public async Task<string> UploadImageAsync(byte[] imageData, string fileName)
+    public async Task<string> UploadImageAsync(byte[] imageData, string fileName, int? accountId = null)
     {
-        var token = await _ebayService.GetOAuthTokenAsync();
+        var token = await _ebayService.GetOAuthTokenAsync(accountId);
         var apiVersion = "1191";
         var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com/ws/api.dll" : "https://api.ebay.com/ws/api.dll";
 
