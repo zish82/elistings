@@ -19,3 +19,6 @@ app.db
 
 # Temporary
 *.tmp
+
+# Local development secrets
+Server/appsettings.Development.json
