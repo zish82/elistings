@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Components.WebAssembly.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Shared;
@@ -13,57 +14,87 @@ public class ListingService
         _http = http;
     }
 
+    private async Task<T?> GetAsync<T>(string url)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<T>();
+    }
+
+    private async Task<T?> SendAsync<T>(HttpMethod method, string url, object? body = null)
+    {
+        using var request = new HttpRequestMessage(method, url);
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        if (body != null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+
+        using var response = await _http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength == 0)
+        {
+            return default;
+        }
+
+        return await response.Content.ReadFromJsonAsync<T>();
+    }
+
     public async Task<List<ListingDto>> GetListingsAsync()
     {
-        return await _http.GetFromJsonAsync<List<ListingDto>>("api/listings") ?? new List<ListingDto>();
+        return await GetAsync<List<ListingDto>>("api/listings") ?? new List<ListingDto>();
     }
 
     public async Task<ListingDto> CreateListingAsync(CreateListingRequest request)
     {
-        var response = await _http.PostAsJsonAsync("api/listings", request);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<ListingDto>() ?? throw new Exception("Failed to deserialize response");
+        return await SendAsync<ListingDto>(HttpMethod.Post, "api/listings", request) ?? throw new Exception("Failed to deserialize response");
     }
 
     public async Task<ListingDto> GetListingAsync(int id)
     {
-        return await _http.GetFromJsonAsync<ListingDto>($"api/listings/{id}") ?? throw new Exception("Listing not found");
+        return await GetAsync<ListingDto>($"api/listings/{id}") ?? throw new Exception("Listing not found");
     }
 
     public async Task UpdateListingAsync(int id, CreateListingRequest request)
     {
-        var response = await _http.PutAsJsonAsync($"api/listings/{id}", request);
-        response.EnsureSuccessStatusCode();
+        await SendAsync<object>(HttpMethod.Put, $"api/listings/{id}", request);
     }
 
     public async Task<ExtractedDetailsDto> ExtractDetailsAsync(string url)
     {
-        return await _http.GetFromJsonAsync<ExtractedDetailsDto>($"api/listings/extract?url={Uri.EscapeDataString(url)}") ?? new ExtractedDetailsDto();
+        return await GetAsync<ExtractedDetailsDto>($"api/listings/extract?url={Uri.EscapeDataString(url)}") ?? new ExtractedDetailsDto();
     }
 
     public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync()
     {
-        return await _http.GetFromJsonAsync<List<EbayPolicyDto>>("api/ebaypolicies/payment") ?? new List<EbayPolicyDto>();
+        return await GetAsync<List<EbayPolicyDto>>("api/ebaypolicies/payment") ?? new List<EbayPolicyDto>();
     }
 
     public async Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync()
     {
-        return await _http.GetFromJsonAsync<List<EbayPolicyDto>>("api/ebaypolicies/fulfillment") ?? new List<EbayPolicyDto>();
+        return await GetAsync<List<EbayPolicyDto>>("api/ebaypolicies/fulfillment") ?? new List<EbayPolicyDto>();
     }
 
     public async Task<List<EbayPolicyDto>> GetReturnPoliciesAsync()
     {
-        return await _http.GetFromJsonAsync<List<EbayPolicyDto>>("api/ebaypolicies/return") ?? new List<EbayPolicyDto>();
+        return await GetAsync<List<EbayPolicyDto>>("api/ebaypolicies/return") ?? new List<EbayPolicyDto>();
     }
 
     public async Task<Shared.EbayDefaultPoliciesDto> GetDefaultPoliciesAsync()
     {
-        return await _http.GetFromJsonAsync<Shared.EbayDefaultPoliciesDto>("api/ebay/default-policies") ?? new Shared.EbayDefaultPoliciesDto();
+        return await GetAsync<Shared.EbayDefaultPoliciesDto>("api/ebay/default-policies") ?? new Shared.EbayDefaultPoliciesDto();
     }
 
     public async Task SetManualTokenAsync(string token)
     {
-        var response = await _http.PostAsJsonAsync("api/auth/manual-token", new { Token = token });
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/auth/manual-token")
+        {
+            Content = JsonContent.Create(new { Token = token })
+        };
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
@@ -73,7 +104,7 @@ public class ListingService
 
     public async Task<string> GetEbayLoginUrlAsync(string returnUrl = "/")
     {
-        var response = await _http.GetFromJsonAsync<LoginUrlResponse>($"api/auth/login-url?returnUrl={Uri.EscapeDataString(returnUrl)}");
+        var response = await GetAsync<LoginUrlResponse>($"api/auth/login-url?returnUrl={Uri.EscapeDataString(returnUrl)}");
         if (response == null || string.IsNullOrWhiteSpace(response.LoginUrl))
         {
             throw new Exception("Failed to get eBay login URL.");
@@ -83,12 +114,17 @@ public class ListingService
 
     public async Task<AuthStatusResponse> GetEbayAuthStatusAsync()
     {
-        return await _http.GetFromJsonAsync<AuthStatusResponse>("api/auth/status") ?? new AuthStatusResponse();
+        return await GetAsync<AuthStatusResponse>("api/auth/status") ?? new AuthStatusResponse();
     }
 
     public async Task<ListingDto> PublishListingAsync(int id)
     {
-        var response = await _http.PostAsJsonAsync($"api/ebay/publish/{id}", new { });
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"api/ebay/publish/{id}")
+        {
+            Content = JsonContent.Create(new { })
+        };
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
@@ -99,27 +135,28 @@ public class ListingService
 
     public async Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title)
     {
-        return await _http.GetFromJsonAsync<List<CategorySuggestionDto>>($"api/ebaypolicies/category-suggestions?title={Uri.EscapeDataString(title)}") ?? new List<CategorySuggestionDto>();
+        return await GetAsync<List<CategorySuggestionDto>>($"api/ebaypolicies/category-suggestions?title={Uri.EscapeDataString(title)}") ?? new List<CategorySuggestionDto>();
     }
 
     public async Task<int> BulkExtractAsync(string categoryUrl)
     {
-        var response = await _http.PostAsJsonAsync("api/listings/bulk-extract", categoryUrl);
-        response.EnsureSuccessStatusCode();
-        var result = await response.Content.ReadFromJsonAsync<BulkResult>();
+        var result = await SendAsync<BulkResult>(HttpMethod.Post, "api/listings/bulk-extract", categoryUrl);
         return result?.Count ?? 0;
     }
 
     public async Task<BulkDeleteResult> BulkDeleteAsync(List<int> ids)
     {
-        var response = await _http.PostAsJsonAsync("api/listings/bulk-delete", ids);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<BulkDeleteResult>() ?? new BulkDeleteResult();
+        return await SendAsync<BulkDeleteResult>(HttpMethod.Post, "api/listings/bulk-delete", ids) ?? new BulkDeleteResult();
     }
 
     public async Task<(int Published, int Failed, List<string> Errors)> BulkPublishAsync(List<int> ids)
     {
-        var response = await _http.PostAsJsonAsync("api/listings/bulk-publish", ids);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/listings/bulk-publish")
+        {
+            Content = JsonContent.Create(ids)
+        };
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         int published = payload.GetProperty("Published").GetInt32();
@@ -134,7 +171,12 @@ public class ListingService
 
     public async Task<JsonElement> GetFeeEstimateAsync(Shared.ListingDto listing)
     {
-        var response = await _http.PostAsJsonAsync("api/ebay/fee-estimate", listing);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/ebay/fee-estimate")
+        {
+            Content = JsonContent.Create(listing)
+        };
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
         response.EnsureSuccessStatusCode();
             using var stream = await response.Content.ReadAsStreamAsync();
             var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);

@@ -1,0 +1,69 @@
+@page "/setup-admin"
+@using Client.Services
+@using Shared
+@inject AuthService AuthService
+@inject NavigationManager Navigation
+
+<div class="container mt-5" style="max-width: 520px;">
+    <div class="card shadow-sm">
+        <div class="card-body p-4">
+            <h3 class="mb-3">Create First Admin</h3>
+            <p class="text-muted small">Set up the first administrator account for this workspace.</p>
+
+            <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input class="form-control" @bind="email" autocomplete="username" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <input class="form-control" type="password" @bind="password" autocomplete="new-password" />
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <div class="alert alert-danger py-2">@errorMessage</div>
+            }
+
+            <button class="btn btn-primary w-100" @onclick="Bootstrap" disabled="@isSubmitting">
+                @(isSubmitting ? "Creating..." : "Create Admin")
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string email = string.Empty;
+    private string password = string.Empty;
+    private bool isSubmitting;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var session = await AuthService.GetSessionAsync(true);
+        if (session.HasUsers)
+        {
+            Navigation.NavigateTo("/login", replace: true);
+            return;
+        }
+    }
+
+    private async Task Bootstrap()
+    {
+        errorMessage = null;
+        isSubmitting = true;
+        try
+        {
+            await AuthService.BootstrapAdminAsync(new BootstrapAdminRequest { Email = email, Password = password });
+            Navigation.NavigateTo("/", replace: true);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+}
