@@ -1,6 +1,9 @@
 name: Manual | Release Production (Publish Profile)
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       image_tag:
@@ -32,4 +35,4 @@ jobs:
           set -e
 
       - name: Production URL
-        run: echo "Production deployed: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        run: 'echo "Production deployed: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net"'
