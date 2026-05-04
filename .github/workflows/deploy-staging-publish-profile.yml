@@ -64,8 +64,8 @@ jobs:
         if: ${{ steps.resolve.outputs.build_needed == 'true' }}
         uses: docker/login-action@v3
         with:
-          registry: ${{ secrets.ACR_LOGIN_SERVER }}
-          username: ${{ secrets.ACR_USERNAME }}
+          registry: ${{ vars.ACR_LOGIN_SERVER }}
+          username: ${{ vars.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
       - name: Build and push image
@@ -76,16 +76,16 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+            ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
 
       - name: Validate deployment settings
         shell: bash
         env:
           TARGET: ${{ steps.resolve.outputs.target }}
           PROD_PROFILE: ${{ secrets.AZURE_WEBAPP_PROD_PUBLISH_PROFILE }}
-          STAGING_SLOT: ${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}
-          STAGING_PROFILE: ${{ secrets.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}
+          STAGING_SLOT: ${{ vars.AZURE_WEBAPP_STAGING_SLOT }}
+          STAGING_PROFILE: ${{ vars.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}
         run: |
           set -euo pipefail
           has_kudu_url() {
@@ -128,25 +128,25 @@ jobs:
         if: ${{ steps.resolve.outputs.target == 'production' }}
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PROD_PUBLISH_PROFILE }}
-          images: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.deploy_tag }}
+          images: ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.deploy_tag }}
 
       - name: Deploy image to staging slot with publish profile
         if: ${{ steps.resolve.outputs.target == 'staging' }}
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-          slot-name: ${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}
-          images: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.deploy_tag }}
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          slot-name: ${{ vars.AZURE_WEBAPP_STAGING_SLOT }}
+          publish-profile: ${{ vars.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}
+          images: ${{ vars.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.deploy_tag }}
 
       - name: Warm up production (best effort)
         if: ${{ steps.resolve.outputs.target == 'production' }}
         shell: bash
         run: |
           set +e
-          curl -sS -m 30 "https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net" > /dev/null
+          curl -sS -m 30 "https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net" > /dev/null
           set -e
 
       - name: Warm up staging slot (best effort)
@@ -154,13 +154,13 @@ jobs:
         shell: bash
         run: |
           set +e
-          curl -sS -m 30 "https://${{ secrets.AZURE_WEBAPP_NAME }}-${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}.azurewebsites.net" > /dev/null
+          curl -sS -m 30 "https://${{ vars.AZURE_WEBAPP_NAME }}-${{ vars.AZURE_WEBAPP_STAGING_SLOT }}.azurewebsites.net" > /dev/null
           set -e
 
       - name: Deployment URL (production)
         if: ${{ steps.resolve.outputs.target == 'production' }}
-        run: 'echo "Production deployed: https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net"'
+        run: 'echo "Production deployed: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net"'
 
       - name: Deployment URL (staging)
         if: ${{ steps.resolve.outputs.target == 'staging' }}
-        run: 'echo "Staging deployed: https://${{ secrets.AZURE_WEBAPP_NAME }}-${{ secrets.AZURE_WEBAPP_STAGING_SLOT }}.azurewebsites.net"'
+        run: 'echo "Staging deployed: https://${{ vars.AZURE_WEBAPP_NAME }}-${{ vars.AZURE_WEBAPP_STAGING_SLOT }}.azurewebsites.net"'

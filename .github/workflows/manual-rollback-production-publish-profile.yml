@@ -1,18 +1,17 @@
-name: Manual | Release Production (Publish Profile)
+name: Manual | Rollback Production (Publish Profile)
 
 on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Container image tag to deploy to production (latest or a previous commit SHA)
+        description: Container image tag to roll back to (for example, a previous commit SHA)
         required: true
-        default: latest
 
 env:
   IMAGE_NAME: directshop
 
 jobs:
-  deploy-production:
+  rollback:
     runs-on: ubuntu-latest
     environment: production
 
@@ -32,4 +31,4 @@ jobs:
           set -e
 
       - name: Production URL
-        run: echo "Production deployed: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        run: echo "Rollback complete: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net"
