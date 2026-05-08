@@ -164,6 +164,7 @@ else
                     <th>Owner</th>
                 }
                 <th>eBay Account</th>
+                <th>Category</th>
                 <th>Status</th>
                 <th>eBay Item ID</th>
                 <th class="text-end">Actions</th>
@@ -192,6 +193,20 @@ else
                         else
                         {
                             <span class="text-muted small">Unassigned</span>
+                        }
+                    </td>
+                    <td>
+                        @if (!string.IsNullOrWhiteSpace(listing.CategoryId))
+                        {
+                            <span class="font-monospace small">@listing.CategoryId</span>
+                            @if (!string.IsNullOrWhiteSpace(listing.CategoryName))
+                            {
+                                <div class="small text-muted">@listing.CategoryName</div>
+                            }
+                        }
+                        else
+                        {
+                            <span class="text-muted small">Not set</span>
                         }
                     </td>
                     <td>
