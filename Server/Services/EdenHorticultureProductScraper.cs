@@ -65,31 +65,47 @@ public class EdenHorticultureProductScraper : ProductScraperBase
         details.PriceExVat = null;
 
         var imageUrls = new List<string>();
-        var ogImage = doc.DocumentNode.SelectSingleNode("//meta[@property='og:image']")?.GetAttributeValue("content", "");
-        if (!string.IsNullOrEmpty(ogImage)) imageUrls.Add(ResolveUrl(url, ogImage));
+        var imageKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var edenImgNodes = doc.DocumentNode.SelectNodes("//img[contains(@src, '/cdn/shop/products/') or contains(@data-src, '/cdn/shop/products/')]");
-        if (edenImgNodes != null)
+        void AddImage(string? candidate)
         {
-            foreach (var img in edenImgNodes)
+            if (string.IsNullOrWhiteSpace(candidate)) return;
+            var decoded = WebUtility.HtmlDecode(candidate.Trim());
+            var normalized = ResolveUrl(url, decoded);
+            if (normalized.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
             {
-                var src = img.GetAttributeValue("data-src", null)
-                          ?? img.GetAttributeValue("src", null)
-                          ?? img.GetAttributeValue("srcset", null);
-                if (string.IsNullOrWhiteSpace(src)) continue;
-                imageUrls.Add(ResolveUrl(url, src));
+                normalized = "https://" + normalized.Substring("http://".Length);
+            }
+            if (string.IsNullOrWhiteSpace(normalized)) return;
+
+            if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri)) return;
+
+            var canonicalKey = $"{uri.Host.ToLowerInvariant()}{uri.AbsolutePath}";
+            if (imageKeys.Add(canonicalKey))
+            {
+                imageUrls.Add(uri.GetLeftPart(UriPartial.Path));
             }
         }
 
-        var jsonImageMatches = Regex.Matches(html, "\\\"image\\\"\\s*:\\s*\\\"(?<url>https?:\\\\/\\\\/[^\\\"]+)\\\"");
-        foreach (Match match in jsonImageMatches)
+        AddImage(doc.DocumentNode.SelectSingleNode("//meta[@property='og:image:secure_url']")?.GetAttributeValue("content", ""));
+        AddImage(doc.DocumentNode.SelectSingleNode("//meta[@property='og:image']")?.GetAttributeValue("content", ""));
+
+        // Prefer product JSON-LD image(s) to avoid unrelated recommendation thumbnails.
+        var productJsonImageMatch = Regex.Match(
+            html,
+            "\\\"@type\\\"\\s*:\\s*\\\"Product\\\"[\\s\\S]*?\\\"image\\\"\\s*:\\s*(?<image>\\\"[^\\\"]+\\\"|\\[[^\\]]+\\])",
+            RegexOptions.IgnoreCase);
+
+        if (productJsonImageMatch.Success)
         {
-            var raw = match.Groups["url"].Value;
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            imageUrls.Add(DecodeJsonEscapedUrl(raw));
+            var imageBlock = productJsonImageMatch.Groups["image"].Value;
+            foreach (Match urlMatch in Regex.Matches(imageBlock, "https?:\\\\/\\\\/[^\\\"\\],]+"))
+            {
+                AddImage(DecodeJsonEscapedUrl(urlMatch.Value));
+            }
         }
 
-        details.ImageUrls = imageUrls.Distinct().ToList();
+        details.ImageUrls = imageUrls;
 
         return Task.FromResult(details);
     }

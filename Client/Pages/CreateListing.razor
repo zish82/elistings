@@ -78,6 +78,10 @@
                     </div>
                 </div>
             }
+            @if (!string.IsNullOrWhiteSpace(suggestStatusMessage))
+            {
+                <div class="small mt-2 @suggestStatusCss">@suggestStatusMessage</div>
+            }
         </div>
 
         <div class="col-md-4">
@@ -107,22 +111,33 @@
 
         <div class="col-md-8">
             <label for="category" class="form-label">eBay Category ID</label>
-            <InputText id="category" class="form-control" @bind-Value="listing.CategoryId" placeholder="e.g. 57013" />
+            <input id="category" class="form-control" value="@listing.CategoryId" @oninput="OnCategoryIdInput" placeholder="e.g. 57013" />
             <div class="small mt-1">
                 <span class="text-muted">Need to find an ID? </span>
                 <a href="https://www.ebay.co.uk/n/all-categories" target="_blank" class="text-decoration-none small">eBay UK Category Tree</a>
             </div>
-            
-            <div class="mt-2 p-2 bg-light border rounded small">
-                <strong>Common Fire Safety IDs (eBay UK):</strong>
-                <ul class="mb-0 mt-1 list-unstyled">
-                    <li>🚒 <strong>57013</strong> - Fire Extinguishers (Preferred)</li>
-                    <li>💨 <strong>185116</strong> - Smoke Alarms</li>
-                    <li>⚠️ <strong>103284</strong> - CO Alarms</li>
-                    <li>🔥 <strong>185114</strong> - Fire Blankets</li>
-                    <li>📦 <strong>46538</strong> - Other Fire Protection (Catch-all)</li>
-                </ul>
-            </div>
+
+            <label for="categoryName" class="form-label mt-3">eBay Category Name</label>
+            <InputText id="categoryName" class="form-control" @bind-Value="listing.CategoryName" placeholder="Auto-filled from Suggest Category (or enter manually)" />
+
+            @if (suggestions.Any())
+            {
+                <div class="mt-2 p-2 bg-light border rounded small text-muted">
+                    Category suggestions were found from your title. Click one above to auto-fill this field.
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(listing.CategoryId))
+            {
+                <div class="mt-2 p-2 bg-light border rounded small text-muted">
+                    Current category: <strong>@listing.CategoryId</strong>@(string.IsNullOrWhiteSpace(listing.CategoryName) ? string.Empty : $" - {listing.CategoryName}")
+                </div>
+            }
+            else
+            {
+                <div class="mt-2 p-2 bg-light border rounded small text-muted">
+                    Use Suggest Category for this listing title, or enter the eBay category ID manually.
+                </div>
+            }
             
             @if (!string.IsNullOrEmpty(extractedCategory))
             {
@@ -334,6 +349,8 @@
     private decimal extractedExVat;
     private bool isSuggesting = false;
     private List<CategorySuggestionDto> suggestions = new();
+    private string? suggestStatusMessage;
+    private string suggestStatusCss = "text-muted";
 
     private List<EbayPolicyDto> paymentPolicies = new();
     private List<EbayPolicyDto> fulfillmentPolicies = new();
@@ -374,6 +391,7 @@
                 listing.Description = existing.Description;
                 listing.Price = existing.Price;
                 listing.CategoryId = existing.CategoryId;
+                listing.CategoryName = existing.CategoryName;
                 listing.FulfillmentPolicyId = existing.FulfillmentPolicyId;
                 listing.PaymentPolicyId = existing.PaymentPolicyId;
                 listing.ReturnPolicyId = existing.ReturnPolicyId;
@@ -553,6 +571,7 @@
         listing.EbayAccountId = int.TryParse(value, out var accountId) ? accountId : null;
         await LoadPolicies();
         suggestions.Clear();
+        suggestStatusMessage = null;
     }
 
     private async Task HandleExtract()
@@ -580,6 +599,7 @@
         listing.ImageUrls = new List<string>();
         listing.Price = 0;
         listing.CategoryId = null;
+        listing.CategoryName = null;
         listing.SourceUrl = extractionUrl;
         listing.PaymentPolicyId = currentPolicies.Payment;
         listing.FulfillmentPolicyId = currentPolicies.Fulfillment;
@@ -645,14 +665,31 @@
     private async Task HandleSuggestCategories()
     {
         if (string.IsNullOrWhiteSpace(listing.Title)) return;
+
+        suggestStatusMessage = null;
+        suggestions.Clear();
+
+        if (!listing.EbayAccountId.HasValue)
+        {
+            suggestStatusCss = "text-warning";
+            suggestStatusMessage = "Select a connected eBay account first, then try suggesting a category again.";
+            return;
+        }
         
         isSuggesting = true;
         try
         {
             suggestions = await ListingService.GetCategorySuggestionsAsync(listing.Title, listing.EbayAccountId);
+            if (!suggestions.Any())
+            {
+                suggestStatusCss = "text-warning";
+                suggestStatusMessage = "No category suggestions returned. Check your eBay account connection and try a more specific title.";
+            }
         }
         catch (Exception ex)
         {
+            suggestStatusCss = "text-danger";
+            suggestStatusMessage = "Could not fetch category suggestions right now. Please try again.";
             Console.WriteLine($"Error fetching suggestions: {ex.Message}");
         }
         finally
@@ -664,7 +701,19 @@
     private void SelectSuggestion(CategorySuggestionDto suggestion)
     {
         listing.CategoryId = suggestion.CategoryId;
+        listing.CategoryName = suggestion.CategoryName;
         suggestions.Clear();
+        suggestStatusMessage = null;
+    }
+
+    private void OnCategoryIdInput(ChangeEventArgs e)
+    {
+        var newCategoryId = e.Value?.ToString();
+        if (!string.Equals(listing.CategoryId, newCategoryId, StringComparison.Ordinal))
+        {
+            listing.CategoryId = newCategoryId;
+            listing.CategoryName = null;
+        }
     }
 
     private async Task HandleValidSubmit()

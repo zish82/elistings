@@ -78,6 +78,7 @@ public class ListingsController : ControllerBase
                 Status = l.Status,
                 EbayItemId = l.EbayItemId,
                 CategoryId = l.CategoryId,
+                CategoryName = l.CategoryName,
                 FulfillmentPolicyId = l.FulfillmentPolicyId,
                 PaymentPolicyId = l.PaymentPolicyId,
                 ReturnPolicyId = l.ReturnPolicyId,
@@ -116,6 +117,7 @@ public class ListingsController : ControllerBase
             Status = l.Status,
             EbayItemId = l.EbayItemId,
             CategoryId = l.CategoryId,
+            CategoryName = l.CategoryName,
             FulfillmentPolicyId = l.FulfillmentPolicyId,
             PaymentPolicyId = l.PaymentPolicyId,
             ReturnPolicyId = l.ReturnPolicyId,
@@ -165,6 +167,7 @@ public class ListingsController : ControllerBase
             Price = request.Price,
             Status = "Draft",
             CategoryId = request.CategoryId,
+            CategoryName = request.CategoryName,
             FulfillmentPolicyId = fulfillmentId,
             PaymentPolicyId = paymentId,
             ReturnPolicyId = returnId,
@@ -191,6 +194,7 @@ public class ListingsController : ControllerBase
             Price = listing.Price,
             Status = listing.Status,
             CategoryId = listing.CategoryId,
+            CategoryName = listing.CategoryName,
             FulfillmentPolicyId = listing.FulfillmentPolicyId,
             PaymentPolicyId = listing.PaymentPolicyId,
             ReturnPolicyId = listing.ReturnPolicyId,
@@ -215,6 +219,7 @@ public class ListingsController : ControllerBase
         listing.Price = request.Price;
         listing.EbayAccountId = request.EbayAccountId ?? GetDefaultEbayAccountId(listing.OwnerUserId);
         listing.CategoryId = request.CategoryId;
+        listing.CategoryName = request.CategoryName;
         listing.FulfillmentPolicyId = request.FulfillmentPolicyId;
         listing.PaymentPolicyId = request.PaymentPolicyId;
         listing.ReturnPolicyId = request.ReturnPolicyId;
@@ -377,6 +382,7 @@ public class ListingsController : ControllerBase
                     Description = listingEntity.Description,
                     Price = listingEntity.Price,
                     CategoryId = listingEntity.CategoryId,
+                    CategoryName = listingEntity.CategoryName,
                     FulfillmentPolicyId = listingEntity.FulfillmentPolicyId,
                     PaymentPolicyId = listingEntity.PaymentPolicyId,
                     ReturnPolicyId = listingEntity.ReturnPolicyId,

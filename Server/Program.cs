@@ -225,7 +225,7 @@ using (var scope = app.Services.CreateScope())
         ");
 
         // Ensure Listings table has required columns (completely silent raw SQL)
-        var requiredColumns = new[] { "OwnerUserId", "EbayAccountId", "Type", "Brand", "Colour", "ImageUrlsJson", "Sku", "EbayOfferId", "SourceUrl", "SourcePrice", "SourceProductCode" };
+        var requiredColumns = new[] { "OwnerUserId", "EbayAccountId", "Type", "Brand", "Colour", "ImageUrlsJson", "Sku", "EbayOfferId", "SourceUrl", "SourcePrice", "SourceProductCode", "CategoryName" };
         var existingColumns = new List<string>();
         
         try 

@@ -101,11 +101,34 @@ public class ScraperService : IScraperService
             primary.ProductCode = fallback.ProductCode;
         }
 
-        var mergedImages = (primary.ImageUrls ?? new List<string>())
-            .Concat(fallback.ImageUrls ?? new List<string>())
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct()
-            .ToList();
+        var mergedImages = new List<string>();
+        var mergedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddImage(string? imageUrl)
+        {
+            if (string.IsNullOrWhiteSpace(imageUrl)) return;
+
+            var candidate = imageUrl.Trim().Replace("&amp;", "&");
+            if (candidate.StartsWith("//", StringComparison.Ordinal))
+            {
+                candidate = "https:" + candidate;
+            }
+            if (candidate.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            {
+                candidate = "https://" + candidate.Substring("http://".Length);
+            }
+
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return;
+
+            var canonicalPathUrl = uri.GetLeftPart(UriPartial.Path);
+            var canonicalKey = $"{uri.Host.ToLowerInvariant()}{uri.AbsolutePath}";
+            if (!mergedKeys.Add(canonicalKey)) return;
+
+            mergedImages.Add(canonicalPathUrl);
+        }
+
+        foreach (var image in primary.ImageUrls ?? new List<string>()) AddImage(image);
+        foreach (var image in fallback.ImageUrls ?? new List<string>()) AddImage(image);
 
         primary.ImageUrls = mergedImages;
         return primary;

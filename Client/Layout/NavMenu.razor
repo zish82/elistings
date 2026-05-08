@@ -1,4 +1,5 @@
 ﻿@inject Client.Services.AuthService AuthService
+@using System.Reflection
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
@@ -34,12 +35,18 @@
                 </NavLink>
             </div>
         }
+
+        <div class="menu-version px-3 py-2">
+            <div class="menu-version-label">Live Version</div>
+            <div class="menu-version-value">@DeploymentVersion</div>
+        </div>
     </nav>
 </div>
 
 @code {
     private bool collapseNavMenu = true;
     private bool canManageUsers;
+    private string DeploymentVersion = "unknown";
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
 
@@ -47,6 +54,21 @@
     {
         var session = await AuthService.GetSessionAsync();
         canManageUsers = session.User?.CanManageUsers == true;
+
+        var assembly = typeof(App).Assembly;
+        var informationalVersion = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+        var version = assembly.GetName().Version?.ToString(3);
+
+        if (!string.IsNullOrWhiteSpace(informationalVersion))
+        {
+            DeploymentVersion = informationalVersion.Split('+')[0];
+        }
+        else if (!string.IsNullOrWhiteSpace(version))
+        {
+            DeploymentVersion = version;
+        }
     }
 
     private void ToggleNavMenu()

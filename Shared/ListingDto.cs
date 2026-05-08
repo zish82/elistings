@@ -17,6 +17,7 @@ public class ListingDto
     
     // eBay Specifics
     public string? CategoryId { get; set; }
+    public string? CategoryName { get; set; }
     public string? FulfillmentPolicyId { get; set; }
     public string? PaymentPolicyId { get; set; }
     public string? ReturnPolicyId { get; set; }

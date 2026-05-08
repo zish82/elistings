@@ -8,6 +8,7 @@ public class CreateListingRequest
     [System.ComponentModel.DataAnnotations.Range(0.99, 1000000.00, ErrorMessage = "Price must be at least £0.99 for eBay UK.")]
     public decimal Price { get; set; } = 0.99m;
     public string? CategoryId { get; set; }
+    public string? CategoryName { get; set; }
     public string? FulfillmentPolicyId { get; set; }
     public string? PaymentPolicyId { get; set; }
     public string? ReturnPolicyId { get; set; }

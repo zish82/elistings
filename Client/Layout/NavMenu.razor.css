@@ -65,6 +65,29 @@
     color: white;
 }
 
+.nav-scrollable .nav {
+    min-height: 100%;
+}
+
+.menu-version {
+    margin-top: auto;
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+    color: #c7c7c7;
+}
+
+.menu-version-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.8;
+}
+
+.menu-version-value {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #ffffff;
+}
+
 @media (min-width: 641px) {
     .navbar-toggler {
         display: none;
