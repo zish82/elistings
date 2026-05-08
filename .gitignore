@@ -22,3 +22,4 @@ app.db
 
 # Local development secrets
 Server/appsettings.Development.json
+Server/appsettings.Development.json

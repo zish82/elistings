@@ -32,13 +32,15 @@ public class AuthController : ControllerBase
     private readonly AppDbContext _context;
     private readonly HttpClient _httpClient;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IEbayService _ebayService;
 
-    public AuthController(IOptions<EbaySettings> settings, AppDbContext context, HttpClient httpClient, ICurrentUserService currentUserService)
+    public AuthController(IOptions<EbaySettings> settings, AppDbContext context, HttpClient httpClient, ICurrentUserService currentUserService, IEbayService ebayService)
     {
         _settings = settings.Value;
         _context = context;
         _httpClient = httpClient;
         _currentUserService = currentUserService;
+        _ebayService = ebayService;
     }
 
     [Authorize]
@@ -344,6 +346,33 @@ public class AuthController : ControllerBase
 
         await _context.SaveChangesAsync();
         return NoContent();
+    }
+
+    [Authorize]
+    [HttpPost("accounts/{id:int}/refresh")]
+    public async Task<IActionResult> RefreshAccountToken(int id)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var account = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value && t.Id == id);
+        if (account == null) return NotFound();
+
+        try
+        {
+            await _ebayService.RefreshOAuthTokenAsync(id);
+            await _context.Entry(account).ReloadAsync();
+
+            return Ok(new
+            {
+                Connected = account.ExpiryTime > DateTime.UtcNow,
+                ExpiresAtUtc = account.ExpiryTime
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     private static string? NormalizeAccountName(string? accountName)

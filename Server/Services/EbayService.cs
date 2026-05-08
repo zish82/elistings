@@ -458,6 +458,25 @@ public class EbayService : IEbayService
         return await RefreshTokenAsync(tokenInfo, context);
     }
 
+    public async Task RefreshOAuthTokenAsync(int accountId)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null)
+        {
+            throw new Exception("No authenticated user context found for eBay token.");
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<Server.Data.AppDbContext>();
+        var tokenInfo = await ResolveTokenInfoAsync(context, userId.Value, accountId);
+        if (tokenInfo == null)
+        {
+            throw new Exception("eBay account not found.");
+        }
+
+        await RefreshTokenAsync(tokenInfo, context);
+    }
+
     private static async Task<Server.Data.EbayTokenInfo?> ResolveTokenInfoAsync(Server.Data.AppDbContext context, int userId, int? accountId)
     {
         if (accountId.HasValue)
@@ -474,6 +493,16 @@ public class EbayService : IEbayService
 
     private async Task<string> RefreshTokenAsync(Server.Data.EbayTokenInfo tokenInfo, Server.Data.AppDbContext context)
     {
+        if (string.IsNullOrWhiteSpace(tokenInfo.RefreshToken) || string.Equals(tokenInfo.RefreshToken, "MANUAL", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new Exception("This account cannot be refreshed automatically. Please reconnect the eBay account.");
+        }
+
+        if (tokenInfo.RefreshTokenExpiryTime <= DateTime.UtcNow)
+        {
+            throw new Exception("The eBay refresh token has expired. Please reconnect the eBay account.");
+        }
+
         var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
         var authHeader = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{_settings.AppId}:{_settings.CertId}"));
 
@@ -498,6 +527,18 @@ public class EbayService : IEbayService
         var data = await response.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonNode>();
         tokenInfo.AccessToken = data?["access_token"]?.GetValue<string>() ?? throw new Exception("No access token in refresh response");
         tokenInfo.ExpiryTime = DateTime.UtcNow.AddSeconds(data?["expires_in"]?.GetValue<int>() ?? 0);
+
+        var refreshedRefreshToken = data?["refresh_token"]?.GetValue<string>();
+        if (!string.IsNullOrWhiteSpace(refreshedRefreshToken))
+        {
+            tokenInfo.RefreshToken = refreshedRefreshToken;
+        }
+
+        var refreshTokenExpiresIn = data?["refresh_token_expires_in"]?.GetValue<int>();
+        if (refreshTokenExpiresIn.HasValue && refreshTokenExpiresIn.Value > 0)
+        {
+            tokenInfo.RefreshTokenExpiryTime = DateTime.UtcNow.AddSeconds(refreshTokenExpiresIn.Value);
+        }
         
         await context.SaveChangesAsync();
         return tokenInfo.AccessToken;

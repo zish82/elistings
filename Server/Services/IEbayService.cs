@@ -6,6 +6,7 @@ public interface IEbayService
 {
     Task<EbayListingResponse> CreateListingAsync(ListingDto listing);
     Task<string> GetOAuthTokenAsync(int? accountId = null);
+    Task RefreshOAuthTokenAsync(int accountId);
     
     Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null);
     Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync(int? accountId = null);

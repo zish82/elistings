@@ -77,6 +77,11 @@ public class ListingService
         await SendAsync<object>(HttpMethod.Post, $"api/auth/accounts/{accountId}/default");
     }
 
+    public async Task RefreshEbayAccountAsync(int accountId)
+    {
+        await SendAsync<object>(HttpMethod.Post, $"api/auth/accounts/{accountId}/refresh");
+    }
+
     public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null)
     {
         var suffix = accountId.HasValue ? $"?accountId={accountId.Value}" : string.Empty;

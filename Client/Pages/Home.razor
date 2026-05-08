@@ -52,6 +52,7 @@
                             <th>Name</th>
                             <th>Status</th>
                             <th>Expires</th>
+                            <th>Actions</th>
                             <th class="text-end">Default</th>
                         </tr>
                     </thead>
@@ -66,6 +67,12 @@
                                     </span>
                                 </td>
                                 <td>@(account.ExpiresAtUtc?.ToLocalTime().ToString("g") ?? "-")</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <button class="btn btn-outline-secondary" @onclick="() => RefreshAccountToken(account.Id, account.Name)">Refresh</button>
+                                        <button class="btn btn-outline-info" @onclick="() => ConnectEbayAccount(account.Name)">Reconnect</button>
+                                    </div>
+                                </td>
                                 <td class="text-end">
                                     @if (account.IsDefault)
                                     {
@@ -465,6 +472,38 @@ else
         {
             tokenMessageCss = "alert-danger";
             tokenMessage = $"Could not start eBay login: {ex.Message}";
+        }
+    }
+
+    private async Task ConnectEbayAccount(string accountName)
+    {
+        tokenMessage = null;
+        try
+        {
+            var loginUrl = await ListingService.GetEbayLoginUrlAsync("/", accountName);
+            Navigation.NavigateTo(loginUrl, forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            tokenMessageCss = "alert-danger";
+            tokenMessage = $"Could not start eBay reconnect: {ex.Message}";
+        }
+    }
+
+    private async Task RefreshAccountToken(int accountId, string accountName)
+    {
+        tokenMessage = null;
+        try
+        {
+            await ListingService.RefreshEbayAccountAsync(accountId);
+            await LoadEbayAccounts();
+            tokenMessageCss = "alert-success";
+            tokenMessage = $"Token refreshed for {accountName}.";
+        }
+        catch (Exception ex)
+        {
+            tokenMessageCss = "alert-warning";
+            tokenMessage = $"Could not refresh {accountName}. Please use Reconnect. Details: {ex.Message}";
         }
     }
 
