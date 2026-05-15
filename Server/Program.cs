@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Hangfire;
+using Hangfire.MemoryStorage;
 using Server.Data;
 using System.Net;
 
@@ -12,6 +14,11 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHttpClient();
+builder.Services.AddHangfire(configuration => configuration
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UseMemoryStorage());
+builder.Services.AddHangfireServer();
 
 var sqliteConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Data Source=app.db";
@@ -21,6 +28,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.Configure<Server.Configuration.EbaySettings>(
     builder.Configuration.GetSection("EbaySettings"));
+builder.Services.Configure<Server.Configuration.EdenSupplierSettings>(
+    builder.Configuration.GetSection("EdenSupplier"));
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -59,6 +68,14 @@ builder.Services.AddScoped<Server.Services.ICurrentUserService, Server.Services.
 
 builder.Services.AddHttpClient<Server.Services.IEbayService, Server.Services.EbayService>();
 builder.Services.AddHttpClient<Server.Services.IMarketplaceImageService, Server.Services.EbayImageService>();
+builder.Services.AddScoped<Server.Services.IEdenSupplierSyncService, Server.Services.EdenSupplierSyncService>();
+builder.Services.AddHttpClient("eden-auth")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
+        UseCookies = true,
+        CookieContainer = new CookieContainer()
+    });
 builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.SafelincsProductScraper>();
 builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.EdenHorticultureProductScraper>();
 builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.GenericProductScraper>();
@@ -114,6 +131,11 @@ app.UseRouting();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseHangfireDashboard("/hangfire");
+}
 
 app.UseEndpoints(endpoints =>
 {
@@ -359,6 +381,60 @@ using (var scope = app.Services.CreateScope())
     {
         Console.WriteLine($"Policy migration/seeding error: {ex.Message}");
     }
+
+    try
+    {
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""SupplierSyncRuns"" (
+                ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_SupplierSyncRuns"" PRIMARY KEY AUTOINCREMENT,
+                ""Supplier"" TEXT NOT NULL,
+                ""StartedAtUtc"" TEXT NOT NULL,
+                ""FinishedAtUtc"" TEXT NULL,
+                ""ProcessedCount"" INTEGER NOT NULL DEFAULT 0,
+                ""SuccessCount"" INTEGER NOT NULL DEFAULT 0,
+                ""FailedCount"" INTEGER NOT NULL DEFAULT 0,
+                ""TriggeredBy"" TEXT NOT NULL DEFAULT 'scheduler'
+            );
+        ");
+
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""SupplierListingSnapshots"" (
+                ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_SupplierListingSnapshots"" PRIMARY KEY AUTOINCREMENT,
+                ""ListingId"" INTEGER NOT NULL,
+                ""SyncRunId"" INTEGER NULL,
+                ""Supplier"" TEXT NOT NULL,
+                ""SupplierSku"" TEXT NULL,
+                ""SupplierPrice"" REAL NULL,
+                ""StockStatus"" TEXT NOT NULL,
+                ""StockText"" TEXT NULL,
+                ""CheckedAtUtc"" TEXT NOT NULL,
+                ""IsSuccess"" INTEGER NOT NULL DEFAULT 0,
+                ""ErrorMessage"" TEXT NULL
+            );
+        ");
+
+        db.Database.ExecuteSqlRaw(@"
+            CREATE INDEX IF NOT EXISTS ""IX_SupplierListingSnapshots_ListingId_CheckedAtUtc""
+            ON ""SupplierListingSnapshots"" (""ListingId"", ""CheckedAtUtc"");
+        ");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Supplier sync migration error: {ex.Message}");
+    }
+}
+
+using (var hangfireScope = app.Services.CreateScope())
+{
+    var recurringJobs = hangfireScope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+    recurringJobs.AddOrUpdate<Server.Services.IEdenSupplierSyncService>(
+        "eden-published-listing-sync",
+        svc => svc.RunPublishedSyncAsync(),
+        "0 */4 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.Utc
+        });
 }
 
 app.Run();

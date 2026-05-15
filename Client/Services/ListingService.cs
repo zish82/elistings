@@ -62,6 +62,23 @@ public class ListingService
         await SendAsync<object>(HttpMethod.Put, $"api/listings/{id}", request);
     }
 
+    public async Task<SupplierStatusDto> GetSupplierStatusAsync(int id)
+    {
+        return await GetAsync<SupplierStatusDto>($"api/listings/{id}/supplier-status") ?? new SupplierStatusDto { ListingId = id };
+    }
+
+    public async Task<SupplierStatusDto> RefreshSupplierStatusAsync(int id)
+    {
+        return await SendAsync<SupplierStatusDto>(HttpMethod.Post, $"api/listings/{id}/supplier-status/refresh")
+               ?? new SupplierStatusDto { ListingId = id, IsSuccess = false, ErrorMessage = "No response from server." };
+    }
+
+    public async Task<SupplierStatusDto> CheckSupplierStatusAsync(string? sourceUrl, string? supplierSku)
+    {
+        return await SendAsync<SupplierStatusDto>(HttpMethod.Post, "api/listings/supplier-status/check", new { SourceUrl = sourceUrl, SupplierSku = supplierSku })
+               ?? new SupplierStatusDto { IsSuccess = false, ErrorMessage = "No response from server." };
+    }
+
     public async Task<ExtractedDetailsDto> ExtractDetailsAsync(string url)
     {
         return await GetAsync<ExtractedDetailsDto>($"api/listings/extract?url={Uri.EscapeDataString(url)}") ?? new ExtractedDetailsDto();
@@ -80,6 +97,26 @@ public class ListingService
     public async Task RefreshEbayAccountAsync(int accountId)
     {
         await SendAsync<object>(HttpMethod.Post, $"api/auth/accounts/{accountId}/refresh");
+    }
+
+    public async Task DeleteEbayAccountAsync(int accountId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"api/auth/accounts/{accountId}");
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+
+        using var response = await _http.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var error = await response.Content.ReadAsStringAsync();
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            throw new Exception(error);
+        }
+
+        throw new Exception($"Failed to delete eBay account. Status: {response.StatusCode}");
     }
 
     public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null)

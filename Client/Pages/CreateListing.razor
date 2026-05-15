@@ -163,6 +163,44 @@
             <InputText id="sourceCode" class="form-control" @bind-Value="listing.SourceProductCode" />
         </div>
 
+        <div class="col-md-12">
+            <div class="p-3 border rounded bg-light">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="CheckSupplierStatus" disabled="@(isCheckingSupplier || !CanCheckSupplier())">
+                        @if (isCheckingSupplier)
+                        {
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                            <span class="ms-1">Checking supplier...</span>
+                        }
+                        else
+                        {
+                            <span>Check Current Supplier Stock</span>
+                        }
+                    </button>
+                    @if (!CanCheckSupplier())
+                    {
+                        <span class="small text-muted">Provide an Eden or Safelincs source URL to run supplier checks.</span>
+                    }
+                </div>
+
+                @if (supplierStatus != null)
+                {
+                    <div class="small mt-2">
+                        <div><strong>Supplier:</strong> @supplierStatus.Supplier</div>
+                        <div><strong>SKU:</strong> @(string.IsNullOrWhiteSpace(supplierStatus.SupplierSku) ? "-" : supplierStatus.SupplierSku)</div>
+                        <div><strong>Stock:</strong> @(supplierStatus.StockStatus == "Unknown" ? string.Empty : supplierStatus.StockStatus)@(string.IsNullOrWhiteSpace(supplierStatus.StockText) ? string.Empty : $" ({supplierStatus.StockText})")</div>
+                        <div><strong>Supplier Price:</strong> @(supplierStatus.SupplierPrice.HasValue ? $"£{supplierStatus.SupplierPrice.Value:F2}" : "£0.00")</div>
+                        <div><strong>Last Updated:</strong> @(supplierStatus.LastCheckedUtc.HasValue ? supplierStatus.LastCheckedUtc.Value.ToLocalTime().ToString("g") : "Not checked yet")</div>
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(supplierStatusError))
+                {
+                    <div class="small text-danger mt-2">@supplierStatusError</div>
+                }
+            </div>
+        </div>
+
         <div class="col-md-4">
             <label for="type" class="form-label">Type (eBay Aspect)</label>
             <InputText id="type" class="form-control" @bind-Value="listing.Type" placeholder="e.g. Fire Extinguisher" />
@@ -368,6 +406,9 @@
     private System.Text.Json.JsonElement? feePayload = null;
     private decimal feeTotal = 0m;
     private List<(string Label, decimal Amount)> feeBreakdown = new();
+    private SupplierStatusDto? supplierStatus;
+    private bool isCheckingSupplier = false;
+    private string? supplierStatusError;
 
     
 
@@ -411,6 +452,8 @@
 
                 listing.SourcePrice = existing.SourcePrice;
                 listing.SourceProductCode = existing.SourceProductCode;
+
+                await LoadSupplierStatus();
 
                 Console.WriteLine($"[Edit] Loaded Listing {Id}: Payment={listing.PaymentPolicyId}, Shipping={listing.FulfillmentPolicyId}, Returns={listing.ReturnPolicyId}, SourceUrl={listing.SourceUrl}");
             }
@@ -572,6 +615,69 @@
         await LoadPolicies();
         suggestions.Clear();
         suggestStatusMessage = null;
+    }
+
+    private async Task LoadSupplierStatus()
+    {
+        if (!Id.HasValue) return;
+
+        try
+        {
+            supplierStatus = await ListingService.GetSupplierStatusAsync(Id.Value);
+            supplierStatusError = supplierStatus.IsSuccess ? null : supplierStatus.ErrorMessage;
+        }
+        catch (Exception ex)
+        {
+            supplierStatusError = $"Could not load supplier status: {ex.Message}";
+        }
+    }
+
+    private async Task CheckSupplierStatus()
+    {
+        if (!CanCheckSupplier()) return;
+
+        isCheckingSupplier = true;
+        supplierStatusError = null;
+        try
+        {
+            if (Id.HasValue)
+            {
+                supplierStatus = await ListingService.RefreshSupplierStatusAsync(Id.Value);
+            }
+            else
+            {
+                supplierStatus = await ListingService.CheckSupplierStatusAsync(listing.SourceUrl, listing.SourceProductCode);
+            }
+
+            if (!supplierStatus.IsSuccess)
+            {
+                supplierStatusError = supplierStatus.ErrorMessage ?? "Supplier check completed with warnings.";
+            }
+        }
+        catch (Exception ex)
+        {
+            supplierStatusError = $"Supplier check failed: {ex.Message}";
+        }
+        finally
+        {
+            isCheckingSupplier = false;
+        }
+    }
+
+    private bool CanCheckSupplier()
+    {
+        return IsSupportedSupplierSourceUrl(listing.SourceUrl);
+    }
+
+    private static bool IsSupportedSupplierSourceUrl(string? sourceUrl)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUrl))
+        {
+            return false;
+        }
+
+        return sourceUrl.Contains("edenhorticulture.co.uk", StringComparison.OrdinalIgnoreCase)
+               || sourceUrl.Contains("safelincs.co.uk", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task HandleExtract()

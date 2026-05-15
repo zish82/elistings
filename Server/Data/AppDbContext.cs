@@ -11,6 +11,8 @@ public class AppDbContext : DbContext
     public DbSet<Listing> Listings { get; set; }
     public DbSet<EbayTokenInfo> EbayTokens { get; set; }
     public DbSet<Policy> Policies { get; set; }
+    public DbSet<SupplierSyncRun> SupplierSyncRuns { get; set; }
+    public DbSet<SupplierListingSnapshot> SupplierListingSnapshots { get; set; }
 }
 
 public class AppUser
@@ -71,4 +73,31 @@ public class EbayTokenInfo
     public string RefreshToken { get; set; } = string.Empty;
     public DateTime ExpiryTime { get; set; }
     public DateTime RefreshTokenExpiryTime { get; set; }
+}
+
+public class SupplierSyncRun
+{
+    public int Id { get; set; }
+    public string Supplier { get; set; } = string.Empty;
+    public DateTime StartedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? FinishedAtUtc { get; set; }
+    public int ProcessedCount { get; set; }
+    public int SuccessCount { get; set; }
+    public int FailedCount { get; set; }
+    public string TriggeredBy { get; set; } = "scheduler";
+}
+
+public class SupplierListingSnapshot
+{
+    public int Id { get; set; }
+    public int ListingId { get; set; }
+    public int? SyncRunId { get; set; }
+    public string Supplier { get; set; } = string.Empty;
+    public string? SupplierSku { get; set; }
+    public decimal? SupplierPrice { get; set; }
+    public string StockStatus { get; set; } = "Unknown";
+    public string? StockText { get; set; }
+    public DateTime CheckedAtUtc { get; set; } = DateTime.UtcNow;
+    public bool IsSuccess { get; set; }
+    public string? ErrorMessage { get; set; }
 }

@@ -16,14 +16,16 @@ public class ListingsController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IScraperService _scraperService;
     private readonly IEbayService _ebayService;
+    private readonly IEdenSupplierSyncService _edenSupplierSyncService;
     private readonly Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> _ebaySettings;
     private readonly ICurrentUserService _currentUserService;
 
-    public ListingsController(AppDbContext context, IScraperService scraperService, IEbayService ebayService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings, ICurrentUserService currentUserService)
+    public ListingsController(AppDbContext context, IScraperService scraperService, IEbayService ebayService, IEdenSupplierSyncService edenSupplierSyncService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings, ICurrentUserService currentUserService)
     {
         _context = context;
         _scraperService = scraperService;
         _ebayService = ebayService;
+        _edenSupplierSyncService = edenSupplierSyncService;
         _ebaySettings = ebaySettings;
         _currentUserService = currentUserService;
     }
@@ -332,6 +334,49 @@ public class ListingsController : ControllerBase
         }
     }
 
+    [HttpGet("{id}/supplier-status")]
+    public async Task<ActionResult<SupplierStatusDto>> GetSupplierStatus(int id)
+    {
+        var listing = await FindAccessibleListing(id);
+        if (listing == null) return NotFound();
+
+        var snapshot = await _edenSupplierSyncService.GetLatestSnapshotAsync(id);
+        if (snapshot == null)
+        {
+            return Ok(new SupplierStatusDto
+            {
+                ListingId = id,
+                Supplier = ResolveSupplierName(listing.SourceUrl),
+                IsSuccess = false,
+                ErrorMessage = "No supplier sync data yet."
+            });
+        }
+
+        return Ok(snapshot);
+    }
+
+    [HttpPost("{id}/supplier-status/refresh")]
+    public async Task<ActionResult<SupplierStatusDto>> RefreshSupplierStatus(int id)
+    {
+        var listing = await FindAccessibleListing(id);
+        if (listing == null) return NotFound();
+
+        var snapshot = await _edenSupplierSyncService.SyncListingAsync(id, "manual");
+        return Ok(snapshot);
+    }
+
+    [HttpPost("supplier-status/check")]
+    public async Task<ActionResult<SupplierStatusDto>> CheckSupplierStatus([FromBody] SupplierStatusCheckRequest request)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.SourceUrl))
+        {
+            return BadRequest("SourceUrl is required.");
+        }
+
+        var snapshot = await _edenSupplierSyncService.CheckSourceAsync(request.SourceUrl, request.SupplierSku, "manual-draft");
+        return Ok(snapshot);
+    }
+
     private async Task<Listing?> FindAccessibleListing(int id)
     {
         var query = _context.Listings.Where(l => l.Id == id);
@@ -343,6 +388,26 @@ public class ListingsController : ControllerBase
         }
 
         return await query.FirstOrDefaultAsync();
+    }
+
+    private static string ResolveSupplierName(string? sourceUrl)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUrl))
+        {
+            return "unknown";
+        }
+
+        if (sourceUrl.Contains("edenhorticulture.co.uk", StringComparison.OrdinalIgnoreCase))
+        {
+            return "edenhorticulture";
+        }
+
+        if (sourceUrl.Contains("safelincs.co.uk", StringComparison.OrdinalIgnoreCase))
+        {
+            return "safelincs";
+        }
+
+        return "unknown";
     }
 
     [HttpPost("bulk-publish")]

@@ -321,11 +321,49 @@ public class AuthController : ControllerBase
                 Name = t.Name,
                 IsDefault = t.IsDefault,
                 IsConnected = t.ExpiryTime > DateTime.UtcNow,
-                ExpiresAtUtc = t.ExpiryTime
+                ExpiresAtUtc = t.ExpiryTime,
+                LinkedListingCount = _context.Listings.Count(l => l.OwnerUserId == userId.Value && l.EbayAccountId == t.Id)
             })
             .ToListAsync();
 
         return Ok(accounts);
+    }
+
+    [Authorize]
+    [HttpDelete("accounts/{id:int}")]
+    public async Task<IActionResult> DeleteAccount(int id)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var account = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value && t.Id == id);
+        if (account == null) return NotFound();
+
+        var linkedListingCount = await _context.Listings
+            .CountAsync(l => l.OwnerUserId == userId.Value && l.EbayAccountId == id);
+
+        if (linkedListingCount > 0)
+        {
+            return Conflict($"Cannot delete account '{account.Name}' because {linkedListingCount} listing(s) are assigned to it. Reassign those listings first.");
+        }
+
+        _context.EbayTokens.Remove(account);
+
+        if (account.IsDefault)
+        {
+            var replacementDefault = await _context.EbayTokens
+                .Where(t => t.UserId == userId.Value && t.Id != id)
+                .OrderBy(t => t.Id)
+                .FirstOrDefaultAsync();
+
+            if (replacementDefault != null)
+            {
+                replacementDefault.IsDefault = true;
+            }
+        }
+
+        await _context.SaveChangesAsync();
+        return NoContent();
     }
 
     [Authorize]

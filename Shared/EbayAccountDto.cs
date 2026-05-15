@@ -7,4 +7,5 @@ public class EbayAccountDto
     public bool IsDefault { get; set; }
     public bool IsConnected { get; set; }
     public DateTime? ExpiresAtUtc { get; set; }
+    public int LinkedListingCount { get; set; }
 }

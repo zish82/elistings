@@ -1,0 +1,340 @@
+@page "/ebay-accounts"
+@using Shared
+@using Client.Services
+@inject AuthService AuthService
+@inject ListingService ListingService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>eBay Accounts</PageTitle>
+
+<h1>Manage eBay Accounts</h1>
+<p class="text-muted">Connect, refresh, set defaults, and safely remove unused eBay account connections.</p>
+
+<div class="row g-3 mb-4">
+    <div class="col-12 col-xl-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Connect OAuth Account</h5>
+                <p class="card-text text-muted small">Connect a new eBay account using the official OAuth flow.</p>
+                <div class="input-group">
+                    <input type="text" class="form-control" @bind="newAccountName" placeholder="Account label (optional)" />
+                    <button class="btn btn-primary" @onclick="ConnectEbay" disabled="@isBusy">Connect</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-xl-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Save Manual Token</h5>
+                <p class="card-text text-muted small">Use this only if you already generated a valid user token manually.</p>
+                <div class="input-group mb-2">
+                    <input type="password" class="form-control" @bind="manualToken" placeholder="Paste token" />
+                    <button class="btn btn-outline-secondary" @onclick="SaveManualToken" disabled="@isBusy">Save</button>
+                </div>
+                <input type="text" class="form-control" @bind="newAccountName" placeholder="Account label (optional)" />
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(statusMessage))
+{
+    <div class="alert @statusCss">@statusMessage</div>
+}
+
+@if (isLoading)
+{
+    <p><em>Loading accounts...</em></p>
+}
+else if (!ebayAccounts.Any())
+{
+    <div class="alert alert-warning">No eBay accounts connected yet.</div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Expires</th>
+                    <th>Linked Listings</th>
+                    <th>Default</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var account in ebayAccounts)
+                {
+                    var canDelete = account.LinkedListingCount == 0;
+                    <tr>
+                        <td>@account.Name</td>
+                        <td>
+                            <span class="badge @(account.IsConnected ? "bg-success" : "bg-warning text-dark")">
+                                @(account.IsConnected ? "Connected" : "Expired")
+                            </span>
+                        </td>
+                        <td>@(account.ExpiresAtUtc?.ToLocalTime().ToString("g") ?? "-")</td>
+                        <td>
+                            @if (account.LinkedListingCount > 0)
+                            {
+                                <span class="badge bg-info text-dark">@account.LinkedListingCount</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">0</span>
+                            }
+                        </td>
+                        <td>
+                            @if (account.IsDefault)
+                            {
+                                <span class="badge bg-primary">Default</span>
+                            }
+                            else
+                            {
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => SetDefaultAccount(account.Id)" disabled="@isBusy">Make Default</button>
+                            }
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button class="btn btn-outline-secondary" @onclick="() => RefreshAccountToken(account.Id, account.Name)" disabled="@isBusy">Refresh</button>
+                                <button class="btn btn-outline-info" @onclick="() => ConnectEbayAccount(account.Name)" disabled="@isBusy">Reconnect</button>
+                                <button class="btn btn-outline-danger" @onclick="() => DeleteAccount(account)" disabled="@(isBusy || !canDelete)" title="@(canDelete ? "Delete this account" : "Reassign linked listings before deleting")">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<EbayAccountDto> ebayAccounts = new();
+    private string? manualToken;
+    private string? newAccountName;
+    private bool isLoading = true;
+    private bool isBusy;
+    private string? statusMessage;
+    private string statusCss = "alert-info";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.EnsureAuthenticatedAsync("/ebay-accounts"))
+        {
+            return;
+        }
+
+        HandleOAuthCallbackMessage();
+        await LoadEbayAccounts();
+    }
+
+    private async Task LoadEbayAccounts()
+    {
+        isLoading = true;
+        try
+        {
+            ebayAccounts = await ListingService.GetEbayAccountsAsync();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not load eBay accounts: {ex.Message}";
+            ebayAccounts = new List<EbayAccountDto>();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ConnectEbay()
+    {
+        statusMessage = null;
+        isBusy = true;
+        try
+        {
+            var loginUrl = await ListingService.GetEbayLoginUrlAsync("/ebay-accounts", newAccountName);
+            Navigation.NavigateTo(loginUrl, forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not start eBay login: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ConnectEbayAccount(string accountName)
+    {
+        statusMessage = null;
+        isBusy = true;
+        try
+        {
+            var loginUrl = await ListingService.GetEbayLoginUrlAsync("/ebay-accounts", accountName);
+            Navigation.NavigateTo(loginUrl, forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not start eBay reconnect: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task SaveManualToken()
+    {
+        if (string.IsNullOrWhiteSpace(manualToken))
+        {
+            statusCss = "alert-warning";
+            statusMessage = "Please paste a token before saving.";
+            return;
+        }
+
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            await ListingService.SetManualTokenAsync(manualToken, newAccountName);
+            manualToken = string.Empty;
+            statusCss = "alert-success";
+            statusMessage = "Token saved successfully.";
+            await LoadEbayAccounts();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Error saving token: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task SetDefaultAccount(int accountId)
+    {
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            await ListingService.SetDefaultEbayAccountAsync(accountId);
+            statusCss = "alert-success";
+            statusMessage = "Default account updated.";
+            await LoadEbayAccounts();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Error updating default account: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task RefreshAccountToken(int accountId, string accountName)
+    {
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            await ListingService.RefreshEbayAccountAsync(accountId);
+            statusCss = "alert-success";
+            statusMessage = $"Token refreshed for {accountName}.";
+            await LoadEbayAccounts();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-warning";
+            statusMessage = $"Could not refresh {accountName}. Please reconnect. Details: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task DeleteAccount(EbayAccountDto account)
+    {
+        if (account.LinkedListingCount > 0)
+        {
+            statusCss = "alert-warning";
+            statusMessage = $"Cannot delete {account.Name}: {account.LinkedListingCount} listing(s) are still assigned.";
+            return;
+        }
+
+        var confirm = await JS.InvokeAsync<bool>("confirm", $"Delete connected account '{account.Name}'?");
+        if (!confirm)
+        {
+            return;
+        }
+
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            await ListingService.DeleteEbayAccountAsync(account.Id);
+            statusCss = "alert-success";
+            statusMessage = $"Deleted account {account.Name}.";
+            await LoadEbayAccounts();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not delete account: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private void HandleOAuthCallbackMessage()
+    {
+        var currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var status = GetQueryParam(currentUri.Query, "ebay");
+        if (string.IsNullOrWhiteSpace(status)) return;
+
+        var message = GetQueryParam(currentUri.Query, "message") ?? string.Empty;
+
+        if (string.Equals(status, "connected", StringComparison.OrdinalIgnoreCase))
+        {
+            statusCss = "alert-success";
+            statusMessage = "eBay account connected successfully.";
+        }
+        else if (string.Equals(status, "error", StringComparison.OrdinalIgnoreCase))
+        {
+            statusCss = "alert-danger";
+            statusMessage = string.IsNullOrWhiteSpace(message) ? "eBay account connection failed." : $"eBay connection failed: {message}";
+        }
+
+        Navigation.NavigateTo(currentUri.GetLeftPart(UriPartial.Path), replace: true);
+    }
+
+    private static string? GetQueryParam(string query, string key)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return null;
+        var trimmed = query.StartsWith("?") ? query.Substring(1) : query;
+        foreach (var part in trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var idx = part.IndexOf('=');
+            if (idx <= 0) continue;
+            var k = Uri.UnescapeDataString(part.Substring(0, idx).Replace("+", " "));
+            if (!string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) continue;
+            return Uri.UnescapeDataString(part.Substring(idx + 1).Replace("+", " "));
+        }
+
+        return null;
+    }
+}
