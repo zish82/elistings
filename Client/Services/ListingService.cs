@@ -79,6 +79,36 @@ public class ListingService
                ?? new SupplierStatusDto { IsSuccess = false, ErrorMessage = "No response from server." };
     }
 
+    public async Task<List<SupplierFeedDto>> GetSupplierFeedsAsync()
+    {
+        return await GetAsync<List<SupplierFeedDto>>("api/supplierfeeds") ?? new List<SupplierFeedDto>();
+    }
+
+    public async Task<SupplierFeedDto> CreateSupplierFeedAsync(CreateSupplierFeedRequest request)
+    {
+        return await SendAsync<SupplierFeedDto>(HttpMethod.Post, "api/supplierfeeds", request)
+               ?? throw new Exception("Failed to create supplier feed.");
+    }
+
+    public async Task DeleteSupplierFeedAsync(int id)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"api/supplierfeeds/{id}");
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var error = await response.Content.ReadAsStringAsync();
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            throw new Exception(error);
+        }
+
+        throw new Exception($"Failed to delete supplier feed. Status: {response.StatusCode}");
+    }
+
     public async Task<ExtractedDetailsDto> ExtractDetailsAsync(string url)
     {
         return await GetAsync<ExtractedDetailsDto>($"api/listings/extract?url={Uri.EscapeDataString(url)}") ?? new ExtractedDetailsDto();

@@ -13,6 +13,7 @@ public class AppDbContext : DbContext
     public DbSet<Policy> Policies { get; set; }
     public DbSet<SupplierSyncRun> SupplierSyncRuns { get; set; }
     public DbSet<SupplierListingSnapshot> SupplierListingSnapshots { get; set; }
+    public DbSet<SupplierFeed> SupplierFeeds { get; set; }
 }
 
 public class AppUser
@@ -100,4 +101,15 @@ public class SupplierListingSnapshot
     public DateTime CheckedAtUtc { get; set; } = DateTime.UtcNow;
     public bool IsSuccess { get; set; }
     public string? ErrorMessage { get; set; }
+}
+
+public class SupplierFeed
+{
+    public int Id { get; set; }
+    public string Supplier { get; set; } = string.Empty;
+    public string FeedType { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public bool IsRecommended { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

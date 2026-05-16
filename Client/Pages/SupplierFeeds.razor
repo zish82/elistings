@@ -1,0 +1,215 @@
+@page "/supplier-feeds"
+@using Shared
+@using Client.Services
+@inject AuthService AuthService
+@inject ListingService ListingService
+@inject IJSRuntime JS
+
+<PageTitle>Supplier Feeds</PageTitle>
+
+<h1>Supplier Feeds</h1>
+<p class="text-muted">Add and manage supplier catalogue and stock feed URLs.</p>
+
+<div class="alert alert-info">
+    <strong>DropShipMall recommendation:</strong> use the <strong>Stock Feed</strong> for frequent stock sync checks,
+    and keep <strong>Product Catalogue</strong> for full product import/refresh.
+</div>
+
+@if (!string.IsNullOrWhiteSpace(statusMessage))
+{
+    <div class="alert @statusCss">@statusMessage</div>
+}
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Add Supplier Feed</h5>
+        <div class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Supplier</label>
+                <InputText class="form-control" @bind-Value="newFeed.Supplier" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Feed Type</label>
+                <InputSelect class="form-select" @bind-Value="newFeed.FeedType">
+                    <option value="Product Catalogue">Product Catalogue</option>
+                    <option value="Shopify Catalogue">Shopify Catalogue</option>
+                    <option value="Stock Feed">Stock Feed</option>
+                    <option value="Other">Other</option>
+                </InputSelect>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">URL</label>
+                <InputText class="form-control" @bind-Value="newFeed.Url" />
+            </div>
+            <div class="col-md-9">
+                <label class="form-label">Description</label>
+                <InputText class="form-control" @bind-Value="newFeed.Description" />
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <div class="form-check mb-2">
+                    <InputCheckbox class="form-check-input" @bind-Value="newFeed.IsRecommended" />
+                    <label class="form-check-label ms-1">Recommended feed</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-3">
+            <button class="btn btn-primary" @onclick="AddFeed" disabled="@isSaving">Add Feed</button>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <p><em>Loading feeds...</em></p>
+}
+else if (!feeds.Any())
+{
+    <div class="alert alert-warning">No feeds configured yet.</div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Supplier</th>
+                    <th>Feed Type</th>
+                    <th>URL</th>
+                    <th>Description</th>
+                    <th>Recommended</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var feed in feeds)
+                {
+                    <tr>
+                        <td>@feed.Supplier</td>
+                        <td>@feed.FeedType</td>
+                        <td><a href="@feed.Url" target="_blank">@feed.Url</a></td>
+                        <td>@(string.IsNullOrWhiteSpace(feed.Description) ? "-" : feed.Description)</td>
+                        <td>
+                            @if (feed.IsRecommended)
+                            {
+                                <span class="badge bg-success">Recommended</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">No</span>
+                            }
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteFeed(feed.Id)" disabled="@isSaving">Delete</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<SupplierFeedDto> feeds = new();
+    private CreateSupplierFeedRequest newFeed = new()
+    {
+        Supplier = "DropShipMall",
+        FeedType = "Stock Feed",
+        Url = "https://www.dropshipmall.co.uk/trade/catalogue/stock",
+        Description = "Best for stock sync automation.",
+        IsRecommended = true
+    };
+
+    private bool isLoading = true;
+    private bool isSaving;
+    private string? statusMessage;
+    private string statusCss = "alert-info";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.EnsureAuthenticatedAsync("/supplier-feeds"))
+        {
+            return;
+        }
+
+        await LoadFeeds();
+    }
+
+    private async Task LoadFeeds()
+    {
+        isLoading = true;
+        try
+        {
+            feeds = await ListingService.GetSupplierFeedsAsync();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not load feeds: {ex.Message}";
+            feeds = new List<SupplierFeedDto>();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task AddFeed()
+    {
+        if (string.IsNullOrWhiteSpace(newFeed.Supplier)
+            || string.IsNullOrWhiteSpace(newFeed.FeedType)
+            || string.IsNullOrWhiteSpace(newFeed.Url))
+        {
+            statusCss = "alert-warning";
+            statusMessage = "Supplier, Feed Type, and URL are required.";
+            return;
+        }
+
+        isSaving = true;
+        statusMessage = null;
+        try
+        {
+            await ListingService.CreateSupplierFeedAsync(newFeed);
+            statusCss = "alert-success";
+            statusMessage = "Supplier feed added.";
+            await LoadFeeds();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not add feed: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task DeleteFeed(int id)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Delete this supplier feed?");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        isSaving = true;
+        statusMessage = null;
+        try
+        {
+            await ListingService.DeleteSupplierFeedAsync(id);
+            statusCss = "alert-success";
+            statusMessage = "Supplier feed deleted.";
+            await LoadFeeds();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not delete feed: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

@@ -417,6 +417,31 @@ using (var scope = app.Services.CreateScope())
             CREATE INDEX IF NOT EXISTS ""IX_SupplierListingSnapshots_ListingId_CheckedAtUtc""
             ON ""SupplierListingSnapshots"" (""ListingId"", ""CheckedAtUtc"");
         ");
+
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""SupplierFeeds"" (
+                ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_SupplierFeeds"" PRIMARY KEY AUTOINCREMENT,
+                ""Supplier"" TEXT NOT NULL,
+                ""FeedType"" TEXT NOT NULL,
+                ""Url"" TEXT NOT NULL,
+                ""Description"" TEXT NULL,
+                ""IsRecommended"" INTEGER NOT NULL DEFAULT 0,
+                ""CreatedAtUtc"" TEXT NOT NULL
+            );
+        ");
+
+        db.Database.ExecuteSqlRaw(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SupplierFeeds_Supplier_FeedType_Url""
+            ON ""SupplierFeeds"" (""Supplier"", ""FeedType"", ""Url"");
+        ");
+
+        db.Database.ExecuteSqlRaw(@"
+            INSERT OR IGNORE INTO ""SupplierFeeds"" (""Supplier"", ""FeedType"", ""Url"", ""Description"", ""IsRecommended"", ""CreatedAtUtc"")
+            VALUES
+            ('DropShipMall', 'Product Catalogue', 'https://www.dropshipmall.co.uk/trade/catalogue/products', 'Full product details and prices. Best for initial import and periodic catalog refresh.', 0, CURRENT_TIMESTAMP),
+            ('DropShipMall', 'Shopify Catalogue', 'https://www.dropshipmall.co.uk/trade/catalogue/shopify', 'Shopify-optimized feed. Use if your workflow is Shopify-centric.', 0, CURRENT_TIMESTAMP),
+            ('DropShipMall', 'Stock Feed', 'https://www.dropshipmall.co.uk/trade/catalogue/stock', 'Stock-only feed with direct URL access. Best for frequent stock sync automation.', 1, CURRENT_TIMESTAMP);
+        ");
     }
     catch (Exception ex)
     {
