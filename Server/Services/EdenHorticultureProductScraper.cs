@@ -110,6 +110,27 @@ public class EdenHorticultureProductScraper : ProductScraperBase
         return Task.FromResult(details);
     }
 
+    // HTML fallback; ScraperService prefers the Shopify collection JSON when available.
+    public override Task<List<string>> ExtractProductLinksAsync(string categoryUrl, HtmlDocument doc, string html)
+    {
+        var links = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var nodes = doc.DocumentNode.SelectNodes("//a[contains(@href,'/products/')]");
+        if (nodes == null) return Task.FromResult(links);
+
+        foreach (var node in nodes)
+        {
+            var full = ResolveUrl(categoryUrl, WebUtility.HtmlDecode(node.GetAttributeValue("href", "")));
+            if (!Uri.TryCreate(full, UriKind.Absolute, out var uri) || !CanHandle(full)) continue;
+
+            var clean = uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+            if (!clean.Contains("/products/", StringComparison.OrdinalIgnoreCase)) continue;
+            if (seen.Add(clean)) links.Add(clean);
+        }
+
+        return Task.FromResult(links);
+    }
+
     private string ExtractCombinedDescription(HtmlDocument doc, string baseUrl)
     {
         HtmlNode? FindAccordionSection(string heading)

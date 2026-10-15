@@ -1,0 +1,395 @@
+@page "/products"
+@using Shared
+@using Client.Services
+@inject AuthService AuthService
+@inject ListingService ListingService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Products</PageTitle>
+
+<h1>Products</h1>
+<p class="text-muted">Browse supplier products and add them to your own listings.</p>
+
+<div class="row g-2 mb-3">
+    <div class="col-md-3">
+        <label class="form-label">Supplier</label>
+        <select class="form-select" value="@selectedSupplier" @onchange="OnSupplierChanged">
+            @foreach (var supplier in suppliers)
+            {
+                <option value="@supplier">@supplier</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-6">
+        <label class="form-label">Search</label>
+        <input class="form-control" @bind="search" @bind:event="oninput" placeholder="Search by title or SKU" />
+    </div>
+    <div class="col-md-3 d-flex align-items-end">
+        <button class="btn btn-outline-secondary w-100" @onclick="LoadProducts" disabled="@isLoading">Refresh</button>
+    </div>
+</div>
+
+<div class="mb-3">
+    <div class="fw-semibold mb-2">Available feeds for @selectedSupplier</div>
+    <div class="d-flex gap-2 flex-wrap">
+        @foreach (var feed in selectedFeeds)
+        {
+            <button class="btn btn-outline-primary" @onclick="() => SyncFeed(feed)" disabled="@isBusy">
+                Import @feed.FeedType
+            </button>
+        }
+        @if (!selectedFeeds.Any())
+        {
+            <span class="text-muted">No feeds configured for this supplier.</span>
+        }
+    </div>
+</div>
+<div class="mb-3 d-flex gap-2 flex-wrap">
+    <button class="btn btn-success" @onclick="AddSelected" disabled="@(!selectedIds.Any() || isBusy)">Add all selected to my listings</button>
+    <button class="btn btn-outline-danger" @onclick="DeleteSelected" disabled="@(!selectedIds.Any() || isBusy)">Delete selected products</button>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(statusMessage))
+{
+    <div class="alert @statusCss">@statusMessage</div>
+}
+
+@if (!string.IsNullOrEmpty(enrichJobId))
+{
+    <div class="mb-3">
+        <BulkJobProgress JobId="@enrichJobId" Title="Fetching descriptions & specifications from supplier" />
+    </div>
+}
+
+@if (isLoading)
+{
+    <p><em>Loading products...</em></p>
+}
+else if (!products.Any())
+{
+    <div class="alert alert-warning">No products found. Run catalogue sync first.</div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th style="width: 36px;"><input type="checkbox" class="form-check-input" checked="@(products.Any() && products.All(p => selectedIds.Contains(p.Id)))" @onchange="ToggleSelectAll" /></th>
+                    <th>Product</th>
+                    <th>Category</th>
+                    <th>Image</th>
+                    <th>SKU</th>
+                    <th>Stock</th>
+                    <th>Supplier Price</th>
+                    <th>Suggested Price</th>
+                    <th>Status</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var product in products)
+                {
+                    var images = string.IsNullOrWhiteSpace(product.ImageUrlsJson) ? Array.Empty<string>() : System.Text.Json.JsonSerializer.Deserialize<string[]>(product.ImageUrlsJson);
+                    <tr>
+                        <td><input type="checkbox" class="form-check-input" checked="@selectedIds.Contains(product.Id)" @onchange="() => ToggleSelection(product.Id)" /></td>
+                        <td>
+                            <a href="/products/@product.Id">@product.Title</a>
+                            @if (!string.IsNullOrWhiteSpace(product.ProductUrl))
+                            {
+                                <div><a class="small text-muted" href="@product.ProductUrl" target="_blank">Source</a></div>
+                            }
+                        </td>
+                        <td>@(string.IsNullOrWhiteSpace(product.CategoryName) ? "-" : product.CategoryName)</td>
+                        <td>
+                            @if (images != null && images.Length > 0)
+                            {
+                                <img src="@images[0]" alt="Image" style="max-width: 48px; max-height: 48px; border-radius: 4px; border: 1px solid #ccc;" />
+                            }
+                            else if (!string.IsNullOrWhiteSpace(product.ImageUrl))
+                            {
+                                <img src="@product.ImageUrl" alt="Image" style="max-width: 48px; max-height: 48px; border-radius: 4px; border: 1px solid #ccc;" />
+                            }
+                            else
+                            {
+                                <span>-</span>
+                            }
+                        </td>
+                        <td>@(string.IsNullOrWhiteSpace(product.SupplierSku) ? "-" : product.SupplierSku)</td>
+                        <td>@(product.StockLevel?.ToString() ?? "-")</td>
+                        <td>@(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")</td>
+                        <td>@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</td>
+                        <td>
+                            @if (product.AlreadyAdded)
+                            {
+                                <span class="badge bg-info text-dark">Already added</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">Not added</span>
+                            }
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button class="btn btn-outline-success" @onclick="() => AddSingle(product.Id, false)" disabled="@isBusy">Add to my listings</button>
+                                @if (product.AlreadyAdded)
+                                {
+                                    <button class="btn btn-outline-secondary" @onclick="() => AddSingle(product.Id, true)" disabled="@isBusy">Add duplicate</button>
+                                }
+                                @if (product.ExistingListingId.HasValue)
+                                {
+                                    <a class="btn btn-outline-primary" href="/edit-listing/@product.ExistingListingId.Value">Open listing</a>
+                                }
+                                <button class="btn btn-outline-danger" @onclick="() => DeleteSingle(product)" disabled="@isBusy">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private readonly List<SupplierProductListItemDto> products = new();
+    private readonly List<SupplierFeedDto> feeds = new();
+    private readonly HashSet<int> selectedIds = new();
+    private List<string> suppliers = new();
+
+    private string selectedSupplier = "DropShipMall";
+    private string search = string.Empty;
+    private bool isLoading;
+    private bool isBusy;
+    private string? statusMessage;
+    private string? enrichJobId;
+    private string statusCss = "alert-info";
+
+    private IEnumerable<SupplierFeedDto> selectedFeeds => feeds
+        .Where(feed => feed.Supplier.Equals(selectedSupplier, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(feed => feed.FeedType);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.EnsureAuthenticatedAsync("/products"))
+        {
+            return;
+        }
+
+        await LoadFeeds();
+        await LoadProducts();
+    }
+
+    private async Task LoadFeeds()
+    {
+        try
+        {
+            feeds.Clear();
+            feeds.AddRange(await ListingService.GetSupplierFeedsAsync());
+            suppliers = feeds.Select(feed => feed.Supplier)
+                .Where(supplier => !string.IsNullOrWhiteSpace(supplier))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(supplier => supplier)
+                .ToList();
+            if (!suppliers.Any()) suppliers.Add("DropShipMall");
+            if (!suppliers.Contains(selectedSupplier, StringComparer.OrdinalIgnoreCase)) selectedSupplier = suppliers[0];
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not load supplier feeds: {ex.Message}";
+        }
+    }
+
+    private async Task OnSupplierChanged(ChangeEventArgs e)
+    {
+        selectedSupplier = e.Value?.ToString() ?? string.Empty;
+        selectedIds.Clear();
+        await LoadProducts();
+    }
+
+    private async Task LoadProducts()
+    {
+        isLoading = true;
+        statusMessage = null;
+        try
+        {
+            var loaded = await ListingService.GetSupplierProductsAsync(selectedSupplier, search);
+            products.Clear();
+            products.AddRange(loaded);
+            selectedIds.RemoveWhere(id => products.All(p => p.Id != id));
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not load products: {ex.Message}";
+            products.Clear();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ToggleSelection(int id)
+    {
+        if (selectedIds.Contains(id)) selectedIds.Remove(id);
+        else selectedIds.Add(id);
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        var isChecked = (bool)(e.Value ?? false);
+        if (isChecked)
+        {
+            foreach (var product in products)
+            {
+                selectedIds.Add(product.Id);
+            }
+        }
+        else
+        {
+            selectedIds.Clear();
+        }
+    }
+
+    private async Task AddSingle(int productId, bool allowDuplicate)
+    {
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            var result = await ListingService.AddSupplierProductsToMyListingsAsync(new List<int> { productId }, allowDuplicate);
+            statusCss = "alert-success";
+            statusMessage = $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
+            enrichJobId = result.EnrichmentJobId;
+            await LoadProducts();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Add failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task AddSelected()
+    {
+        if (!selectedIds.Any()) return;
+
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            var result = await ListingService.AddSupplierProductsToMyListingsAsync(selectedIds.ToList(), false);
+            statusCss = "alert-success";
+            statusMessage = $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
+            enrichJobId = result.EnrichmentJobId;
+            selectedIds.Clear();
+            await LoadProducts();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Bulk add failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task SyncFeed(SupplierFeedDto feed)
+    {
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            var result = await ListingService.SyncSupplierFeedAsync(feed.Id);
+            if (!result.IsSuccess)
+            {
+                statusCss = "alert-danger";
+                statusMessage = result.ErrorMessage;
+            }
+            else
+            {
+                if (result.ProcessedRows == 0 || (result.Inserted == 0 && result.Updated == 0))
+                {
+                    statusCss = "alert-warning";
+                    statusMessage = $"{feed.FeedType} finished but imported no products. Processed {result.ProcessedRows}, inserted {result.Inserted}, updated {result.Updated}.";
+                }
+                else
+                {
+                    statusCss = "alert-success";
+                    statusMessage = $"{feed.FeedType} import complete. Processed {result.ProcessedRows}, inserted {result.Inserted}, updated {result.Updated}.";
+                }
+                await LoadProducts();
+            }
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Catalogue sync failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task DeleteSingle(SupplierProductListItemDto product)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Delete '{product.Title}' from supplier products?");
+        if (!confirmed) return;
+
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            await ListingService.DeleteSupplierProductAsync(product.Id);
+            selectedIds.Remove(product.Id);
+            statusCss = "alert-success";
+            statusMessage = "Product deleted.";
+            await LoadProducts();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task DeleteSelected()
+    {
+        if (!selectedIds.Any()) return;
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Delete {selectedIds.Count} selected supplier products?");
+        if (!confirmed) return;
+
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            var deleted = await ListingService.DeleteSupplierProductsAsync(selectedIds.ToList());
+            selectedIds.Clear();
+            statusCss = "alert-success";
+            statusMessage = $"Deleted {deleted} product(s).";
+            await LoadProducts();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}

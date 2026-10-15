@@ -27,7 +27,7 @@ public class EbayController : ControllerBase
     }
 
     [HttpPost("publish/{id}")]
-    public async Task<ActionResult<ListingDto>> PublishListing(int id)
+    public async Task<ActionResult<ListingDto>> PublishListing(int id, [FromServices] SkuService skuService)
     {
         try
         {
@@ -42,32 +42,21 @@ public class EbayController : ControllerBase
             var listing = await query.FirstOrDefaultAsync();
             if (listing == null) return NotFound();
 
-            var dto = new ListingDto
+            ListingDto dto;
+            try
             {
-                Id = listing.Id,
-                EbayAccountId = listing.EbayAccountId,
-                Title = listing.Title,
-                Description = listing.Description,
-                Price = listing.Price,
-                CategoryId = listing.CategoryId,
-                FulfillmentPolicyId = listing.FulfillmentPolicyId,
-                PaymentPolicyId = listing.PaymentPolicyId,
-                ReturnPolicyId = listing.ReturnPolicyId,
-                Type = listing.Type,
-                Brand = listing.Brand,
-                Colour = listing.Colour,
-                Sku = listing.Sku,
-                EbayOfferId = listing.EbayOfferId,
-                ImageUrls = string.IsNullOrEmpty(listing.ImageUrlsJson) ? new List<string>() : JsonSerializer.Deserialize<List<string>>(listing.ImageUrlsJson) ?? new List<string>()
-            };
+                dto = await ListingPublishHelper.PrepareAsync(listing, _context, _ebayService, _ebaySettings.Value, skuService);
+            }
+            catch (InvalidOperationException validationError)
+            {
+                return BadRequest(validationError.Message);
+            }
+
+            // Persist an auto-selected category / defaulted policies even if eBay rejects the listing.
+            await _context.SaveChangesAsync();
 
             var result = await _ebayService.CreateListingAsync(dto);
-            
-            listing.Status = "Published";
-            listing.EbayItemId = result.ListingId;
-            listing.Sku = result.Sku;
-            listing.EbayOfferId = result.OfferId;
-            
+            ListingPublishHelper.ApplyPublishResult(listing, result);
             await _context.SaveChangesAsync();
 
             return Ok(new ListingDto

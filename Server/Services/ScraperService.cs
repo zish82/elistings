@@ -75,6 +75,16 @@ public class ScraperService : IScraperService
 
     public async Task<List<string>> ExtractProductLinksAsync(string categoryUrl)
     {
+        // Shopify stores (e.g. Eden Horticulture) expose every product in a collection via
+        // /collections/<handle>/products.json, which is paginated and avoids missing
+        // products that are only loaded by "load more"/infinite scroll in the HTML.
+        var shopifyLinks = await TryExtractShopifyCollectionLinksAsync(categoryUrl);
+        if (shopifyLinks != null && shopifyLinks.Count > 0)
+        {
+            Console.WriteLine($"[Scraper] Found {shopifyLinks.Count} product links via Shopify collection JSON.");
+            return shopifyLinks;
+        }
+
         var html = await FetchHtmlAsync(categoryUrl);
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
@@ -83,6 +93,68 @@ public class ScraperService : IScraperService
         if (primary == null) return new List<string>();
 
         return await primary.ExtractProductLinksAsync(categoryUrl, doc, html);
+    }
+
+    private async Task<List<string>?> TryExtractShopifyCollectionLinksAsync(string categoryUrl)
+    {
+        if (!Uri.TryCreate(categoryUrl, UriKind.Absolute, out var uri)) return null;
+
+        var segments = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var idx = Array.FindIndex(segments, s => s.Equals("collections", StringComparison.OrdinalIgnoreCase));
+        if (idx < 0 || idx + 1 >= segments.Length) return null;
+
+        var collectionPath = "/collections/" + segments[idx + 1];
+        var origin = uri.GetLeftPart(UriPartial.Authority);
+        var links = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        const int maxPages = 40; // 40 x 250 = 10,000 products safety cap
+        for (var page = 1; page <= maxPages; page++)
+        {
+            string json;
+            try
+            {
+                json = await FetchHtmlAsync($"{origin}{collectionPath}/products.json?limit=250&page={page}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Scraper] Shopify collection JSON not available ({ex.Message}); falling back to HTML.");
+                return page == 1 ? null : links;
+            }
+
+            System.Text.Json.JsonDocument doc;
+            try
+            {
+                doc = System.Text.Json.JsonDocument.Parse(json);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return page == 1 ? null : links; // not a Shopify JSON endpoint
+            }
+
+            using var docScope = doc;
+            if (!doc.RootElement.TryGetProperty("products", out var products)
+                || products.ValueKind != System.Text.Json.JsonValueKind.Array)
+            {
+                return page == 1 ? null : links;
+            }
+
+            var countOnPage = 0;
+            foreach (var product in products.EnumerateArray())
+            {
+                if (!product.TryGetProperty("handle", out var handleEl)) continue;
+                var handle = handleEl.GetString();
+                if (string.IsNullOrWhiteSpace(handle)) continue;
+                countOnPage++;
+                var link = $"{origin}{collectionPath}/products/{handle}";
+                if (seen.Add(link)) links.Add(link);
+            }
+
+            if (countOnPage < 250) break;
+            await Task.Delay(300); // be polite between pages
+        }
+
+        return links;
     }
 
     private ExtractedDetailsDto Merge(ExtractedDetailsDto primary, ExtractedDetailsDto fallback)
@@ -184,15 +256,18 @@ public class ScraperService : IScraperService
         request.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        if (response.StatusCode == HttpStatusCode.Forbidden)
+        if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
         {
             if (ShouldUseProxyFallback(url))
             {
-                Console.WriteLine($"[Scraper] Direct fetch blocked for {url}. Retrying via configured proxy for matched domain.");
+                Console.WriteLine($"[Scraper] Direct fetch returned {(int)response.StatusCode} for {url}. Retrying via configured proxy for matched domain.");
                 return await FetchViaProxyAsync(url);
             }
 
-            throw new InvalidOperationException("The target website blocked this request (HTTP 403). Proxy fallback is domain-restricted and this domain is not allowlisted. Add it to Scraper:ProxyFallbackDomains or use another source URL.");
+            var statusDescription = response.StatusCode == HttpStatusCode.TooManyRequests
+                ? "rate limited this request (HTTP 429)"
+                : "blocked this request (HTTP 403)";
+            throw new InvalidOperationException($"The target website {statusDescription}. Proxy fallback is domain-restricted and this domain is not allowlisted. Add it to Scraper:ProxyFallbackDomains and configure Scraper:ProxyUrlTemplate (and Scraper:ProxyApiKey if required), or use another source URL.");
         }
 
         response.EnsureSuccessStatusCode();

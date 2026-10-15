@@ -22,3 +22,10 @@ app.db
 
 # Local development secrets
 Server/appsettings.Development.json
+
+# SQLite WAL/shared-memory files
+*.db-shm
+*.db-wal
+
+# FUSE temp files
+.fuse_hidden*

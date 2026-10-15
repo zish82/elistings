@@ -11,8 +11,44 @@
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h3>@(Id.HasValue ? "Edit Listing" : "Create New Listing")</h3>
-        <a href="/" class="btn btn-outline-secondary">Back to Dashboard</a>
+        <div class="d-flex gap-2">
+            @if (Id.HasValue && listing.SupplierProductId.HasValue)
+            {
+                <button type="button" class="btn btn-outline-info" @onclick="FetchSupplierDetails" disabled="@isFetchingDetails"
+                        title="Fetch description, specifications and images from the supplier website and fill any empty fields">
+                    @if (isFetchingDetails)
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                        <span class="ms-1">Fetching...</span>
+                    }
+                    else
+                    {
+                        <span>Fetch Missing Details</span>
+                    }
+                </button>
+                <button type="button" class="btn btn-outline-warning" @onclick="ResetFromSource" disabled="@isResettingFromSource">
+                    @if (isResettingFromSource)
+                    {
+                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                        <span class="ms-1">Resetting...</span>
+                    }
+                    else
+                    {
+                        <span>Reset from Source Product</span>
+                    }
+                </button>
+            }
+            <a href="/" class="btn btn-outline-secondary">Back to Dashboard</a>
+        </div>
     </div>
+
+    @if (!string.IsNullOrWhiteSpace(detailsMessage))
+    {
+        <div class="alert alert-info alert-dismissible small py-2">
+            @detailsMessage
+            <button type="button" class="btn-close" @onclick='() => detailsMessage = null'></button>
+        </div>
+    }
 
     <!-- URL Extraction UI -->
     <div class="card mb-4 bg-light">
@@ -84,17 +120,92 @@
             }
         </div>
 
-        <div class="col-md-4">
-            <label for="price" class="form-label">Selling Price (Inc VAT and Postage)</label>
-            <InputNumber id="price" class="form-control" @bind-Value="listing.Price" step="0.01" />
-            @if (extractedIncVat > 0 || extractedExVat > 0)
-            {
-                <div class="small mt-1 text-muted">
-                    @if (extractedIncVat > 0) { <span>Inc VAT: £@extractedIncVat</span> }
-                    @if (extractedExVat > 0) { <span class="d-block">Ex VAT: £@extractedExVat</span> }
+        <div class="col-md-12">
+            <div class="p-3 border rounded bg-white shadow-sm">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">Price &amp; Delivery</h6>
+                    @if (supplierContext?.Supplier != null)
+                    {
+                        <span class="small text-muted">
+                            Supplier: <strong>@supplierContext.Supplier.Name</strong>
+                            (@(supplierContext.Supplier.PricesIncludeVat ? "prices inc VAT" : $"prices ex VAT, +{supplierContext.Supplier.VatRatePercent:0.#}% VAT"))
+                            @if (!string.IsNullOrWhiteSpace(supplierContext.PostageCategory)) { <span> · Postage: @supplierContext.PostageCategory</span> }
+                        </span>
+                    }
                 </div>
-            }
-            <ValidationMessage For="@(() => listing.Price)" />
+
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label for="price" class="form-label">Item Price (inc VAT)</label>
+                        <InputNumber id="price" class="form-control" @bind-Value="listing.Price" step="0.01" />
+                        @if (extractedIncVat > 0 || extractedExVat > 0)
+                        {
+                            <div class="small mt-1 text-muted">
+                                @if (extractedIncVat > 0) { <span>Extracted inc VAT: £@extractedIncVat</span> }
+                                @if (extractedExVat > 0) { <span class="d-block">Extracted ex VAT: £@extractedExVat</span> }
+                            </div>
+                        }
+                        @if (SuggestedItemPrice.HasValue)
+                        {
+                            <div class="small mt-1">
+                                <a href="javascript:void(0)" @onclick="() => listing.Price = SuggestedItemPrice.Value">Use suggested £@SuggestedItemPrice.Value.ToString("F2")</a>
+                                <span class="text-muted">(cost + @(supplierContext?.Supplier?.DefaultMarginPercent.ToString("0.#") ?? "20")% margin)</span>
+                            </div>
+                        }
+                        <ValidationMessage For="@(() => listing.Price)" />
+                    </div>
+
+                    <div class="col-md-4">
+                        <label for="deliveryOption" class="form-label">Delivery Option</label>
+                        <select id="deliveryOption" class="form-select" value="@(selectedDeliveryOptionId?.ToString() ?? "")" @onchange="OnDeliveryOptionChanged">
+                            <option value="">-- Custom / none --</option>
+                            @foreach (var o in DeliveryOptions)
+                            {
+                                <option value="@o.Id">@o.Name (£@DeliveryGross(o).ToString("F2"))@(o.Id == supplierContext?.SuggestedDeliveryOptionId ? " - suggested" : "")</option>
+                            }
+                        </select>
+                        @if (supplierContext?.Supplier == null)
+                        {
+                            <div class="small text-muted mt-1">No supplier matched; enter the delivery cost manually or set suppliers up on <a href="/suppliers">Suppliers &amp; Delivery</a>.</div>
+                        }
+                    </div>
+
+                    <div class="col-md-2">
+                        <label for="deliveryCost" class="form-label">Delivery Cost (inc VAT)</label>
+                        <InputNumber id="deliveryCost" class="form-control" @bind-Value="listing.DeliveryCost" step="0.01" />
+                        <ValidationMessage For="@(() => listing.DeliveryCost)" />
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label">Listing Total</label>
+                        <div class="form-control bg-light fw-bold">£@ListingTotal.ToString("F2")</div>
+                        <div class="form-check mt-1">
+                            <input class="form-check-input" type="checkbox" id="includeDelivery" checked="@listing.IncludeDeliveryInPrice" disabled />
+                            <label class="form-check-label small" for="includeDelivery">Include delivery in listing price</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="alert alert-warning small py-2 mt-2 mb-2">
+                    Delivery is always included in the listing price for now (listed with free postage); charging postage separately isn't implemented yet.
+                </div>
+
+                @if (CostIncVat.HasValue)
+                {
+                    var totalCost = CostIncVat.Value + (listing.DeliveryCost ?? 0m);
+                    var margin = ListingTotal - totalCost;
+                    <div class="small text-muted">
+                        Your cost: item £@CostIncVat.Value.ToString("F2") inc VAT
+                        @if (supplierContext?.Supplier is { PricesIncludeVat: false } && listing.SourcePrice.HasValue)
+                        {
+                            <span>(£@listing.SourcePrice.Value.ToString("F2") + VAT)</span>
+                        }
+                        + delivery £@((listing.DeliveryCost ?? 0m).ToString("F2"))
+                        = <strong>£@totalCost.ToString("F2")</strong>.
+                        Margin before marketplace fees: <strong class="@(margin < 0 ? "text-danger" : "text-success")">£@margin.ToString("F2")</strong>
+                    </div>
+                }
+            </div>
         </div>
 
         <div class="col-md-8">
@@ -107,6 +218,22 @@
                 }
             </select>
             <div class="small text-muted mt-1">Drafts default to your default account, but you can override it for this listing.</div>
+        </div>
+
+        <div class="col-md-4">
+            <label for="sku" class="form-label">SKU</label>
+            <InputText id="sku" class="form-control" @bind-Value="listing.Sku" placeholder="Generated on save, e.g. DSM-S16301"
+                       readonly="@IsPublished" maxlength="50" />
+            <div class="small text-muted mt-1">
+                @(IsPublished ? "SKU can't be changed after publishing." : "Leave blank to generate {supplier prefix}-{supplier code}. Saved in upper case; letters, numbers, - and _ only (max 50).")
+            </div>
+            <ValidationMessage For="@(() => listing.Sku)" />
+        </div>
+
+        <div class="col-md-4">
+            <label for="quantity" class="form-label">Quantity</label>
+            <InputNumber id="quantity" class="form-control" @bind-Value="listing.Quantity" min="1" step="1" />
+            <ValidationMessage For="@(() => listing.Quantity)" />
         </div>
 
         <div class="col-md-8">
@@ -155,7 +282,7 @@
         <div class="col-md-4">
             <label for="sourcePrice" class="form-label">Source Price</label>
             <InputNumber id="sourcePrice" class="form-control" @bind-Value="listing.SourcePrice" step="0.01" />
-            <div class="small text-muted">Price from Source (used for calculations).</div>
+            <div class="small text-muted">Supplier's price as listed by the supplier (@(supplierContext?.Supplier is { PricesIncludeVat: false } ? "ex VAT" : "inc VAT")); used for cost and margin.</div>
         </div>
 
         <div class="col-md-4">
@@ -179,7 +306,7 @@
                     </button>
                     @if (!CanCheckSupplier())
                     {
-                        <span class="small text-muted">Provide an Eden or Safelincs source URL to run supplier checks.</span>
+                        <span class="small text-muted">Live stock checks aren't available for this listing's supplier (supported: DropShipMall, Eden Horticulture, Safelincs).</span>
                     }
                 </div>
 
@@ -211,6 +338,27 @@
             <InputText id="colour" class="form-control" @bind-Value="listing.Colour" placeholder="e.g. Red, Black" />
         </div>
 
+        <div class="col-md-4">
+            <label for="barcode" class="form-label">Barcode (EAN/UPC)</label>
+            <InputText id="barcode" class="form-control" @bind-Value="listing.Barcode" />
+        </div>
+
+        @if (listing.ItemSpecifics.Any())
+        {
+            <div class="col-md-12">
+                <label class="form-label">Item Specifics <span class="small text-muted">(from supplier; sent to eBay)</span></label>
+                <div class="d-flex flex-wrap gap-2">
+                    @foreach (var kv in listing.ItemSpecifics.ToList())
+                    {
+                        <span class="badge bg-light text-dark border">
+                            @kv.Key: @kv.Value
+                            <button type="button" class="btn btn-sm p-0 ms-1 text-danger" style="line-height:1" @onclick="() => listing.ItemSpecifics.Remove(kv.Key)">&times;</button>
+                        </span>
+                    }
+                </div>
+            </div>
+        }
+
         <div class="col-md-12">
             <label class="form-label">Images</label>
             <div class="d-flex flex-wrap gap-2 mb-3 p-3 border rounded bg-light" style="min-height: 100px;">
@@ -238,7 +386,11 @@
             
             <div class="mb-3">
                 <label for="imageUpload" class="form-label small text-muted">Or upload manual images (JPG, PNG)</label>
-                <InputFile id="imageUpload" class="form-control form-control-sm" OnChange="HandleFileSelected" multiple />
+                <InputFile id="imageUpload" class="form-control form-control-sm" OnChange="HandleFileSelected" multiple accept="image/jpeg,image/png" />
+                @if (!string.IsNullOrEmpty(imageUploadError))
+                {
+                    <div class="small text-danger mt-1">@imageUploadError</div>
+                }
             </div>
         </div>
 
@@ -251,6 +403,17 @@
             <div class="p-4 border rounded bg-white shadow-sm">
                 <h5 class="text-primary mb-3">eBay Business Policies</h5>
                 <p class="small text-muted mb-4">Select your policies from the dropdowns below. These are fetched directly from your eBay account.</p>
+                @if (!string.IsNullOrWhiteSpace(policiesError))
+                {
+                    <div class="alert alert-danger small text-break">@policiesError</div>
+                }
+                else if (listing.EbayAccountId.HasValue && !paymentPolicies.Any() && !fulfillmentPolicies.Any() && !returnPolicies.Any())
+                {
+                    <div class="alert alert-warning small">
+                        This eBay account has no business policies for eBay UK yet. Create Payment, Postage and Returns policies in
+                        eBay Seller Hub (Account &gt; Business policies), then reload this page.
+                    </div>
+                }
                 
                 <div class="row g-3">
                     <div class="col-md-4">
@@ -307,6 +470,11 @@
             </button>
             <a href="/" class="btn btn-link text-secondary ms-2">Discard Changes</a>
 
+            @if (!string.IsNullOrEmpty(saveError))
+            {
+                <div class="mt-3 text-danger fw-bold">@saveError</div>
+            }
+
             @if (!string.IsNullOrEmpty(publishStatus))
             {
                 <div class="mt-3 p-3 rounded bg-white border shadow-sm d-block" style="max-width: 500px;">
@@ -349,12 +517,12 @@
             <div class="card-body">
                 <h5 class="card-title">Fee Estimate</h5>
                 <div class="mb-2">Total Fees: <strong>£@feeTotal</strong></div>
-                @if (listing.SourcePrice.HasValue)
+                @if (CostIncVat.HasValue)
                 {
-                    var cost = listing.SourcePrice.Value;
-                    var net = listing.Price - feeTotal - cost;
-                    <div class="mb-2">Source Price: £@cost</div>
-                    <div class="mb-2">Estimated Net (Price - Fees - Source): <strong>£@net</strong></div>
+                    var cost = CostIncVat.Value + (listing.DeliveryCost ?? 0m);
+                    var net = ListingTotal - feeTotal - cost;
+                    <div class="mb-2">Listing total: £@ListingTotal.ToString("F2") · Your cost (item + VAT + delivery): £@cost.ToString("F2")</div>
+                    <div class="mb-2">Estimated Net (Total - Fees - Cost): <strong class="@(net < 0 ? "text-danger" : "")">£@net.ToString("F2")</strong></div>
                 }
 
                 @if (feeBreakdown.Any())
@@ -393,9 +561,13 @@
     private List<EbayPolicyDto> paymentPolicies = new();
     private List<EbayPolicyDto> fulfillmentPolicies = new();
     private List<EbayPolicyDto> returnPolicies = new();
+    private string? policiesError;
     private List<EbayAccountDto> ebayAccounts = new();
 
     private string listingStatus = "Draft";
+    private bool IsPublished => Id.HasValue && listingStatus == "Published";
+    private string? saveError;
+    private string? imageUploadError;
 
     private string publishStatus = "";
     private string publishStatusShort = "Processing...";
@@ -409,6 +581,125 @@
     private SupplierStatusDto? supplierStatus;
     private bool isCheckingSupplier = false;
     private string? supplierStatusError;
+    private bool isResettingFromSource;
+
+    // ---- Price & delivery
+    private ListingSupplierContextDto? supplierContext;
+    private int? selectedDeliveryOptionId;
+    private bool isFetchingDetails;
+    private string? detailsMessage;
+
+    private IEnumerable<SupplierDeliveryOptionDto> DeliveryOptions
+        => supplierContext?.Supplier?.DeliveryOptions.Where(o => o.IsActive).OrderBy(o => o.SortOrder) ?? Enumerable.Empty<SupplierDeliveryOptionDto>();
+
+    private decimal DeliveryGross(SupplierDeliveryOptionDto o)
+        => supplierContext?.Supplier == null ? o.Cost : PricingMath.DeliveryIncVat(o, supplierContext.Supplier);
+
+    private decimal ListingTotal => PricingMath.ListingTotal(listing.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice);
+
+    private decimal? CostIncVat => PricingMath.CostIncVat(listing.SourcePrice, supplierContext?.Supplier);
+
+    private decimal? SuggestedItemPrice => PricingMath.SuggestItemPrice(CostIncVat, supplierContext?.Supplier?.DefaultMarginPercent ?? 20m);
+
+    private void CopyExtras(ListingDto source)
+    {
+        listing.Marketplace = string.IsNullOrWhiteSpace(source.Marketplace) ? "eBay" : source.Marketplace;
+        listing.DeliveryOptionName = source.DeliveryOptionName;
+        listing.DeliveryCost = source.DeliveryCost;
+        listing.IncludeDeliveryInPrice = true; // separate postage not implemented yet
+        listing.ItemSpecifics = source.ItemSpecifics ?? new Dictionary<string, string>();
+        listing.Barcode = source.Barcode;
+    }
+
+    /// <summary>Loads supplier VAT/delivery settings; on a listing without delivery yet, applies the suggested option.</summary>
+    private async Task LoadSupplierContext()
+    {
+        try
+        {
+            supplierContext = Id.HasValue
+                ? await ListingService.GetSupplierContextForListingAsync(Id.Value)
+                : await ListingService.GetSupplierContextForUrlAsync(listing.SourceUrl);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not load supplier delivery options: {ex.Message}");
+            supplierContext = null;
+            return;
+        }
+
+        var match = DeliveryOptions.FirstOrDefault(o => o.Name == listing.DeliveryOptionName);
+        if (match != null)
+        {
+            selectedDeliveryOptionId = match.Id;
+        }
+        else if (listing.DeliveryCost == null && supplierContext.SuggestedDeliveryOptionId.HasValue)
+        {
+            ApplyDeliveryOption(DeliveryOptions.FirstOrDefault(o => o.Id == supplierContext.SuggestedDeliveryOptionId));
+        }
+    }
+
+    private void ApplyDeliveryOption(SupplierDeliveryOptionDto? option)
+    {
+        selectedDeliveryOptionId = option?.Id;
+        if (option == null) return;
+        listing.DeliveryOptionName = option.Name;
+        listing.DeliveryCost = DeliveryGross(option);
+    }
+
+    private void OnDeliveryOptionChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id))
+        {
+            ApplyDeliveryOption(DeliveryOptions.FirstOrDefault(o => o.Id == id));
+        }
+        else
+        {
+            selectedDeliveryOptionId = null;
+            listing.DeliveryOptionName = null; // custom: keep the typed cost
+        }
+    }
+
+    private async Task FetchSupplierDetails()
+    {
+        if (!Id.HasValue) return;
+        isFetchingDetails = true;
+        detailsMessage = null;
+        try
+        {
+            // Save unsaved edits first so the server only fills fields that are still empty.
+            if (isQuillReady) listing.Description = await JS.InvokeAsync<string>("quillInterop.getHtml", quillElement);
+            await ListingService.UpdateListingAsync(Id.Value, listing);
+
+            var result = await ListingService.FetchSupplierDetailsAsync(Id.Value);
+            if (result.Listing != null)
+            {
+                var updated = result.Listing;
+                listing.Title = updated.Title;
+                listing.Description = updated.Description;
+                listing.Price = updated.Price;
+                listing.Type = updated.Type;
+                listing.Brand = updated.Brand;
+                listing.Colour = updated.Colour;
+                listing.ImageUrls = updated.ImageUrls ?? new List<string>();
+                listing.SourceUrl = updated.SourceUrl;
+                listing.SourcePrice = updated.SourcePrice;
+                listing.SourceStockLevel = updated.SourceStockLevel;
+                listing.SourceProductCode = updated.SourceProductCode;
+                CopyExtras(updated);
+                if (isQuillReady) await JS.InvokeVoidAsync("quillInterop.setHtml", quillElement, listing.Description ?? string.Empty);
+                await LoadSupplierContext();
+            }
+            detailsMessage = result.Message;
+        }
+        catch (Exception ex)
+        {
+            detailsMessage = $"Fetching details failed: {ex.Message}";
+        }
+        finally
+        {
+            isFetchingDetails = false;
+        }
+    }
 
     
 
@@ -427,10 +718,13 @@
             {
                 var existing = await ListingService.GetListingAsync(Id.Value);
                 // Populate the existing listing instance rather than replacing it (preserve editor DOM)
-            listing.EbayAccountId = existing.EbayAccountId;
+                listing.EbayAccountId = existing.EbayAccountId;
+                listing.SupplierProductId = existing.SupplierProductId;
                 listing.Title = existing.Title;
                 listing.Description = existing.Description;
                 listing.Price = existing.Price;
+                listing.Quantity = existing.Quantity < 1 ? 1 : existing.Quantity;
+                listing.Sku = existing.Sku;
                 listing.CategoryId = existing.CategoryId;
                 listing.CategoryName = existing.CategoryName;
                 listing.FulfillmentPolicyId = existing.FulfillmentPolicyId;
@@ -451,9 +745,12 @@
                 }
 
                 listing.SourcePrice = existing.SourcePrice;
+                listing.SourceStockLevel = existing.SourceStockLevel;
                 listing.SourceProductCode = existing.SourceProductCode;
+                CopyExtras(existing);
 
                 await LoadSupplierStatus();
+                await LoadSupplierContext();
 
                 Console.WriteLine($"[Edit] Loaded Listing {Id}: Payment={listing.PaymentPolicyId}, Shipping={listing.FulfillmentPolicyId}, Returns={listing.ReturnPolicyId}, SourceUrl={listing.SourceUrl}");
             }
@@ -464,6 +761,52 @@
         }
 
         await LoadPolicies();
+    }
+
+    private async Task ResetFromSource()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Reset this listing from its linked supplier product? This will overwrite title, description, source fields, and main image.");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        isResettingFromSource = true;
+        try
+        {
+            var reset = await ListingService.ResetListingFromSourceAsync(Id.Value);
+            listing.SupplierProductId = reset.SupplierProductId;
+            listing.Title = reset.Title;
+            listing.Description = reset.Description;
+            listing.Price = reset.Price;
+            listing.Brand = reset.Brand;
+            listing.ImageUrls = reset.ImageUrls ?? new List<string>();
+            listing.SourceUrl = reset.SourceUrl;
+            listing.SourcePrice = reset.SourcePrice;
+            listing.SourceStockLevel = reset.SourceStockLevel;
+            listing.SourceProductCode = reset.SourceProductCode;
+
+            if (isQuillReady)
+            {
+                await JS.InvokeVoidAsync("quillInterop.setHtml", quillElement, listing.Description ?? string.Empty);
+            }
+
+            supplierStatusError = null;
+            await LoadSupplierStatus();
+        }
+        catch (Exception ex)
+        {
+            supplierStatusError = $"Reset from source failed: {ex.Message}";
+        }
+        finally
+        {
+            isResettingFromSource = false;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -508,25 +851,62 @@
 
     private async Task HandleFileSelected(InputFileChangeEventArgs e)
     {
-        var files = e.GetMultipleFiles(10); // Limit to 10 images
+        const long maxBytes = 5 * 1024 * 1024;
+        imageUploadError = null;
+        var skipped = new List<string>();
+
+        IReadOnlyList<IBrowserFile> files;
+        try
+        {
+            files = e.GetMultipleFiles(10); // Limit to 10 images
+        }
+        catch (InvalidOperationException)
+        {
+            imageUploadError = "You can upload up to 10 images at a time.";
+            return;
+        }
+
         foreach (var file in files)
         {
-            if (file.Size > 5 * 1024 * 1024) continue; // Skip files > 5MB
-
-            var buffer = new byte[file.Size];
-            await file.OpenReadStream(5 * 1024 * 1024).ReadAsync(buffer);
-            var base64 = Convert.ToBase64String(buffer);
-            var dataUrl = $"data:{file.ContentType};base64,{base64}";
-            
-            if (!listing.ImageUrls.Contains(dataUrl))
+            if (file.ContentType is not ("image/jpeg" or "image/png"))
             {
-                listing.ImageUrls.Add(dataUrl);
+                skipped.Add($"{file.Name} (only JPG/PNG supported)");
+                continue;
             }
+            if (file.Size > maxBytes)
+            {
+                skipped.Add($"{file.Name} (over 5MB)");
+                continue;
+            }
+
+            try
+            {
+                // ReadAsync on a browser stream can return partial chunks; copy the whole stream.
+                await using var stream = file.OpenReadStream(maxBytes);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                var dataUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(ms.ToArray())}";
+
+                if (!listing.ImageUrls.Contains(dataUrl))
+                {
+                    listing.ImageUrls.Add(dataUrl);
+                }
+            }
+            catch (Exception ex)
+            {
+                skipped.Add($"{file.Name} ({ex.Message})");
+            }
+        }
+
+        if (skipped.Any())
+        {
+            imageUploadError = "Skipped: " + string.Join(", ", skipped);
         }
     }
 
     private async Task LoadPolicies()
     {
+        policiesError = null;
         try
         {
             paymentPolicies = await ListingService.GetPaymentPoliciesAsync(listing.EbayAccountId);
@@ -588,6 +968,7 @@
         catch (Exception ex)
         {
             Console.WriteLine($"Error loading policies: {ex.Message}");
+            policiesError = ex.Message;
         }
     }
 
@@ -653,6 +1034,11 @@
             {
                 supplierStatusError = supplierStatus.ErrorMessage ?? "Supplier check completed with warnings.";
             }
+            else if (supplierStatus.StockLevel.HasValue)
+            {
+                // Keep the form in step with the server so a later save doesn't write the old value back.
+                listing.SourceStockLevel = supplierStatus.StockLevel;
+            }
         }
         catch (Exception ex)
         {
@@ -664,21 +1050,8 @@
         }
     }
 
-    private bool CanCheckSupplier()
-    {
-        return IsSupportedSupplierSourceUrl(listing.SourceUrl);
-    }
-
-    private static bool IsSupportedSupplierSourceUrl(string? sourceUrl)
-    {
-        if (string.IsNullOrWhiteSpace(sourceUrl))
-        {
-            return false;
-        }
-
-        return sourceUrl.Contains("edenhorticulture.co.uk", StringComparison.OrdinalIgnoreCase)
-               || sourceUrl.Contains("safelincs.co.uk", StringComparison.OrdinalIgnoreCase);
-    }
+    // The server decides which suppliers support live stock checks (see SupplierStockService).
+    private bool CanCheckSupplier() => supplierContext?.SupportsStockCheck == true;
 
     private async Task HandleExtract()
     {
@@ -756,11 +1129,26 @@
             
             // Keep the source URL on the listing (so it will be saved) but clear the input box
             extractionUrl = "";
+
+            if (!Id.HasValue)
+            {
+                listing.DeliveryCost = null;
+                listing.DeliveryOptionName = null;
+                await LoadSupplierContext();
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            // Network-level failure: the API itself could not be reached.
+            extractionError = $"Could not reach the server: {ex.Message}";
+            Console.WriteLine(ex);
         }
         catch (Exception ex)
         {
-            extractionError = "Could not extract details. The site might be blocking automated requests.";
-            Console.WriteLine(ex.Message);
+            extractionError = string.IsNullOrWhiteSpace(ex.Message)
+                ? "Could not extract details."
+                : ex.Message;
+            Console.WriteLine(ex);
         }
         finally
         {
@@ -830,15 +1218,23 @@
             listing.Description = await JS.InvokeAsync<string>("quillInterop.getHtml", quillElement);
         }
 
-        if (Id.HasValue)
+        saveError = null;
+        try
         {
-            await ListingService.UpdateListingAsync(Id.Value, listing);
+            if (Id.HasValue)
+            {
+                await ListingService.UpdateListingAsync(Id.Value, listing);
+            }
+            else
+            {
+                await ListingService.CreateListingAsync(listing);
+            }
+            Navigation.NavigateTo("/");
         }
-        else
+        catch (Exception ex)
         {
-            await ListingService.CreateListingAsync(listing);
+            saveError = $"Save failed: {ex.Message}";
         }
-        Navigation.NavigateTo("/");
     }
 
     private async Task HandleSaveAndPublish()
@@ -904,7 +1300,8 @@
                 EbayAccountId = listing.EbayAccountId,
                 Title = listing.Title,
                 Description = listing.Description,
-                Price = listing.Price,
+                Price = ListingTotal, // marketplace price = item + delivery
+                Quantity = listing.Quantity,
                 CategoryId = listing.CategoryId,
                 FulfillmentPolicyId = listing.FulfillmentPolicyId,
                 PaymentPolicyId = listing.PaymentPolicyId,

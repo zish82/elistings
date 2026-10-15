@@ -16,6 +16,8 @@
         <a href="/bulk-extract" class="btn btn-outline-primary ms-2"><i class="bi bi-box-arrow-in-down me-1"></i>Bulk Extract Category</a>
         <a href="/ebay-accounts" class="btn btn-outline-info ms-2">Manage eBay Accounts</a>
         <a href="/supplier-feeds" class="btn btn-outline-dark ms-2">Supplier Feeds</a>
+        <a href="/suppliers" class="btn btn-outline-dark ms-2">Suppliers &amp; Delivery</a>
+        <a href="/products" class="btn btn-outline-success ms-2">Products</a>
         @if (currentUser?.CanManageUsers == true)
         {
             <a href="/users" class="btn btn-outline-secondary ms-2">Users</a>
@@ -154,9 +156,20 @@ else
     
     @if (!string.IsNullOrEmpty(bulkPublishStatus))
     {
-        <div class="alert alert-info alert-dismissible fade show" role="alert">
+        <div class="alert @(bulkPublishStatus.Contains("failed", StringComparison.OrdinalIgnoreCase) ? "alert-danger" : "alert-info") alert-dismissible fade show text-break" role="alert">
             @bulkPublishStatus
             <button type="button" class="btn-close" @onclick='() => bulkPublishStatus = ""'></button>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(bulkPublishJobId))
+    {
+        <div class="mb-3 position-relative">
+            <BulkJobProgress JobId="@bulkPublishJobId" Title="Bulk publish to eBay" OnFinished="OnBulkPublishFinished" />
+            @if (!isBulkPublishing)
+            {
+                <button type="button" class="btn-close position-absolute top-0 end-0 m-2" @onclick='() => bulkPublishJobId = null'></button>
+            }
         </div>
     }
 
@@ -168,6 +181,8 @@ else
                 </th>
                 <th>Title</th>
                 <th>Price</th>
+                <th>Source Price</th>
+                <th>Source Stock</th>
                 @if (currentUser?.CanViewAllListings == true)
                 {
                     <th>Owner</th>
@@ -184,12 +199,20 @@ else
             {
                 <tr>
                     <td>
-                        <input type="checkbox" class="form-check-input" 
-                               checked="@selectedIds.Contains(listing.Id)" 
+                        <input type="checkbox" class="form-check-input"
+                               checked="@selectedIds.Contains(listing.Id)"
                                @onchange="() => ToggleSelection(listing.Id)" />
                     </td>
                     <td><div class="fw-bold">@listing.Title</div></td>
-                    <td>£@listing.Price</td>
+                    <td>
+                        £@listing.TotalPrice.ToString("F2")
+                        @if (listing.DeliveryCost.HasValue && listing.DeliveryCost > 0)
+                        {
+                            <div class="small text-muted">£@listing.Price.ToString("F2") + £@listing.DeliveryCost.Value.ToString("F2") delivery</div>
+                        }
+                    </td>
+                    <td>@(listing.SourcePrice.HasValue ? $"£{listing.SourcePrice.Value:F2}" : "-")</td>
+                    <td>@(listing.SourceStockLevel?.ToString() ?? "-")</td>
                     @if (currentUser?.CanViewAllListings == true)
                     {
                         <td>@listing.OwnerEmail</td>
@@ -230,8 +253,15 @@ else
                                 Edit
                             </a>
                             <button class="btn btn-sm @(listing.Status == "Published" ? "btn-outline-success" : "btn-outline-primary")" 
-                                    @onclick="() => Publish(listing.Id)">
-                                @(listing.Status == "Published" ? "Re-sync" : "Publish")
+                                    @onclick="() => Publish(listing.Id)" disabled="@(publishingId.HasValue)">
+                                @if (publishingId == listing.Id)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                }
+                                else
+                                {
+                                    @(listing.Status == "Published" ? "Re-sync" : "Publish")
+                                }
                             </button>
                         </div>
                     </td>
@@ -337,16 +367,25 @@ else
         }
     }
 
+    private int? publishingId;
+
     private async Task Publish(int id)
     {
+        publishingId = id;
+        bulkPublishStatus = "";
         try
         {
             await ListingService.PublishListingAsync(id);
             await LoadListings();
+            bulkPublishStatus = $"Listing #{id} published to eBay.";
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error publishing listing: {ex.Message}");
+            bulkPublishStatus = $"Publishing listing #{id} failed: {ex.Message}";
+        }
+        finally
+        {
+            publishingId = null;
         }
     }
 
@@ -398,26 +437,27 @@ else
         
         // Take a copy to avoid concurrent modification issues during iteration if needed
         var idsToProcess = selectedIds.ToList();
-        
+
         try
         {
-            var (published, failedPub, errors) = await ListingService.BulkPublishAsync(idsToProcess);
+            // Runs in the background on the server; progress is shown by <BulkJobProgress>.
+            bulkPublishJobId = await ListingService.StartBulkPublishAsync(idsToProcess);
             selectedIds.Clear();
-            bulkPublishStatus = $"Bulk Publish complete. Success: {published}, Failed: {failedPub}";
-            if (errors.Any())
-            {
-                Console.WriteLine("Bulk publish errors:\n" + string.Join("\n", errors));
-            }
         }
         catch (Exception ex)
         {
-            bulkPublishStatus = $"Bulk publish failed: {ex.Message}";
-        }
-        finally
-        {
+            bulkPublishStatus = $"Bulk publish failed to start: {ex.Message}";
             isBulkPublishing = false;
-            await LoadListings();
         }
+    }
+
+    private string? bulkPublishJobId;
+
+    private async Task OnBulkPublishFinished(BulkJobDto job)
+    {
+        isBulkPublishing = false;
+        await LoadListings();
+        StateHasChanged();
     }
 
     private async Task BulkDelete()

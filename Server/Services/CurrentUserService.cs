@@ -3,16 +3,26 @@ using Shared;
 
 namespace Server.Services;
 
+/// <summary>
+/// Scoped holder that lets background jobs run "as" a user, since there is no HttpContext there.
+/// </summary>
+public class BackgroundUserContext
+{
+    public ClaimsPrincipal? User { get; set; }
+}
+
 public class CurrentUserService : ICurrentUserService
 {
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly BackgroundUserContext _backgroundUser;
 
-    public CurrentUserService(IHttpContextAccessor httpContextAccessor)
+    public CurrentUserService(IHttpContextAccessor httpContextAccessor, BackgroundUserContext backgroundUser)
     {
         _httpContextAccessor = httpContextAccessor;
+        _backgroundUser = backgroundUser;
     }
 
-    private ClaimsPrincipal? User => _httpContextAccessor.HttpContext?.User;
+    private ClaimsPrincipal? User => _backgroundUser.User ?? _httpContextAccessor.HttpContext?.User;
 
     public bool IsAuthenticated => User?.Identity?.IsAuthenticated == true;
 

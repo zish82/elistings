@@ -7,6 +7,7 @@ public class SupplierFeedDto
     public string FeedType { get; set; } = string.Empty;
     public string Url { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public bool HasCookieHeader { get; set; }
     public bool IsRecommended { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }
@@ -17,5 +18,6 @@ public class CreateSupplierFeedRequest
     public string FeedType { get; set; } = string.Empty;
     public string Url { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string? CookieHeader { get; set; }
     public bool IsRecommended { get; set; }
 }

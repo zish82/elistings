@@ -1,0 +1,113 @@
+@using Shared
+@using Client.Services
+@inject ListingService ListingService
+@implements IDisposable
+
+@* Polls a server-side bulk job and shows progress, counts and per-item errors. *@
+
+@if (job == null)
+{
+    <div class="d-flex align-items-center text-muted small">
+        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+        @(pollError ?? "Starting...")
+    </div>
+}
+else
+{
+    var percent = job.Total > 0 ? (int)Math.Round(job.Processed * 100.0 / job.Total) : 0;
+    var barClass = job.Status == "Failed" ? "bg-danger"
+        : job.IsFinished ? (job.Failed > 0 ? "bg-warning" : "bg-success")
+        : "progress-bar-striped progress-bar-animated";
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>@Title</strong>
+                <span class="badge @(job.Status == "Running" ? "bg-primary" : job.Status == "Failed" ? "bg-danger" : "bg-success")">@job.Status</span>
+            </div>
+
+            <div class="progress mb-2" style="height: 20px;">
+                <div class="progress-bar @barClass" role="progressbar" style="width: @(job.Total > 0 ? percent : (job.IsFinished ? 100 : 5))%;">
+                    @(job.Total > 0 ? $"{job.Processed} / {job.Total}" : "")
+                </div>
+            </div>
+
+            <div class="small">
+                <span class="text-success me-3">Succeeded: @job.Succeeded</span>
+                @if (job.Skipped > 0) { <span class="text-muted me-3">Skipped (already exist): @job.Skipped</span> }
+                <span class="@(job.Failed > 0 ? "text-danger" : "text-muted")">Failed: @job.Failed</span>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(job.Message))
+            {
+                <div class="small mt-1 @(job.Status == "Failed" ? "text-danger fw-bold" : "text-muted")">@job.Message</div>
+            }
+
+            @if (job.Errors.Any())
+            {
+                <details class="mt-2" open="@(job.IsFinished)">
+                    <summary class="small text-danger">@job.Errors.Count error(s)</summary>
+                    <ul class="small mt-1 mb-0" style="max-height: 240px; overflow-y: auto;">
+                        @foreach (var e in job.Errors)
+                        {
+                            <li class="text-break">@e</li>
+                        }
+                    </ul>
+                </details>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string JobId { get; set; } = string.Empty;
+    [Parameter] public string Title { get; set; } = "Bulk job";
+    [Parameter] public EventCallback<BulkJobDto> OnFinished { get; set; }
+
+    private BulkJobDto? job;
+    private string? pollError;
+    private string? currentJobId;
+    private CancellationTokenSource? cts;
+
+    protected override void OnParametersSet()
+    {
+        if (JobId == currentJobId) return;
+        currentJobId = JobId;
+        job = null;
+        cts?.Cancel();
+        cts = new CancellationTokenSource();
+        _ = PollAsync(JobId, cts.Token);
+    }
+
+    private async Task PollAsync(string jobId, CancellationToken token)
+    {
+        var failures = 0;
+        while (!token.IsCancellationRequested)
+        {
+            try
+            {
+                job = await ListingService.GetBulkJobAsync(jobId);
+                pollError = null;
+                failures = 0;
+                await InvokeAsync(StateHasChanged);
+
+                if (job.IsFinished)
+                {
+                    await InvokeAsync(() => OnFinished.InvokeAsync(job));
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                failures++;
+                pollError = $"Could not get progress: {ex.Message}";
+                await InvokeAsync(StateHasChanged);
+                if (failures >= 10) return; // give up after ~20s of errors
+            }
+
+            try { await Task.Delay(2000, token); } catch (TaskCanceledException) { return; }
+        }
+    }
+
+    public void Dispose() => cts?.Cancel();
+}

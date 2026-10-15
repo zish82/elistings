@@ -8,6 +8,8 @@ public class SupplierStatusDto
     public decimal? SupplierPrice { get; set; }
     public string StockStatus { get; set; } = "Unknown";
     public string? StockText { get; set; }
+    /// <summary>Exact stock level when the supplier reports one (null for e.g. "More than 150").</summary>
+    public int? StockLevel { get; set; }
     public DateTime? LastCheckedUtc { get; set; }
     public bool IsSuccess { get; set; }
     public string? ErrorMessage { get; set; }

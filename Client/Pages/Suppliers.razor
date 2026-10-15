@@ -1,0 +1,219 @@
+@page "/suppliers"
+@using Shared
+@using Client.Services
+@inject AuthService AuthService
+@inject ListingService ListingService
+@inject IJSRuntime JS
+
+<PageTitle>Suppliers</PageTitle>
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>Suppliers, VAT &amp; Delivery</h3>
+        <a href="/" class="btn btn-outline-secondary">Back to Dashboard</a>
+    </div>
+
+    <p class="text-muted small">
+        VAT settings decide how supplier prices are turned into your cost. Delivery options are what each supplier charges you to deliver;
+        the listing editor picks the option matching the product's postage category (or the default) and adds it to the listing price.
+    </p>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="alert @(isError ? "alert-danger" : "alert-success") alert-dismissible">
+            @message
+            <button type="button" class="btn-close" @onclick='() => message = null'></button>
+        </div>
+    }
+
+    @if (suppliers == null)
+    {
+        <div class="spinner-border spinner-border-sm"></div>
+    }
+    else
+    {
+        @foreach (var s in suppliers)
+        {
+            <div class="card mb-4 shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>@s.Name <span class="text-muted small">(@s.Code)</span></strong>
+                    <button class="btn btn-sm btn-primary" @onclick="() => SaveSupplier(s)">Save supplier</button>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label small">Name</label>
+                            <input class="form-control form-control-sm" @bind="s.Name" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">Website host</label>
+                            <input class="form-control form-control-sm" @bind="s.WebsiteHost" placeholder="example.co.uk" />
+                        </div>
+                        <div class="col-md-1">
+                            <label class="form-label small" title="Starts every SKU, e.g. DSM-S16301">SKU prefix</label>
+                            <input class="form-control form-control-sm" @bind="s.SkuPrefix" maxlength="6" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">VAT rate %</label>
+                            <input type="number" step="0.1" class="form-control form-control-sm" @bind="s.VatRatePercent" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">Default margin %</label>
+                            <input type="number" step="1" class="form-control form-control-sm" @bind="s.DefaultMarginPercent" />
+                        </div>
+                        <div class="col-md-2 d-flex flex-column justify-content-end">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="vat-@s.Id" @bind="s.PricesIncludeVat" />
+                                <label class="form-check-label small" for="vat-@s.Id">Prices include VAT</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="active-@s.Id" @bind="s.IsActive" />
+                                <label class="form-check-label small" for="active-@s.Id">Active</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h6 class="mt-2">Delivery options</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr class="small text-muted">
+                                    <th>Name</th>
+                                    <th>Postage categories (comma separated)</th>
+                                    <th style="width:110px">Cost £</th>
+                                    <th>Inc VAT?</th>
+                                    <th>Cost inc VAT</th>
+                                    <th>Default</th>
+                                    <th>Active</th>
+                                    <th style="width:70px">Order</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var o in s.DeliveryOptions.OrderBy(o => o.SortOrder))
+                                {
+                                    <tr>
+                                        <td>
+                                            <input class="form-control form-control-sm" @bind="o.Name" />
+                                            <input class="form-control form-control-sm mt-1" @bind="o.Description" placeholder="Description" />
+                                        </td>
+                                        <td><input class="form-control form-control-sm" @bind="o.PostageCategories" /></td>
+                                        <td><input type="number" step="0.01" class="form-control form-control-sm" @bind="o.Cost" /></td>
+                                        <td><input type="checkbox" class="form-check-input" @bind="o.CostIncludesVat" /></td>
+                                        <td class="small">£@PricingMath.DeliveryIncVat(o, s).ToString("F2")</td>
+                                        <td><input type="radio" class="form-check-input" name="default-@s.Id" checked="@o.IsDefault" @onchange="() => SetDefault(s, o)" /></td>
+                                        <td><input type="checkbox" class="form-check-input" @bind="o.IsActive" /></td>
+                                        <td><input type="number" class="form-control form-control-sm" @bind="o.SortOrder" /></td>
+                                        <td class="text-nowrap">
+                                            <button class="btn btn-sm btn-outline-primary" @onclick="() => SaveOption(s, o)">Save</button>
+                                            <button class="btn btn-sm btn-outline-danger ms-1" @onclick="() => DeleteOption(s, o)">&times;</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <button class="btn btn-sm btn-outline-success" @onclick="() => AddOption(s)">+ Add delivery option</button>
+                </div>
+            </div>
+        }
+
+        <div class="card shadow-sm mb-5">
+            <div class="card-header"><strong>Add supplier</strong></div>
+            <div class="card-body row g-2">
+                <div class="col-md-3"><input class="form-control form-control-sm" @bind="newSupplier.Code" placeholder="Code (e.g. NewSupplier)" /></div>
+                <div class="col-md-3"><input class="form-control form-control-sm" @bind="newSupplier.Name" placeholder="Name" /></div>
+                <div class="col-md-2"><input class="form-control form-control-sm" @bind="newSupplier.WebsiteHost" placeholder="website host" /></div>
+                <div class="col-md-1"><input class="form-control form-control-sm" @bind="newSupplier.SkuPrefix" placeholder="SKU prefix" maxlength="6" /></div>
+                <div class="col-md-3"><button class="btn btn-sm btn-success" @onclick="CreateSupplier">Add supplier</button></div>
+                <div class="small text-muted">The code must match the supplier name used by its product feed. Product-page fetching needs a small code addition per supplier.</div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<SupplierDto>? suppliers;
+    private SupplierDto newSupplier = new();
+    private string? message;
+    private bool isError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.EnsureAuthenticatedAsync("/suppliers")) return;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        try { suppliers = await ListingService.GetSuppliersAsync(includeInactive: true); }
+        catch (Exception ex) { Show($"Could not load suppliers: {ex.Message}", true); suppliers = new(); }
+    }
+
+    private void Show(string text, bool error = false) { message = text; isError = error; }
+
+    private async Task SaveSupplier(SupplierDto s)
+    {
+        try { await ListingService.UpdateSupplierAsync(s); Show($"{s.Name} saved."); }
+        catch (Exception ex) { Show($"Save failed: {ex.Message}", true); }
+    }
+
+    private async Task CreateSupplier()
+    {
+        try
+        {
+            await ListingService.CreateSupplierAsync(newSupplier);
+            newSupplier = new();
+            await Load();
+            Show("Supplier added.");
+        }
+        catch (Exception ex) { Show($"Add failed: {ex.Message}", true); }
+    }
+
+    private void SetDefault(SupplierDto s, SupplierDeliveryOptionDto selected)
+    {
+        foreach (var o in s.DeliveryOptions) o.IsDefault = o == selected;
+    }
+
+    private void AddOption(SupplierDto s)
+    {
+        s.DeliveryOptions.Add(new SupplierDeliveryOptionDto
+        {
+            SupplierId = s.Id,
+            Name = "New delivery option",
+            SortOrder = (s.DeliveryOptions.Any() ? s.DeliveryOptions.Max(o => o.SortOrder) : 0) + 10,
+            CostIncludesVat = s.PricesIncludeVat
+        });
+    }
+
+    private async Task SaveOption(SupplierDto s, SupplierDeliveryOptionDto o)
+    {
+        try
+        {
+            if (o.Id == 0)
+            {
+                var created = await ListingService.AddDeliveryOptionAsync(s.Id, o);
+                if (created != null) o.Id = created.Id;
+            }
+            else
+            {
+                await ListingService.UpdateDeliveryOptionAsync(o);
+            }
+            // The server keeps a single default; save the others so the UI and DB agree.
+            Show($"Saved '{o.Name}'.");
+            if (o.IsDefault) await Load();
+        }
+        catch (Exception ex) { Show($"Save failed: {ex.Message}", true); }
+    }
+
+    private async Task DeleteOption(SupplierDto s, SupplierDeliveryOptionDto o)
+    {
+        if (o.Id != 0)
+        {
+            if (!await JS.InvokeAsync<bool>("confirm", $"Delete delivery option '{o.Name}'?")) return;
+            try { await ListingService.DeleteDeliveryOptionAsync(o.Id); }
+            catch (Exception ex) { Show($"Delete failed: {ex.Message}", true); return; }
+        }
+        s.DeliveryOptions.Remove(o);
+    }
+}

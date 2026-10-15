@@ -15,6 +15,10 @@
     and keep <strong>Product Catalogue</strong> for full product import/refresh.
 </div>
 
+<div class="alert alert-warning">
+    The Product Catalogue endpoint may require a logged-in DropShipMall session. A browser login in another tab is not shared with this server. If it returns an empty HTML response, copy the authenticated request's <strong>Cookie</strong> header from your browser developer tools into the feed below. The Stock Feed normally works without it.
+</div>
+
 @if (!string.IsNullOrWhiteSpace(statusMessage))
 {
     <div class="alert @statusCss">@statusMessage</div>
@@ -51,6 +55,11 @@
                     <label class="form-check-label ms-1">Recommended feed</label>
                 </div>
             </div>
+            <div class="col-12">
+                <label class="form-label">Cookie Header (optional)</label>
+                <InputTextArea class="form-control" @bind-Value="newFeed.CookieHeader" rows="3" />
+                <div class="small text-muted mt-1">Paste the full <strong>Cookie</strong> request-header value from the logged-in feed request in your browser developer tools. Do not paste a Set-Cookie response header.</div>
+            </div>
         </div>
 
         <div class="mt-3">
@@ -77,6 +86,7 @@ else
                     <th>Feed Type</th>
                     <th>URL</th>
                     <th>Description</th>
+                    <th>Auth</th>
                     <th>Recommended</th>
                     <th class="text-end">Actions</th>
                 </tr>
@@ -89,6 +99,16 @@ else
                         <td>@feed.FeedType</td>
                         <td><a href="@feed.Url" target="_blank">@feed.Url</a></td>
                         <td>@(string.IsNullOrWhiteSpace(feed.Description) ? "-" : feed.Description)</td>
+                        <td>
+                            @if (feed.HasCookieHeader)
+                            {
+                                <span class="badge bg-secondary">Cookie configured</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">None</span>
+                            }
+                        </td>
                         <td>
                             @if (feed.IsRecommended)
                             {

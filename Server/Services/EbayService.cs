@@ -63,7 +63,7 @@ public class EbayService : IEbayService
                     listing = new {
                         price = new { value = listing.Price.ToString("F2", System.Globalization.CultureInfo.InvariantCulture), currency = "GBP" },
                         categoryId = string.IsNullOrWhiteSpace(listing.CategoryId) ? "57013" : listing.CategoryId,
-                        listingQuantity = 1,
+                        listingQuantity = listing.Quantity < 1 ? 1 : listing.Quantity,
                         merchantLocationKey = "main-warehouse",
                         listingPolicies = new {
                             fulfillmentPolicyId = listing.FulfillmentPolicyId,
@@ -115,11 +115,13 @@ public class EbayService : IEbayService
         // Use persistent SKU for the listing if available, else generate one.
         var sku = !string.IsNullOrEmpty(listing.Sku) ? listing.Sku : $"SKU_{listing.Id}";
         var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
-        
-        Console.WriteLine($"[Listing: {listing.Id}] Using SKU: {sku}");
+        var quantity = listing.Quantity < 1 ? 1 : listing.Quantity;
+
+        Console.WriteLine($"[Listing: {listing.Id}] Using SKU: {sku}, Quantity: {quantity}");
         
         // 0. Handle Images (Convert external URLs to eBay URLs if needed)
         var finalImageUrls = new List<string>();
+        var imageErrors = new List<string>();
         var imageService = _serviceProvider.GetRequiredService<IMarketplaceImageService>();
 
         if (listing.ImageUrls != null && listing.ImageUrls.Any())
@@ -140,49 +142,47 @@ public class EbayService : IEbayService
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[Listing: {listing.Id}] Image upload failed for {url}: {ex.Message}");
+                        var label = url.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? "uploaded image" : url;
+                        Console.WriteLine($"[Listing: {listing.Id}] Image upload failed for {label}: {ex.Message}");
+                        imageErrors.Add($"{label}: {ex.Message}");
                     }
                 }
             }
         }
-        // Ensure at least one image is present, as eBay requires it.
+        // eBay requires at least one image; fail clearly instead of publishing a placeholder.
         if (!finalImageUrls.Any())
         {
-            finalImageUrls.Add("https://via.placeholder.com/500");
+            throw new Exception(imageErrors.Any()
+                ? "All image uploads to eBay failed. " + string.Join(" | ", imageErrors)
+                : "At least one image is required to publish on eBay.");
         }
 
         var inventoryItem = new
         {
-            availability = new { shipToLocationAvailability = new { quantity = 1 } },
+            availability = new { shipToLocationAvailability = new { quantity = quantity } },
             condition = "NEW",
-            product = new
-            {
-                title = listing.Title,
-                description = listing.Description,
-                aspects = new Dictionary<string, string[]>
-                {
-                    { "Brand", new[] { string.IsNullOrWhiteSpace(listing.Brand) ? "Unbranded" : listing.Brand } },
-                    { "Type", new[] { string.IsNullOrWhiteSpace(listing.Type) ? "Fire Extinguisher" : listing.Type } },
-                    { "Colour", new[] { string.IsNullOrWhiteSpace(listing.Colour) ? "Red" : listing.Colour } }
-                },
-                imageUrls = finalImageUrls.ToArray()
-            }
+            product = BuildProduct(listing, finalImageUrls)
         };
 
-        var inventoryItemContent = JsonContent.Create(inventoryItem);
-        inventoryItemContent.Headers.Add("Content-Language", "en-GB");
+        var inventoryItemJson = System.Text.Json.JsonSerializer.Serialize(inventoryItem);
 
-        var request = new HttpRequestMessage(HttpMethod.Put, $"{baseUrl}/sell/inventory/v1/inventory_item/{sku}");
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        request.Content = inventoryItemContent;
-        
-        var createResponse = await _httpClient.SendAsync(request);
-        
-        if (!createResponse.IsSuccessStatusCode)
+        // PUT inventory_item is idempotent, so eBay's generic system errors (25001 / HTTP 5xx) are retried.
+        using (var createResponse = await SendWithRetryAsync(() =>
+               {
+                   var request = new HttpRequestMessage(HttpMethod.Put, $"{baseUrl}/sell/inventory/v1/inventory_item/{Uri.EscapeDataString(sku)}");
+                   request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                   request.Content = new StringContent(inventoryItemJson, System.Text.Encoding.UTF8, "application/json");
+                   request.Content.Headers.Add("Content-Language", "en-GB");
+                   return request;
+               }, $"inventory item {sku}"))
         {
-            var error = await createResponse.Content.ReadAsStringAsync();
-            Console.WriteLine($"eBay Item Creation Failed ({createResponse.StatusCode}): {error}");
-            throw new Exception($"eBay Item Creation Failed: {error}");
+            if (!createResponse.IsSuccessStatusCode)
+            {
+                var error = await EbayApiException.FromResponseAsync(createResponse, $"Creating eBay inventory item {sku}");
+                // Log the payload so a persistent failure can be reproduced / sent to eBay support.
+                Console.WriteLine($"[eBay] {error.Message}\n[eBay] Inventory item payload for {sku}: {inventoryItemJson}");
+                throw error;
+            }
         }
         Console.WriteLine("eBay Item Created/Updated successfully.");
 
@@ -213,14 +213,18 @@ public class EbayService : IEbayService
             }
         }
 
-        var targetCategory = string.IsNullOrWhiteSpace(listing.CategoryId) ? "57013" : listing.CategoryId.Trim();
+        if (string.IsNullOrWhiteSpace(listing.CategoryId))
+        {
+            throw new Exception("An eBay category is required to publish.");
+        }
+        var targetCategory = listing.CategoryId.Trim();
         
         var offerRequestData = new
         {
             sku = sku,
             marketplaceId = "EBAY_GB", 
             format = "FIXED_PRICE",
-            availableQuantity = 1,
+            availableQuantity = quantity,
             categoryId = targetCategory, 
             listingDescription = listing.Description,
             listingPolicies = new
@@ -337,7 +341,86 @@ public class EbayService : IEbayService
         };
     }
 
-    public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null) 
+    // Brand defaults to "Unbranded" (accepted by eBay). Type/Colour are only sent when known:
+    // the old "Fire Extinguisher"/"Red" defaults were wrong for most products. If a category
+    // requires them, eBay returns a clear "item specific missing" error to fix on the listing.
+    // "Not Specified" (the DTO placeholder for Type) is treated as unknown.
+    private static Dictionary<string, string[]> BuildAspects(ListingDto listing)
+    {
+        static bool IsKnown(string? v) => !string.IsNullOrWhiteSpace(v)
+            && !v.Equals("Not Specified", StringComparison.OrdinalIgnoreCase);
+
+        var aspects = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "Brand", new[] { string.IsNullOrWhiteSpace(listing.Brand) ? "Unbranded" : listing.Brand.Trim() } }
+        };
+        // Supplier specifics (e.g. Material, Type) first; explicit Brand/Type/Colour fields win.
+        var ignored = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Unit of Measure", "Product Code", "Barcode", "Availability", "Brand" };
+        foreach (var kv in listing.ItemSpecifics ?? new Dictionary<string, string>())
+        {
+            if (ignored.Contains(kv.Key) || string.IsNullOrWhiteSpace(kv.Value)) continue;
+            var name = kv.Key.Trim();
+            if (name.Length > 65) continue; // eBay aspect name limit
+            aspects[name] = new[] { kv.Value.Trim().Length > 65 ? kv.Value.Trim()[..65] : kv.Value.Trim() };
+        }
+
+        if (IsKnown(listing.Type)) aspects["Type"] = new[] { listing.Type!.Trim() };
+        if (IsKnown(listing.Colour)) aspects["Colour"] = new[] { listing.Colour!.Trim() };
+        return aspects;
+    }
+
+    /// <summary>
+    /// Sends an idempotent request, retrying eBay's transient failures: HTTP 5xx/429 or error 25001
+    /// ("A system error has occurred"). A fresh request is built for each attempt.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendWithRetryAsync(Func<HttpRequestMessage> createRequest, string what)
+    {
+        var delays = new[] { TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5) };
+        for (var attempt = 0; ; attempt++)
+        {
+            using var request = createRequest();
+            var response = await _httpClient.SendAsync(request);
+            if (response.IsSuccessStatusCode || attempt >= delays.Length || !await IsTransientAsync(response))
+            {
+                return response;
+            }
+
+            Console.WriteLine($"[eBay] Transient error for {what} ({(int)response.StatusCode}); retrying in {delays[attempt].TotalSeconds}s...");
+            response.Dispose();
+            await Task.Delay(delays[attempt]);
+        }
+    }
+
+    private static async Task<bool> IsTransientAsync(HttpResponseMessage response)
+    {
+        if ((int)response.StatusCode >= 500 || (int)response.StatusCode == 429) return true;
+        await response.Content.LoadIntoBufferAsync(); // keep the body readable for the caller
+        var body = await response.Content.ReadAsStringAsync();
+        return body.Contains("\"errorId\":25001", StringComparison.Ordinal);
+    }
+
+    private static Dictionary<string, object> BuildProduct(ListingDto listing, List<string> imageUrls)
+    {
+        var product = new Dictionary<string, object>
+        {
+            ["title"] = listing.Title,
+            ["description"] = listing.Description,
+            ["aspects"] = BuildAspects(listing),
+            ["imageUrls"] = imageUrls.ToArray()
+        };
+
+        // EAN/UPC lets eBay match the product catalogue. Only send well-formed GTINs.
+        var barcode = listing.Barcode?.Trim();
+        if (!string.IsNullOrEmpty(barcode) && barcode.All(char.IsDigit))
+        {
+            if (barcode.Length == 12) product["upc"] = new[] { barcode };
+            else if (barcode.Length is 8 or 13 or 14) product["ean"] = new[] { barcode };
+        }
+
+        return product;
+    }
+
+    public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null)
         => await FetchPoliciesAsync("payment", "paymentPolicies", accountId);
 
     public async Task<List<EbayPolicyDto>> GetFulfillmentPoliciesAsync(int? accountId = null)
@@ -348,6 +431,7 @@ public class EbayService : IEbayService
 
     private async Task<List<EbayPolicyDto>> FetchPoliciesAsync(string urlPart, string jsonKey, int? accountId)
     {
+        // Errors are thrown (not swallowed) so the listing page can show why no policies are listed.
         string token;
         try
         {
@@ -355,22 +439,20 @@ public class EbayService : IEbayService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"eBay {urlPart} policy fetch skipped: {ex.Message}");
-            return new List<EbayPolicyDto>();
+            throw new EbayApiException($"Can't load eBay {urlPart} policies: {ex.Message}", inner: ex);
         }
 
         var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
-        
-        var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/sell/account/v1/{urlPart}_policy?marketplace_id=EBAY_GB");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/sell/account/v1/{urlPart}_policy?marketplace_id=EBAY_GB");
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        
-        var response = await _httpClient.SendAsync(request);
+
+        using var response = await _httpClient.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
-            var error = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"eBay {urlPart} Policy Fetch Failed: {error}");
-            // We return empty for now but log the error
-            return new List<EbayPolicyDto>();
+            var error = await EbayApiException.FromResponseAsync(response, $"Loading eBay {urlPart} policies");
+            Console.WriteLine($"[eBay] {error.Message}");
+            throw error;
         }
 
         var data = await response.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonNode>();

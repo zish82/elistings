@@ -19,9 +19,11 @@ public class ListingsController : ControllerBase
     private readonly IEdenSupplierSyncService _edenSupplierSyncService;
     private readonly Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> _ebaySettings;
     private readonly ICurrentUserService _currentUserService;
+    private readonly SkuService _skuService;
 
-    public ListingsController(AppDbContext context, IScraperService scraperService, IEbayService ebayService, IEdenSupplierSyncService edenSupplierSyncService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings, ICurrentUserService currentUserService)
+    public ListingsController(AppDbContext context, IScraperService scraperService, IEbayService ebayService, IEdenSupplierSyncService edenSupplierSyncService, Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings> ebaySettings, ICurrentUserService currentUserService, SkuService skuService)
     {
+        _skuService = skuService;
         _context = context;
         _scraperService = scraperService;
         _ebayService = ebayService;
@@ -71,12 +73,14 @@ public class ListingsController : ControllerBase
             {
                 Id = l.Id,
                 EbayAccountId = l.EbayAccountId,
+                SupplierProductId = l.SupplierProductId,
                 EbayAccountName = _context.EbayTokens.Where(t => t.Id == l.EbayAccountId).Select(t => t.Name).FirstOrDefault(),
                 OwnerUserId = l.OwnerUserId,
                 OwnerEmail = _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefault(),
                 Title = l.Title,
                 Description = l.Description,
                 Price = l.Price,
+                Quantity = l.Quantity,
                 Status = l.Status,
                 EbayItemId = l.EbayItemId,
                 CategoryId = l.CategoryId,
@@ -93,7 +97,13 @@ public class ListingsController : ControllerBase
                 ,
                 SourceUrl = l.SourceUrl,
                 SourcePrice = l.SourcePrice,
-                SourceProductCode = l.SourceProductCode
+                SourceStockLevel = l.SourceStockLevel,
+                SourceProductCode = l.SourceProductCode,
+                Marketplace = l.Marketplace,
+                DeliveryOptionName = l.DeliveryOptionName,
+                DeliveryCost = l.DeliveryCost,
+                IncludeDeliveryInPrice = l.IncludeDeliveryInPrice,
+                Barcode = l.Barcode
             })
             .ToListAsync();
             
@@ -106,37 +116,71 @@ public class ListingsController : ControllerBase
         var l = await FindAccessibleListing(id);
         if (l == null) return NotFound();
 
-        return Ok(new ListingDto
-        {
-            Id = l.Id,
-            EbayAccountId = l.EbayAccountId,
-            EbayAccountName = await _context.EbayTokens.Where(t => t.Id == l.EbayAccountId).Select(t => t.Name).FirstOrDefaultAsync(),
-            OwnerUserId = l.OwnerUserId,
-            OwnerEmail = await _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefaultAsync(),
-            Title = l.Title,
-            Description = l.Description,
-            Price = l.Price,
-            Status = l.Status,
-            EbayItemId = l.EbayItemId,
-            CategoryId = l.CategoryId,
-            CategoryName = l.CategoryName,
-            FulfillmentPolicyId = l.FulfillmentPolicyId,
-            PaymentPolicyId = l.PaymentPolicyId,
-            ReturnPolicyId = l.ReturnPolicyId,
-            Type = l.Type,
-            Brand = l.Brand,
-            Colour = l.Colour,
-            Sku = l.Sku,
-            EbayOfferId = l.EbayOfferId,
-            ImageUrls = string.IsNullOrEmpty(l.ImageUrlsJson) ? new List<string>() : JsonSerializer.Deserialize<List<string>>(l.ImageUrlsJson, (JsonSerializerOptions?)null) ?? new List<string>()
-            ,
-            SourceUrl = l.SourceUrl,
-            SourcePrice = l.SourcePrice,
-            SourceProductCode = l.SourceProductCode
-        });
+        var ebayAccountName = await _context.EbayTokens.Where(t => t.Id == l.EbayAccountId).Select(t => t.Name).FirstOrDefaultAsync();
+        var ownerEmail = await _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefaultAsync();
+        return Ok(ToListingDto(l, ebayAccountName, ownerEmail));
     }
 
+    /// <summary>
+    /// Fetches description/specifications/images from the supplier website for the linked product
+    /// and fills any empty fields on the listing (fields already filled in are kept).
+    /// </summary>
+    [HttpPost("{id}/fetch-supplier-details")]
+    public async Task<ActionResult<EnrichResultDto>> FetchSupplierDetails(int id, [FromServices] ProductEnrichmentService enrichment)
+    {
+        var listing = await FindAccessibleListing(id);
+        if (listing == null) return NotFound();
+
+        var (ok, message) = await enrichment.EnrichListingAsync(listing, force: true);
+        var ebayAccountName = await _context.EbayTokens.Where(t => t.Id == listing.EbayAccountId).Select(t => t.Name).FirstOrDefaultAsync();
+        var ownerEmail = await _context.Users.Where(u => u.Id == listing.OwnerUserId).Select(u => u.Email).FirstOrDefaultAsync();
+        return Ok(new EnrichResultDto { Success = ok, Message = message, Listing = ToListingDto(listing, ebayAccountName, ownerEmail) });
+    }
+
+    [HttpPost("{id}/reset-from-source")]
+    public async Task<ActionResult<ListingDto>> ResetFromSource(int id)
+    {
+        var listing = await FindAccessibleListing(id);
+        if (listing == null) return NotFound();
+
+        if (!listing.SupplierProductId.HasValue)
+        {
+            return BadRequest("Listing is not linked to a supplier product.");
+        }
+
+        var product = await _context.SupplierProducts
+            .FirstOrDefaultAsync(p => p.Id == listing.SupplierProductId.Value && p.IsActive);
+        if (product == null)
+        {
+            return NotFound("Linked supplier product was not found.");
+        }
+
+        var imageUrls = new List<string>();
+        if (!string.IsNullOrWhiteSpace(product.ImageUrl))
+        {
+            imageUrls.Add(product.ImageUrl);
+        }
+
+        listing.Title = product.Title;
+        listing.Description = product.Description ?? string.Empty;
+        listing.Brand = string.IsNullOrWhiteSpace(product.Brand) ? listing.Brand : product.Brand;
+        listing.Price = product.SuggestedPrice ?? product.SupplierPrice ?? listing.Price;
+        listing.ImageUrlsJson = JsonSerializer.Serialize(imageUrls);
+        listing.SourceUrl = product.ProductUrl;
+        listing.SourcePrice = product.SupplierPrice;
+        listing.SourceStockLevel = product.StockLevel;
+        listing.SourceProductCode = product.SupplierSku;
+
+        await _context.SaveChangesAsync();
+
+        var ebayAccountName = await _context.EbayTokens.Where(t => t.Id == listing.EbayAccountId).Select(t => t.Name).FirstOrDefaultAsync();
+        var ownerEmail = await _context.Users.Where(u => u.Id == listing.OwnerUserId).Select(u => u.Email).FirstOrDefaultAsync();
+        return Ok(ToListingDto(listing, ebayAccountName, ownerEmail));
+    }
+
+    // Manually uploaded images are sent as base64 data URLs (up to 10 x 5MB), which exceeds Kestrel's 30MB default.
     [HttpPost]
+    [RequestSizeLimit(100_000_000)]
     public async Task<ActionResult<ListingDto>> CreateListing(CreateListingRequest request)
     {
         var userId = _currentUserService.UserId;
@@ -156,6 +200,12 @@ public class ListingsController : ControllerBase
             } ?? string.Empty;
         }
 
+        var sku = SkuService.Normalize(request.Sku);
+        if (sku != null && await _skuService.IsInUseAsync(sku, null))
+        {
+            return BadRequest($"SKU '{sku}' is already used by another listing.");
+        }
+
         var paymentId = GetDefault(request.PaymentPolicyId, "payment");
         var fulfillmentId = GetDefault(request.FulfillmentPolicyId, "fulfillment");
         var returnId = GetDefault(request.ReturnPolicyId, "return");
@@ -164,9 +214,12 @@ public class ListingsController : ControllerBase
         {
             OwnerUserId = userId.Value,
             EbayAccountId = request.EbayAccountId ?? GetDefaultEbayAccountId(userId.Value),
+            SupplierProductId = request.SupplierProductId,
             Title = request.Title,
             Description = request.Description,
             Price = request.Price,
+            Quantity = request.Quantity < 1 ? 1 : request.Quantity,
+            Sku = sku,
             Status = "Draft",
             CategoryId = request.CategoryId,
             CategoryName = request.CategoryName,
@@ -180,20 +233,32 @@ public class ListingsController : ControllerBase
             ,
             SourceUrl = request.SourceUrl,
             SourcePrice = request.SourcePrice,
+            SourceStockLevel = request.SourceStockLevel,
             SourceProductCode = request.SourceProductCode
         };
+        ListingMapping.ApplyExtras(listing, request);
         
         _context.Listings.Add(listing);
         await _context.SaveChangesAsync();
+
+        // No SKU entered: generate one now (the fallback format needs the new listing's Id).
+        if (listing.Sku == null)
+        {
+            await _skuService.EnsureSkuAsync(listing);
+            await _context.SaveChangesAsync();
+        }
         
         return CreatedAtAction(nameof(GetListing), new { id = listing.Id }, new ListingDto 
         { 
             Id = listing.Id, 
             EbayAccountId = listing.EbayAccountId,
+            SupplierProductId = listing.SupplierProductId,
             OwnerUserId = listing.OwnerUserId,
             Title = listing.Title, 
             Description = listing.Description, 
             Price = listing.Price,
+            Quantity = listing.Quantity,
+            Sku = listing.Sku,
             Status = listing.Status,
             CategoryId = listing.CategoryId,
             CategoryName = listing.CategoryName,
@@ -206,20 +271,39 @@ public class ListingsController : ControllerBase
             ,
             SourceUrl = listing.SourceUrl,
             SourcePrice = listing.SourcePrice,
+            SourceStockLevel = listing.SourceStockLevel,
             SourceProductCode = listing.SourceProductCode
-        });
+        }.WithExtras(listing));
     }
 
     [HttpPut("{id}")]
+    [RequestSizeLimit(100_000_000)]
     public async Task<IActionResult> UpdateListing(int id, CreateListingRequest request)
     {
         var listing = await FindAccessibleListing(id);
         if (listing == null) return NotFound();
 
+        // SKU: keep the existing one when none is supplied; once published, the eBay inventory item is keyed by SKU so it can't change.
+        var requestedSku = SkuService.Normalize(request.Sku);
+        if (requestedSku != null && !string.Equals(requestedSku, listing.Sku, StringComparison.Ordinal))
+        {
+            if (listing.Status == "Published")
+            {
+                return BadRequest("SKU cannot be changed after the listing has been published.");
+            }
+            if (await _skuService.IsInUseAsync(requestedSku, listing.Id))
+            {
+                return BadRequest($"SKU '{requestedSku}' is already used by another listing.");
+            }
+            listing.Sku = requestedSku;
+        }
+
         listing.Title = request.Title;
         listing.Description = request.Description;
         listing.Price = request.Price;
+        listing.Quantity = request.Quantity < 1 ? 1 : request.Quantity;
         listing.EbayAccountId = request.EbayAccountId ?? GetDefaultEbayAccountId(listing.OwnerUserId);
+        listing.SupplierProductId = request.SupplierProductId;
         listing.CategoryId = request.CategoryId;
         listing.CategoryName = request.CategoryName;
         listing.FulfillmentPolicyId = request.FulfillmentPolicyId;
@@ -231,65 +315,135 @@ public class ListingsController : ControllerBase
         listing.ImageUrlsJson = JsonSerializer.Serialize(request.ImageUrls);
         listing.SourceUrl = request.SourceUrl;
         listing.SourcePrice = request.SourcePrice;
+        listing.SourceStockLevel = request.SourceStockLevel;
         listing.SourceProductCode = request.SourceProductCode;
+        ListingMapping.ApplyExtras(listing, request);
+        await _skuService.EnsureSkuAsync(listing); // older drafts without a SKU get one on save
 
         await _context.SaveChangesAsync();
         return NoContent();
     }
 
     [HttpPost("bulk-extract")]
-    public async Task<ActionResult> BulkExtract([FromBody] string categoryUrl)
+    public ActionResult<BulkJobStartedDto> BulkExtract([FromBody] string categoryUrl, [FromServices] BulkJobRunner jobRunner)
     {
-        if (string.IsNullOrEmpty(categoryUrl)) return BadRequest("Category URL is required");
+        if (string.IsNullOrWhiteSpace(categoryUrl)) return BadRequest("Category URL is required");
+        if (!Uri.TryCreate(categoryUrl.Trim(), UriKind.Absolute, out _)) return BadRequest("Category URL is not a valid URL.");
 
-        try
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+        var url = categoryUrl.Trim();
+
+        var job = jobRunner.Start("extract", User, userId.Value, async (services, bulkJob) =>
         {
-            var productLinks = await _scraperService.ExtractProductLinksAsync(categoryUrl);
-            var createdCount = 0;
+            var context = services.GetRequiredService<AppDbContext>();
+            var scraper = services.GetRequiredService<IScraperService>();
+            var skuService = services.GetRequiredService<SkuService>();
+            var settings = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings>>().Value;
+
+            bulkJob.Message = "Finding product links...";
+            var productLinks = await scraper.ExtractProductLinksAsync(url);
+            if (!productLinks.Any())
+            {
+                throw new InvalidOperationException("No product links were found on that page. Check it is a category/collection URL for a supported site (Safelincs or Eden Horticulture).");
+            }
+
+            // Skip products this user already has as listings (re-running a category won't duplicate).
+            var existing = (await context.Listings
+                    .Where(l => l.OwnerUserId == userId.Value && l.SourceUrl != null)
+                    .Select(l => l.SourceUrl!)
+                    .ToListAsync())
+                .Select(NormalizeSourceUrl)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            bulkJob.Total = productLinks.Count;
+            bulkJob.Message = $"Extracting {productLinks.Count} products...";
+
+            string? DefaultPolicy(string type) => context.Policies
+                .FirstOrDefault(p => p.Marketplace.ToLower() == "ebay" && p.PolicyType == type && p.IsDefault)?.PolicyKey;
+            var paymentPolicy = DefaultPolicy("payment") ?? settings.DefaultPaymentPolicyId;
+            var fulfillmentPolicy = DefaultPolicy("fulfillment") ?? settings.DefaultFulfillmentPolicyId;
+            var returnPolicy = DefaultPolicy("return") ?? settings.DefaultReturnPolicyId;
+            var defaultAccountId = context.EbayTokens
+                .Where(t => t.UserId == userId.Value)
+                .OrderByDescending(t => t.IsDefault).ThenBy(t => t.Id)
+                .Select(t => (int?)t.Id)
+                .FirstOrDefault();
 
             foreach (var link in productLinks)
             {
+                if (existing.Contains(NormalizeSourceUrl(link)))
+                {
+                    bulkJob.ItemSkipped();
+                    continue;
+                }
+
                 try
                 {
-                    // Check if already exists by title or external URL (if we stored it)
-                    // For now, just add them all.
-                    var details = await _scraperService.ExtractDetailsAsync(link);
-                    
-                    var listing = new Listing
+                    var details = await scraper.ExtractDetailsAsync(link);
+                    if (string.IsNullOrWhiteSpace(details.Title))
                     {
-                        OwnerUserId = _currentUserService.UserId ?? 0,
-                        EbayAccountId = _currentUserService.UserId is int currentUserId ? GetDefaultEbayAccountId(currentUserId) : null,
-                        Title = details.Title,
-                        Description = details.Description,
-                        Price = details.PriceIncVat ?? details.Price ?? 0.99m,
+                        bulkJob.ItemFailed($"{link}: no title found on page");
+                        continue;
+                    }
+
+                    var newListing = new Listing
+                    {
+                        OwnerUserId = userId.Value,
+                        EbayAccountId = defaultAccountId,
+                        Title = System.Net.WebUtility.HtmlDecode(details.Title).Trim(),
+                        Description = details.Description ?? string.Empty,
+                        // 0 = "price not set": the editor and publish validation will flag it.
+                        Price = details.PriceIncVat ?? details.Price ?? 0m,
+                        Quantity = 1,
                         Status = "Draft",
-                        Brand = details.Brand,
+                        Brand = string.IsNullOrWhiteSpace(details.Brand) ? null : details.Brand,
                         ImageUrlsJson = JsonSerializer.Serialize(details.ImageUrls ?? new List<string>()),
                         SourceUrl = link,
-                        // Apply server-configured or DB default business policies when bulk-creating
-                        PaymentPolicyId = _context.Policies.FirstOrDefault(p => p.Marketplace.ToLower() == "ebay" && p.PolicyType == "payment" && p.IsDefault)?.PolicyKey ?? _ebaySettings.Value.DefaultPaymentPolicyId,
-                        FulfillmentPolicyId = _context.Policies.FirstOrDefault(p => p.Marketplace.ToLower() == "ebay" && p.PolicyType == "fulfillment" && p.IsDefault)?.PolicyKey ?? _ebaySettings.Value.DefaultFulfillmentPolicyId,
-                        ReturnPolicyId = _context.Policies.FirstOrDefault(p => p.Marketplace.ToLower() == "ebay" && p.PolicyType == "return" && p.IsDefault)?.PolicyKey ?? _ebaySettings.Value.DefaultReturnPolicyId,
-                        // Do not set SourcePrice on bulk-extract; SourcePrice is for manual entry.
+                        PaymentPolicyId = paymentPolicy,
+                        FulfillmentPolicyId = fulfillmentPolicy,
+                        ReturnPolicyId = returnPolicy,
                         SourceProductCode = details.ProductCode,
                     };
-
-                    _context.Listings.Add(listing);
-                    createdCount++;
+                    context.Listings.Add(newListing);
+                    await context.SaveChangesAsync(); // save per item so progress survives a failure
+                    await skuService.EnsureSkuAsync(newListing);
+                    await context.SaveChangesAsync();
+                    existing.Add(NormalizeSourceUrl(link));
+                    bulkJob.ItemSucceeded();
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Bulk] Failed to extract {link}: {ex.Message}");
+                    context.ChangeTracker.Clear();
+                    bulkJob.ItemFailed($"{link}: {ex.Message}");
                 }
+
+                await Task.Delay(500); // avoid hammering the supplier site
             }
 
-            await _context.SaveChangesAsync();
-            return Ok(new { Count = createdCount });
-        }
-        catch (Exception ex)
-        {
-            return BadRequest($"Bulk operation failed: {ex.Message}");
-        }
+            bulkJob.Message = $"Created {bulkJob.ToDto().Succeeded} drafts.";
+        });
+
+        return Ok(new BulkJobStartedDto { JobId = job.Id });
+    }
+
+    [HttpGet("bulk-jobs/{jobId}")]
+    public ActionResult<BulkJobDto> GetBulkJob(string jobId, [FromServices] BulkJobRunner jobRunner)
+    {
+        var job = jobRunner.Get(jobId);
+        if (job == null) return NotFound("Job not found (it may have expired or the server restarted).");
+        if (job.OwnerUserId != _currentUserService.UserId && !_currentUserService.CanViewAllListings) return NotFound();
+        return Ok(job.ToDto());
+    }
+
+    private static string NormalizeSourceUrl(string url)
+    {
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)) return url.Trim().TrimEnd('/');
+        var path = uri.AbsolutePath;
+        // Shopify: /collections/x/products/y and /products/y are the same product.
+        var productsIdx = path.IndexOf("/products/", StringComparison.OrdinalIgnoreCase);
+        if (productsIdx > 0) path = path.Substring(productsIdx);
+        return (uri.Host.ToLowerInvariant().Replace("www.", "") + path).TrimEnd('/');
     }
 
     [HttpPost("bulk-delete")]
@@ -356,25 +510,24 @@ public class ListingsController : ControllerBase
     }
 
     [HttpPost("{id}/supplier-status/refresh")]
-    public async Task<ActionResult<SupplierStatusDto>> RefreshSupplierStatus(int id)
+    public async Task<ActionResult<SupplierStatusDto>> RefreshSupplierStatus(int id, [FromServices] SupplierStockService stockService)
     {
         var listing = await FindAccessibleListing(id);
         if (listing == null) return NotFound();
 
-        var snapshot = await _edenSupplierSyncService.SyncListingAsync(id, "manual");
-        return Ok(snapshot);
+        return Ok(await stockService.CheckListingAsync(listing, "manual"));
     }
 
+    /// <summary>Stock check for a listing that hasn't been saved yet.</summary>
     [HttpPost("supplier-status/check")]
-    public async Task<ActionResult<SupplierStatusDto>> CheckSupplierStatus([FromBody] SupplierStatusCheckRequest request)
+    public async Task<ActionResult<SupplierStatusDto>> CheckSupplierStatus([FromBody] SupplierStatusCheckRequest request, [FromServices] SupplierStockService stockService)
     {
-        if (request == null || string.IsNullOrWhiteSpace(request.SourceUrl))
+        if (request == null || (string.IsNullOrWhiteSpace(request.SourceUrl) && string.IsNullOrWhiteSpace(request.SupplierSku)))
         {
-            return BadRequest("SourceUrl is required.");
+            return BadRequest("SourceUrl or SupplierSku is required.");
         }
 
-        var snapshot = await _edenSupplierSyncService.CheckSourceAsync(request.SourceUrl, request.SupplierSku, "manual-draft");
-        return Ok(snapshot);
+        return Ok(await stockService.CheckAsync(new SupplierStockQuery(request.SourceUrl, request.SupplierSku, null)));
     }
 
     private async Task<Listing?> FindAccessibleListing(int id)
@@ -411,74 +564,96 @@ public class ListingsController : ControllerBase
     }
 
     [HttpPost("bulk-publish")]
-    public async Task<ActionResult> BulkPublish([FromBody] List<int> ids)
+    public ActionResult<BulkJobStartedDto> BulkPublish([FromBody] List<int> ids, [FromServices] BulkJobRunner jobRunner)
     {
         if (ids == null || !ids.Any()) return BadRequest("No IDs provided");
 
-        var published = 0;
-        var failed = 0;
-        var errors = new List<string>();
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+        var canViewAll = _currentUserService.CanViewAllListings;
+        var idList = ids.Distinct().ToList();
 
-        foreach (var id in ids)
+        var job = jobRunner.Start("publish", User, userId.Value, async (services, bulkJob) =>
         {
-            try
+            var context = services.GetRequiredService<AppDbContext>();
+            var ebayService = services.GetRequiredService<IEbayService>();
+            var publishSkuService = services.GetRequiredService<SkuService>();
+            var settings = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings>>().Value;
+
+            bulkJob.Total = idList.Count;
+            bulkJob.Message = $"Publishing {idList.Count} listings...";
+
+            foreach (var id in idList)
             {
-                var listingEntity = await FindAccessibleListing(id);
-                if (listingEntity == null)
+                var label = $"#{id}";
+                try
                 {
-                    failed++;
-                    errors.Add($"Listing {id} not found or access denied");
-                    continue;
+                    var listing = await context.Listings
+                        .FirstOrDefaultAsync(l => l.Id == id && (canViewAll || l.OwnerUserId == userId.Value));
+                    if (listing == null)
+                    {
+                        bulkJob.ItemFailed($"{label}: not found or access denied");
+                        continue;
+                    }
+                    label = $"#{id} {Truncate(listing.Title, 50)}";
+
+                    var dto = await ListingPublishHelper.PrepareAsync(listing, context, ebayService, settings, publishSkuService);
+                    await context.SaveChangesAsync(); // keep auto-selected category even if eBay rejects
+
+                    var result = await ebayService.CreateListingAsync(dto);
+                    ListingPublishHelper.ApplyPublishResult(listing, result);
+                    await context.SaveChangesAsync();
+                    bulkJob.ItemSucceeded();
                 }
-
-                // Ensure policy IDs are set, falling back to configured defaults
-                if (string.IsNullOrEmpty(listingEntity.PaymentPolicyId))
-                    listingEntity.PaymentPolicyId = _ebaySettings.Value.DefaultPaymentPolicyId;
-                if (string.IsNullOrEmpty(listingEntity.FulfillmentPolicyId))
-                    listingEntity.FulfillmentPolicyId = _ebaySettings.Value.DefaultFulfillmentPolicyId;
-                if (string.IsNullOrEmpty(listingEntity.ReturnPolicyId))
-                    listingEntity.ReturnPolicyId = _ebaySettings.Value.DefaultReturnPolicyId;
-
-                var dto = new ListingDto
+                catch (Exception ex)
                 {
-                    Id = listingEntity.Id,
-                    EbayAccountId = listingEntity.EbayAccountId,
-                    Title = listingEntity.Title,
-                    Description = listingEntity.Description,
-                    Price = listingEntity.Price,
-                    CategoryId = listingEntity.CategoryId,
-                    CategoryName = listingEntity.CategoryName,
-                    FulfillmentPolicyId = listingEntity.FulfillmentPolicyId,
-                    PaymentPolicyId = listingEntity.PaymentPolicyId,
-                    ReturnPolicyId = listingEntity.ReturnPolicyId,
-                    Type = listingEntity.Type,
-                    Brand = listingEntity.Brand,
-                    Colour = listingEntity.Colour,
-                    Sku = listingEntity.Sku,
-                    EbayOfferId = listingEntity.EbayOfferId,
-                    ImageUrls = string.IsNullOrEmpty(listingEntity.ImageUrlsJson) ? new List<string>() : JsonSerializer.Deserialize<List<string>>(listingEntity.ImageUrlsJson) ?? new List<string>(),
-                    SourceUrl = listingEntity.SourceUrl
-                };
-
-                // Use the ebay service to create/update and publish the listing
-                var result = await _ebayService.CreateListingAsync(dto);
-
-                listingEntity.Status = "Published";
-                listingEntity.EbayItemId = result.ListingId;
-                listingEntity.Sku = result.Sku;
-                listingEntity.EbayOfferId = result.OfferId;
-
-                await _context.SaveChangesAsync();
-                published++;
+                    context.ChangeTracker.Clear();
+                    Console.WriteLine($"Bulk publish failed for {id}: {ex}");
+                    bulkJob.ItemFailed($"{label}: {ex.Message}");
+                }
             }
-            catch (Exception ex)
-            {
-                failed++;
-                errors.Add($"{id}: {ex.Message}");
-                Console.WriteLine($"Bulk publish failed for {id}: {ex}");
-            }
-        }
 
-        return Ok(new { Published = published, Failed = failed, Errors = errors });
+            var final = bulkJob.ToDto();
+            bulkJob.Message = $"Published {final.Succeeded}, failed {final.Failed}.";
+        });
+
+        return Ok(new BulkJobStartedDto { JobId = job.Id });
+    }
+
+    private static string Truncate(string? value, int max)
+        => string.IsNullOrEmpty(value) ? string.Empty : (value.Length <= max ? value : value.Substring(0, max) + "...");
+
+    private static ListingDto ToListingDto(Listing listing, string? ebayAccountName, string? ownerEmail)
+    {
+        return new ListingDto
+        {
+            Id = listing.Id,
+            EbayAccountId = listing.EbayAccountId,
+            SupplierProductId = listing.SupplierProductId,
+            EbayAccountName = ebayAccountName,
+            OwnerUserId = listing.OwnerUserId,
+            OwnerEmail = ownerEmail,
+            Title = listing.Title,
+            Description = listing.Description,
+            Price = listing.Price,
+            Quantity = listing.Quantity,
+            Status = listing.Status,
+            EbayItemId = listing.EbayItemId,
+            CategoryId = listing.CategoryId,
+            CategoryName = listing.CategoryName,
+            FulfillmentPolicyId = listing.FulfillmentPolicyId,
+            PaymentPolicyId = listing.PaymentPolicyId,
+            ReturnPolicyId = listing.ReturnPolicyId,
+            Type = listing.Type,
+            Brand = listing.Brand,
+            Colour = listing.Colour,
+            Sku = listing.Sku,
+            EbayOfferId = listing.EbayOfferId,
+            ImageUrls = string.IsNullOrEmpty(listing.ImageUrlsJson) ? new List<string>() : JsonSerializer.Deserialize<List<string>>(listing.ImageUrlsJson, (JsonSerializerOptions?)null) ?? new List<string>(),
+            SourceUrl = listing.SourceUrl,
+            SourcePrice = listing.SourcePrice,
+            SourceStockLevel = listing.SourceStockLevel,
+            SourceProductCode = listing.SourceProductCode
+        }.WithExtras(listing);
     }
 }

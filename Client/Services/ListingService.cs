@@ -19,7 +19,10 @@ public class ListingService
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
         using var response = await _http.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new Exception(await ExtractErrorMessageAsync(response));
+        }
         return await response.Content.ReadFromJsonAsync<T>();
     }
 
@@ -33,13 +36,69 @@ public class ListingService
         }
 
         using var response = await _http.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new Exception(await ExtractErrorMessageAsync(response));
+        }
         if (response.Content.Headers.ContentLength == 0)
         {
             return default;
         }
 
         return await response.Content.ReadFromJsonAsync<T>();
+    }
+
+    private static async Task<string> ExtractErrorMessageAsync(HttpResponseMessage response)
+    {
+        var fallback = $"Request failed: {(int)response.StatusCode} {response.ReasonPhrase}";
+
+        string? raw = null;
+        try
+        {
+            raw = await response.Content.ReadAsStringAsync();
+        }
+        catch
+        {
+            return fallback;
+        }
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return fallback;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("errorMessage", out var errorMessage) && errorMessage.ValueKind == JsonValueKind.String)
+                {
+                    var value = errorMessage.GetString();
+                    if (!string.IsNullOrWhiteSpace(value)) return value!;
+                }
+
+                if (root.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String)
+                {
+                    var value = detail.GetString();
+                    if (!string.IsNullOrWhiteSpace(value)) return value!;
+                }
+
+                if (root.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
+                {
+                    var value = title.GetString();
+                    if (!string.IsNullOrWhiteSpace(value)) return value!;
+                }
+            }
+        }
+        catch
+        {
+            // Not JSON, fall back to raw text.
+        }
+
+        return raw.Trim();
     }
 
     public async Task<List<ListingDto>> GetListingsAsync()
@@ -60,6 +119,12 @@ public class ListingService
     public async Task UpdateListingAsync(int id, CreateListingRequest request)
     {
         await SendAsync<object>(HttpMethod.Put, $"api/listings/{id}", request);
+    }
+
+    public async Task<ListingDto> ResetListingFromSourceAsync(int id)
+    {
+        return await SendAsync<ListingDto>(HttpMethod.Post, $"api/listings/{id}/reset-from-source")
+               ?? throw new Exception("Failed to reset listing from source.");
     }
 
     public async Task<SupplierStatusDto> GetSupplierStatusAsync(int id)
@@ -107,6 +172,64 @@ public class ListingService
         }
 
         throw new Exception($"Failed to delete supplier feed. Status: {response.StatusCode}");
+    }
+
+    public async Task<FeedSyncResult> RunCatalogueSyncAsync()
+    {
+        return await SendAsync<FeedSyncResult>(HttpMethod.Post, "api/supplierproducts/sync/catalogue")
+               ?? new FeedSyncResult { ErrorMessage = "No response from server." };
+    }
+
+    public async Task<FeedSyncResult> RunStockSyncAsync()
+    {
+        return await SendAsync<FeedSyncResult>(HttpMethod.Post, "api/supplierproducts/sync/stock")
+               ?? new FeedSyncResult { ErrorMessage = "No response from server." };
+    }
+
+    public async Task<FeedSyncResult> SyncSupplierFeedAsync(int feedId)
+    {
+        return await SendAsync<FeedSyncResult>(HttpMethod.Post, $"api/supplierproducts/sync/feed/{feedId}")
+               ?? new FeedSyncResult { ErrorMessage = "No response from server." };
+    }
+
+    public async Task DeleteSupplierProductAsync(int productId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"api/supplierproducts/{productId}");
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
+        if (!response.IsSuccessStatusCode) throw new Exception(await ExtractErrorMessageAsync(response));
+    }
+
+    public async Task<int> DeleteSupplierProductsAsync(List<int> productIds)
+    {
+        var result = await SendAsync<BulkProductDeleteResult>(HttpMethod.Post, "api/supplierproducts/delete", productIds);
+        return result?.Deleted ?? 0;
+    }
+
+    public async Task<List<SupplierProductListItemDto>> GetSupplierProductsAsync(string? supplier = null, string? search = null)
+    {
+        var url = "api/supplierproducts";
+        var query = new List<string>();
+        if (!string.IsNullOrWhiteSpace(supplier)) query.Add($"supplier={Uri.EscapeDataString(supplier)}");
+        if (!string.IsNullOrWhiteSpace(search)) query.Add($"search={Uri.EscapeDataString(search)}");
+        if (query.Any()) url += "?" + string.Join("&", query);
+
+        return await GetAsync<List<SupplierProductListItemDto>>(url) ?? new List<SupplierProductListItemDto>();
+    }
+
+    public async Task<SupplierProductDetailDto> GetSupplierProductAsync(int id)
+    {
+        return await GetAsync<SupplierProductDetailDto>($"api/supplierproducts/{id}")
+               ?? throw new Exception("Supplier product not found.");
+    }
+
+    public async Task<AddSupplierProductsResult> AddSupplierProductsToMyListingsAsync(List<int> productIds, bool allowDuplicates = false)
+    {
+        return await SendAsync<AddSupplierProductsResult>(HttpMethod.Post, "api/supplierproducts/add-to-my-listings", new AddSupplierProductsRequest
+        {
+            ProductIds = productIds,
+            AllowDuplicates = allowDuplicates
+        }) ?? new AddSupplierProductsResult();
     }
 
     public async Task<ExtractedDetailsDto> ExtractDetailsAsync(string url)
@@ -217,8 +340,7 @@ public class ListingService
         using var response = await _http.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
-            var error = await response.Content.ReadAsStringAsync();
-            throw new Exception($"Failed to publish listing. Status: {response.StatusCode}. Details: {error}");
+            throw new Exception(await ExtractErrorMessageAsync(response));
         }
         return await response.Content.ReadFromJsonAsync<ListingDto>() ?? throw new Exception("Failed to deserialize response");
     }
@@ -233,10 +355,16 @@ public class ListingService
         return await GetAsync<List<CategorySuggestionDto>>(url) ?? new List<CategorySuggestionDto>();
     }
 
-    public async Task<int> BulkExtractAsync(string categoryUrl)
+    public async Task<string> StartBulkExtractAsync(string categoryUrl)
     {
-        var result = await SendAsync<BulkResult>(HttpMethod.Post, "api/listings/bulk-extract", categoryUrl);
-        return result?.Count ?? 0;
+        var result = await SendAsync<BulkJobStartedDto>(HttpMethod.Post, "api/listings/bulk-extract", categoryUrl);
+        return result?.JobId ?? throw new Exception("Server did not return a job id.");
+    }
+
+    public async Task<BulkJobDto> GetBulkJobAsync(string jobId)
+    {
+        return await GetAsync<BulkJobDto>($"api/listings/bulk-jobs/{Uri.EscapeDataString(jobId)}")
+               ?? throw new Exception("Job not found.");
     }
 
     public async Task<BulkDeleteResult> BulkDeleteAsync(List<int> ids)
@@ -244,24 +372,39 @@ public class ListingService
         return await SendAsync<BulkDeleteResult>(HttpMethod.Post, "api/listings/bulk-delete", ids) ?? new BulkDeleteResult();
     }
 
-    public async Task<(int Published, int Failed, List<string> Errors)> BulkPublishAsync(List<int> ids)
+    // ---- Suppliers (VAT + delivery options)
+
+    public async Task<List<SupplierDto>> GetSuppliersAsync(bool includeInactive = false)
+        => await GetAsync<List<SupplierDto>>($"api/suppliers?includeInactive={includeInactive.ToString().ToLowerInvariant()}") ?? new List<SupplierDto>();
+
+    public async Task<SupplierDto?> CreateSupplierAsync(SupplierDto supplier)
+        => await SendAsync<SupplierDto>(HttpMethod.Post, "api/suppliers", supplier);
+
+    public async Task UpdateSupplierAsync(SupplierDto supplier)
+        => await SendAsync<object>(HttpMethod.Put, $"api/suppliers/{supplier.Id}", supplier);
+
+    public async Task<SupplierDeliveryOptionDto?> AddDeliveryOptionAsync(int supplierId, SupplierDeliveryOptionDto option)
+        => await SendAsync<SupplierDeliveryOptionDto>(HttpMethod.Post, $"api/suppliers/{supplierId}/delivery-options", option);
+
+    public async Task UpdateDeliveryOptionAsync(SupplierDeliveryOptionDto option)
+        => await SendAsync<object>(HttpMethod.Put, $"api/suppliers/delivery-options/{option.Id}", option);
+
+    public async Task DeleteDeliveryOptionAsync(int optionId)
+        => await SendAsync<object>(HttpMethod.Delete, $"api/suppliers/delivery-options/{optionId}");
+
+    public async Task<ListingSupplierContextDto> GetSupplierContextForListingAsync(int listingId)
+        => await GetAsync<ListingSupplierContextDto>($"api/suppliers/for-listing/{listingId}") ?? new ListingSupplierContextDto();
+
+    public async Task<ListingSupplierContextDto> GetSupplierContextForUrlAsync(string? sourceUrl)
+        => await GetAsync<ListingSupplierContextDto>($"api/suppliers/for-url?sourceUrl={Uri.EscapeDataString(sourceUrl ?? string.Empty)}") ?? new ListingSupplierContextDto();
+
+    public async Task<EnrichResultDto> FetchSupplierDetailsAsync(int listingId)
+        => await SendAsync<EnrichResultDto>(HttpMethod.Post, $"api/listings/{listingId}/fetch-supplier-details") ?? new EnrichResultDto();
+
+    public async Task<string> StartBulkPublishAsync(List<int> ids)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "api/listings/bulk-publish")
-        {
-            Content = JsonContent.Create(ids)
-        };
-        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
-        using var response = await _http.SendAsync(request);
-        response.EnsureSuccessStatusCode();
-        var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
-        int published = payload.GetProperty("Published").GetInt32();
-        int failed = payload.GetProperty("Failed").GetInt32();
-        var errors = new List<string>();
-        if (payload.TryGetProperty("Errors", out var errs) && errs.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var e in errs.EnumerateArray()) errors.Add(e.GetString() ?? "");
-        }
-        return (published, failed, errors);
+        var result = await SendAsync<BulkJobStartedDto>(HttpMethod.Post, "api/listings/bulk-publish", ids);
+        return result?.JobId ?? throw new Exception("Server did not return a job id.");
     }
 
     public async Task<JsonElement> GetFeeEstimateAsync(Shared.ListingDto listing)
@@ -278,7 +421,6 @@ public class ListingService
             return doc.RootElement.Clone();
     }
 
-    private class BulkResult { public int Count { get; set; } }
 }
 
 public class BulkDeleteResult { public int Marked { get; set; } public int Deleted { get; set; } }

@@ -32,6 +32,7 @@ public class SupplierFeedsController : ControllerBase
                 FeedType = f.FeedType,
                 Url = f.Url,
                 Description = f.Description,
+                HasCookieHeader = !string.IsNullOrWhiteSpace(f.CookieHeader),
                 IsRecommended = f.IsRecommended,
                 CreatedAtUtc = f.CreatedAtUtc
             })
@@ -77,6 +78,7 @@ public class SupplierFeedsController : ControllerBase
             FeedType = feedType,
             Url = normalizedUrl,
             Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+            CookieHeader = string.IsNullOrWhiteSpace(request.CookieHeader) ? null : request.CookieHeader.Trim(),
             IsRecommended = request.IsRecommended,
             CreatedAtUtc = DateTime.UtcNow
         };
@@ -91,6 +93,7 @@ public class SupplierFeedsController : ControllerBase
             FeedType = entity.FeedType,
             Url = entity.Url,
             Description = entity.Description,
+            HasCookieHeader = !string.IsNullOrWhiteSpace(entity.CookieHeader),
             IsRecommended = entity.IsRecommended,
             CreatedAtUtc = entity.CreatedAtUtc
         });

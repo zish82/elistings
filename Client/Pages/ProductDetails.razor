@@ -1,0 +1,162 @@
+@page "/products/{Id:int}"
+@using Shared
+@using Client.Services
+@inject AuthService AuthService
+@inject ListingService ListingService
+
+<PageTitle>Product Details</PageTitle>
+
+<h1>Product Details</h1>
+
+@if (!string.IsNullOrWhiteSpace(statusMessage))
+{
+    <div class="alert @statusCss">@statusMessage</div>
+}
+
+@if (isLoading)
+{
+    <p><em>Loading product...</em></p>
+}
+else if (product == null)
+{
+    <div class="alert alert-warning">Product not found.</div>
+}
+else
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            <h4>@product.Title</h4>
+            <div class="small text-muted mb-2">Supplier: @product.Supplier</div>
+
+            <div class="mb-2">
+                <strong>Category:</strong> @(string.IsNullOrWhiteSpace(product.CategoryName) ? "-" : product.CategoryName)
+            </div>
+
+            @{
+                var images = string.IsNullOrWhiteSpace(product.ImageUrlsJson) ? Array.Empty<string>() : System.Text.Json.JsonSerializer.Deserialize<string[]>(product.ImageUrlsJson);
+            }
+            @if (images != null && images.Length > 0)
+            {
+                <div class="mb-2 d-flex flex-wrap gap-2">
+                    @foreach (var img in images)
+                    {
+                        <img src="@img" alt="Image" style="max-width: 120px; max-height: 120px; border-radius: 4px; border: 1px solid #ccc;" />
+                    }
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(product.ImageUrl))
+            {
+                <img src="@product.ImageUrl" alt="@product.Title" style="max-width: 280px;" class="img-fluid rounded border mb-3" />
+            }
+
+            <dl class="row">
+                <dt class="col-sm-3">SKU</dt>
+                <dd class="col-sm-9">@(string.IsNullOrWhiteSpace(product.SupplierSku) ? "-" : product.SupplierSku)</dd>
+
+                <dt class="col-sm-3">Stock</dt>
+                <dd class="col-sm-9">@(product.StockLevel?.ToString() ?? "-")</dd>
+
+                <dt class="col-sm-3">Supplier Price</dt>
+                <dd class="col-sm-9">@(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")</dd>
+
+                <dt class="col-sm-3">Suggested Price</dt>
+                <dd class="col-sm-9">@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</dd>
+
+                <dt class="col-sm-3">Last Updated</dt>
+                <dd class="col-sm-9">@product.UpdatedAtUtc.ToLocalTime().ToString("g")</dd>
+
+                <dt class="col-sm-3">Source URL</dt>
+                <dd class="col-sm-9">
+                    @if (string.IsNullOrWhiteSpace(product.ProductUrl))
+                    {
+                        <span>-</span>
+                    }
+                    else
+                    {
+                        <a href="@product.ProductUrl" target="_blank">@product.ProductUrl</a>
+                    }
+                </dd>
+            </dl>
+
+            @if (!string.IsNullOrWhiteSpace(product.Description))
+            {
+                <h6>Description</h6>
+                <div class="border rounded p-2 bg-light">@((MarkupString)product.Description)</div>
+            }
+        </div>
+    </div>
+
+    <div class="d-flex gap-2">
+        <button class="btn btn-success" @onclick="() => Add(false)" disabled="@isBusy">Add to my listings</button>
+        @if (product.AlreadyAdded)
+        {
+            <button class="btn btn-outline-secondary" @onclick="() => Add(true)" disabled="@isBusy">Add duplicate</button>
+        }
+        @if (product.ExistingListingId.HasValue)
+        {
+            <a class="btn btn-outline-primary" href="/edit-listing/@product.ExistingListingId.Value">Open existing listing</a>
+        }
+        <a class="btn btn-outline-dark" href="/products">Back to products</a>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private SupplierProductDetailDto? product;
+    private bool isLoading = true;
+    private bool isBusy;
+    private string? statusMessage;
+    private string statusCss = "alert-info";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.EnsureAuthenticatedAsync($"/products/{Id}"))
+        {
+            return;
+        }
+
+        await LoadProduct();
+    }
+
+    private async Task LoadProduct()
+    {
+        isLoading = true;
+        statusMessage = null;
+        try
+        {
+            product = await ListingService.GetSupplierProductAsync(Id);
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not load product: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task Add(bool allowDuplicate)
+    {
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            var result = await ListingService.AddSupplierProductsToMyListingsAsync(new List<int> { Id }, allowDuplicate);
+            statusCss = "alert-success";
+            statusMessage = $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
+            await LoadProduct();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Add failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}

@@ -1,4 +1,5 @@
 @page "/bulk-extract"
+@using Shared
 @using Client.Services
 @inject AuthService AuthService
 @inject ListingService ListingService
@@ -14,14 +15,15 @@
         <div class="card-body">
             <h5 class="card-title">Extract Category Products</h5>
             <p class="card-text text-muted">
-                Enter a Safelincs category URL (e.g., <em>https://www.safelincs.co.uk/heat-alarms/</em>) to automatically 
-                find and stage all products as local drafts.
+                Enter a Safelincs category URL (e.g. <em>https://www.safelincs.co.uk/heat-alarms/</em>) or an Eden Horticulture
+                collection URL (e.g. <em>https://edenhorticulture.co.uk/collections/lighting-kits</em>) to stage all products as local drafts.
+                Products you already have are skipped.
             </p>
             
             <div class="mb-4">
                 <div class="input-group input-group-lg">
                     <span class="input-group-text bg-light text-primary"><i class="bi bi-link-45deg"></i></span>
-                    <input type="text" class="form-control" @bind="categoryUrl" placeholder="https://www.safelincs.co.uk/category-name/" />
+                    <input type="text" class="form-control" @bind="categoryUrl" placeholder="https://www.safelincs.co.uk/category-name/  or  https://edenhorticulture.co.uk/collections/name" />
                     <button class="btn btn-primary px-4" type="button" @onclick="HandleBulkExtract" disabled="@isProcessing">
                         @if (isProcessing)
                         {
@@ -35,30 +37,27 @@
                     </button>
                 </div>
                 <div class="form-text mt-2">
-                    <i class="bi bi-info-circle me-1"></i> This process may take a minute depending on the number of products.
+                    <i class="bi bi-info-circle me-1"></i> Runs in the background (about 1 product per second). You can leave this page; drafts are saved as they are extracted.
                 </div>
             </div>
 
-            @if (resultCount.HasValue)
+            @if (!string.IsNullOrEmpty(jobId))
             {
-                <div class="alert alert-success d-flex align-items-center mb-0">
-                    <i class="bi bi-check-circle-fill fs-4 me-3"></i>
-                    <div>
-                        <strong>Success!</strong> Found and created <strong>@resultCount.Value</strong> new product drafts in your system.
-                        <div class="mt-2 text-decoration-underline" style="cursor: pointer;" @onclick='() => Navigation.NavigateTo("/")'>
-                            View them in your dashboard &rarr;
-                        </div>
+                <BulkJobProgress JobId="@jobId" Title="Bulk extraction" OnFinished="OnJobFinished" />
+                @if (finishedJob != null && finishedJob.Succeeded > 0)
+                {
+                    <div class="mt-2 small">
+                        <a href="/" class="text-decoration-underline">View the new drafts in your dashboard &rarr;</a>
+                        <span class="text-muted ms-2">Check prices before publishing: extracted products without a price are saved at £0.00.</span>
                     </div>
-                </div>
+                }
             }
 
             @if (!string.IsNullOrEmpty(errorMessage))
             {
-                <div class="alert alert-danger d-flex align-items-center mb-0">
+                <div class="alert alert-danger d-flex align-items-center mb-0 mt-3">
                     <i class="bi bi-exclamation-triangle-fill fs-4 me-3"></i>
-                    <div>
-                        <strong>Error:</strong> @errorMessage
-                    </div>
+                    <div><strong>Error:</strong> @errorMessage</div>
                 </div>
             }
         </div>
@@ -80,7 +79,8 @@
 @code {
     private string categoryUrl = "";
     private bool isProcessing = false;
-    private int? resultCount;
+    private string? jobId;
+    private BulkJobDto? finishedJob;
     private string? errorMessage;
 
     protected override async Task OnInitializedAsync()
@@ -93,21 +93,26 @@
         if (string.IsNullOrWhiteSpace(categoryUrl)) return;
 
         isProcessing = true;
-        resultCount = null;
+        jobId = null;
+        finishedJob = null;
         errorMessage = null;
 
         try
         {
-            resultCount = await ListingService.BulkExtractAsync(categoryUrl);
+            // Starts a background job on the server; <BulkJobProgress> polls for progress.
+            jobId = await ListingService.StartBulkExtractAsync(categoryUrl.Trim());
         }
         catch (Exception ex)
         {
-            errorMessage = "Failed to process category. Ensure the URL is correct and the site is accessible.";
-            Console.WriteLine(ex.Message);
-        }
-        finally
-        {
+            errorMessage = ex.Message;
             isProcessing = false;
         }
+    }
+
+    private void OnJobFinished(BulkJobDto job)
+    {
+        finishedJob = job;
+        isProcessing = false;
+        StateHasChanged();
     }
 }
