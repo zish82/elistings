@@ -16,7 +16,8 @@ public sealed record SupplierStockResult(
     string? StockText = null,
     int? StockLevel = null,
     decimal? SupplierPrice = null,
-    string? ErrorMessage = null);
+    string? ErrorMessage = null,
+    bool IsTradePrice = false); // true when SupplierPrice is a confirmed live trade price (saved back to the product)
 
 /// <summary>
 /// Strategy for checking current stock at one supplier. Register one per supplier in Program.cs;
@@ -150,6 +151,17 @@ public class SupplierStockService
 
         if (result.IsSuccess)
         {
+            if (result.IsTradePrice && result.SupplierPrice.HasValue)
+            {
+                listing.SourcePrice = result.SupplierPrice;
+                if (query.Product != null)
+                {
+                    query.Product.SupplierPrice = result.SupplierPrice;
+                    query.Product.PriceIsEstimate = false;
+                    query.Product.TradePriceFetchedAtUtc = checkedAt;
+                }
+            }
+
             var level = result.StockStatus == "OutOfStock" ? 0 : result.StockLevel;
             if (level.HasValue)
             {

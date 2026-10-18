@@ -1,0 +1,158 @@
+@using Shared
+
+@* Edits the item specifics eBay defines for the listing's category.
+   Brand / Type / Colour are stored in the listing's own fields; everything else in Listing.ItemSpecifics. *@
+
+@if (Aspects.Any())
+{
+    var required = Aspects.Where(a => a.Required).ToList();
+    var recommended = Aspects.Where(a => !a.Required && a.Usage == "RECOMMENDED").ToList();
+
+    <div class="p-3 border rounded bg-white">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">eBay Item Specifics for this category</h6>
+            @if (MissingRequired(Aspects, Listing).Any())
+            {
+                <span class="badge bg-danger">@MissingRequired(Aspects, Listing).Count() required missing</span>
+            }
+            else if (required.Any())
+            {
+                <span class="badge bg-success">All required filled</span>
+            }
+        </div>
+
+        @if (required.Any())
+        {
+            <div class="row g-2">
+                @foreach (var aspect in required)
+                {
+                    @AspectInput(aspect, true)
+                }
+            </div>
+        }
+
+        @if (recommended.Any())
+        {
+            <details class="mt-2">
+                <summary class="small text-muted">Recommended (@recommended.Count) – optional, can improve search visibility</summary>
+                <div class="row g-2 mt-1">
+                    @foreach (var aspect in recommended)
+                    {
+                        @AspectInput(aspect, false)
+                    }
+                </div>
+            </details>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public CreateListingRequest Listing { get; set; } = default!;
+    [Parameter] public List<CategoryAspectDto> Aspects { get; set; } = new();
+    /// <summary>Raised after a value changes so the parent can re-render (e.g. its item specifics list).</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private const string OtherOption = "__other__";
+    private readonly HashSet<string> customMode = new(StringComparer.OrdinalIgnoreCase);
+
+    private Task OnSelectChanged(CategoryAspectDto aspect, string? selected)
+    {
+        if (selected == OtherOption)
+        {
+            customMode.Add(aspect.Name); // show the text box; keep the current value until something is typed
+            return Task.CompletedTask;
+        }
+
+        customMode.Remove(aspect.Name);
+        return OnValueChanged(aspect.Name, selected);
+    }
+
+    private Task OnValueChanged(string aspectName, string? value)
+    {
+        SetValue(Listing, aspectName, value);
+        return OnChanged.InvokeAsync();
+    }
+
+    private RenderFragment AspectInput(CategoryAspectDto aspect, bool required) => __builder =>
+    {
+        var id = "aspect-" + aspect.Name.Replace(' ', '-');
+        var value = GetValue(Listing, aspect.Name) ?? string.Empty;
+        var missing = required && string.IsNullOrWhiteSpace(EffectiveValue(Listing, aspect.Name));
+        <div class="col-md-4">
+            <label class="form-label small mb-0" for="@id">
+                @aspect.Name @if (required) { <span class="text-danger">*</span> }
+            </label>
+            @if (aspect.Values.Any())
+            {
+                // eBay supplies values: show a dropdown. Free-text aspects also get "Other" for a custom value.
+                var inList = aspect.Values.Contains(value, StringComparer.OrdinalIgnoreCase);
+                var showCustom = !aspect.SelectionOnly && (customMode.Contains(aspect.Name) || (!string.IsNullOrEmpty(value) && !inList));
+                var selected = showCustom ? OtherOption : value;
+                <select id="@id" class="form-select form-select-sm @(missing ? "is-invalid" : "")" value="@selected"
+                        @onchange="e => OnSelectChanged(aspect, e.Value?.ToString())">
+                    <option value="">-- choose --</option>
+                    @if (aspect.SelectionOnly && !string.IsNullOrEmpty(value) && !inList)
+                    {
+                        <option value="@value">@value (not an eBay value)</option>
+                    }
+                    @foreach (var v in aspect.Values)
+                    {
+                        <option value="@v">@v</option>
+                    }
+                    @if (!aspect.SelectionOnly)
+                    {
+                        <option value="@OtherOption">Other (type your own)...</option>
+                    }
+                </select>
+                @if (showCustom)
+                {
+                    <input class="form-control form-control-sm mt-1 @(missing ? "is-invalid" : "")" value="@(inList ? string.Empty : value)"
+                           placeholder="Type a value for @aspect.Name"
+                           @onchange="e => OnValueChanged(aspect.Name, e.Value?.ToString())" />
+                }
+            }
+            else
+            {
+                <input id="@id" class="form-control form-control-sm @(missing ? "is-invalid" : "")" value="@value"
+                       placeholder="Type a value"
+                       @onchange="e => OnValueChanged(aspect.Name, e.Value?.ToString())" />
+            }
+        </div>
+    };
+
+    /// <summary>Required aspects with no value on the listing.</summary>
+    public static IEnumerable<string> MissingRequired(IEnumerable<CategoryAspectDto> aspects, CreateListingRequest listing)
+        => aspects.Where(a => a.Required && string.IsNullOrWhiteSpace(EffectiveValue(listing, a.Name))).Select(a => a.Name);
+
+    // Mirrors what the server sends to eBay (EbayService.BuildAspects): Brand/Type/Colour fields win over
+    // item specifics, "Not Specified" counts as empty, and an empty Brand is sent as "Unbranded".
+    private static string? GetValue(CreateListingRequest listing, string aspectName)
+    {
+        var fromSpecifics = listing.ItemSpecifics.FirstOrDefault(kv => kv.Key.Equals(aspectName, StringComparison.OrdinalIgnoreCase)).Value;
+
+        string? field = null;
+        if (aspectName.Equals("Brand", StringComparison.OrdinalIgnoreCase)) field = listing.Brand;
+        else if (aspectName.Equals("Type", StringComparison.OrdinalIgnoreCase)) field = listing.Type;
+        else if (aspectName.Equals("Colour", StringComparison.OrdinalIgnoreCase)) field = listing.Colour;
+
+        static bool Known(string? v) => !string.IsNullOrWhiteSpace(v) && !v.Equals("Not Specified", StringComparison.OrdinalIgnoreCase);
+        return Known(field) ? field : Known(fromSpecifics) ? fromSpecifics : null;
+    }
+
+    private static string? EffectiveValue(CreateListingRequest listing, string aspectName)
+        => GetValue(listing, aspectName)
+           ?? (aspectName.Equals("Brand", StringComparison.OrdinalIgnoreCase) ? "Unbranded" : null);
+
+    private static void SetValue(CreateListingRequest listing, string aspectName, string? value)
+    {
+        value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+        if (aspectName.Equals("Brand", StringComparison.OrdinalIgnoreCase)) { listing.Brand = value; return; }
+        if (aspectName.Equals("Type", StringComparison.OrdinalIgnoreCase)) { listing.Type = value; return; }
+        if (aspectName.Equals("Colour", StringComparison.OrdinalIgnoreCase)) { listing.Colour = value; return; }
+
+        var existingKey = listing.ItemSpecifics.Keys.FirstOrDefault(k => k.Equals(aspectName, StringComparison.OrdinalIgnoreCase));
+        if (existingKey != null) listing.ItemSpecifics.Remove(existingKey);
+        if (value != null) listing.ItemSpecifics[aspectName] = value;
+    }
+}

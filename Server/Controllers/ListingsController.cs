@@ -103,7 +103,8 @@ public class ListingsController : ControllerBase
                 DeliveryOptionName = l.DeliveryOptionName,
                 DeliveryCost = l.DeliveryCost,
                 IncludeDeliveryInPrice = l.IncludeDeliveryInPrice,
-                Barcode = l.Barcode
+                Barcode = l.Barcode,
+                SupplierGroupKey = _context.SupplierProducts.Where(p => p.Id == l.SupplierProductId).Select(p => p.GroupKey).FirstOrDefault()
             })
             .ToListAsync();
             
@@ -392,6 +393,7 @@ public class ListingsController : ControllerBase
                         OwnerUserId = userId.Value,
                         EbayAccountId = defaultAccountId,
                         Title = System.Net.WebUtility.HtmlDecode(details.Title).Trim(),
+                        SourceTitle = System.Net.WebUtility.HtmlDecode(details.Title).Trim(),
                         Description = details.Description ?? string.Empty,
                         // 0 = "price not set": the editor and publish validation will flag it.
                         Price = details.PriceIncVat ?? details.Price ?? 0m,

@@ -259,6 +259,30 @@ public class EdenSupplierSyncService : IEdenSupplierSyncService
                || error.Contains("ssl", StringComparison.OrdinalIgnoreCase);
     }
 
+    public async Task<IEdenTradeSession> OpenTradeSessionAsync()
+    {
+        if (!_settings.Enabled) throw new InvalidOperationException("Eden supplier sync is disabled in configuration.");
+        var client = _httpClientFactory.CreateClient("eden-auth");
+        await EnsureLoggedInAsync(client);
+        return new TradeSession(this, client);
+    }
+
+    /// <summary>Reuses the existing (proven) login and page-fetch logic for any logged-in URL.</summary>
+    private sealed class TradeSession : IEdenTradeSession
+    {
+        private readonly EdenSupplierSyncService _owner;
+        private readonly HttpClient _client;
+
+        public TradeSession(EdenSupplierSyncService owner, HttpClient client)
+        {
+            _owner = owner;
+            _client = client;
+        }
+
+        public Task<string> GetStringAsync(Uri url, CancellationToken ct = default)
+            => _owner.FetchSupplierProductHtmlAsync(_client, url);
+    }
+
     private async Task EnsureLoggedInAsync(HttpClient client)
     {
         if (string.IsNullOrWhiteSpace(_settings.Username) || string.IsNullOrWhiteSpace(_settings.Password))

@@ -25,10 +25,11 @@ public class SuppliersController : ControllerBase
     }
 
     private bool CanEdit => _currentUserService.CanManageUsers || _currentUserService.CanViewAllListings;
+    internal const string OnlyAdminsMessage = "Only Admin or Manager users can change supplier settings.";
 
     [HttpGet]
     public async Task<ActionResult<List<SupplierDto>>> GetAll([FromQuery] bool includeInactive = false)
-        => Ok(await _catalog.GetAllAsync(includeInactive));
+        => Ok(includeInactive ? await _catalog.GetAllForSettingsAsync() : await _catalog.GetAllAsync());
 
     /// <summary>Supplier + delivery options + suggested option for a listing (used by the listing editor).</summary>
     [HttpGet("for-listing/{listingId:int}")]
@@ -56,7 +57,7 @@ public class SuppliersController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<SupplierDto>> Create([FromBody] SupplierDto dto)
     {
-        if (!CanEdit) return Forbid();
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
         if (string.IsNullOrWhiteSpace(dto.Code) || string.IsNullOrWhiteSpace(dto.Name)) return BadRequest("Code and Name are required.");
         var code = dto.Code.Trim();
         if (await _context.Suppliers.AnyAsync(s => s.Code.ToLower() == code.ToLower())) return Conflict($"Supplier '{code}' already exists.");
@@ -72,7 +73,7 @@ public class SuppliersController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] SupplierDto dto)
     {
-        if (!CanEdit) return Forbid();
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
         var entity = await _context.Suppliers.FirstOrDefaultAsync(s => s.Id == id);
         if (entity == null) return NotFound();
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest("Name is required.");
@@ -84,7 +85,7 @@ public class SuppliersController : ControllerBase
     [HttpPost("{supplierId:int}/delivery-options")]
     public async Task<ActionResult<SupplierDeliveryOptionDto>> AddOption(int supplierId, [FromBody] SupplierDeliveryOptionDto dto)
     {
-        if (!CanEdit) return Forbid();
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
         if (!await _context.Suppliers.AnyAsync(s => s.Id == supplierId)) return NotFound();
         var error = Validate(dto);
         if (error != null) return BadRequest(error);
@@ -100,7 +101,7 @@ public class SuppliersController : ControllerBase
     [HttpPut("delivery-options/{id:int}")]
     public async Task<IActionResult> UpdateOption(int id, [FromBody] SupplierDeliveryOptionDto dto)
     {
-        if (!CanEdit) return Forbid();
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
         var entity = await _context.SupplierDeliveryOptions.FirstOrDefaultAsync(o => o.Id == id);
         if (entity == null) return NotFound();
         var error = Validate(dto);
@@ -115,7 +116,7 @@ public class SuppliersController : ControllerBase
     [HttpDelete("delivery-options/{id:int}")]
     public async Task<IActionResult> DeleteOption(int id)
     {
-        if (!CanEdit) return Forbid();
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
         var entity = await _context.SupplierDeliveryOptions.FirstOrDefaultAsync(o => o.Id == id);
         if (entity == null) return NotFound();
         _context.SupplierDeliveryOptions.Remove(entity);
@@ -134,8 +135,8 @@ public class SuppliersController : ControllerBase
 
     private static string? Validate(SupplierDeliveryOptionDto dto)
     {
-        if (string.IsNullOrWhiteSpace(dto.Name)) return "Name is required.";
-        if (dto.Cost < 0) return "Cost cannot be negative.";
+        if (string.IsNullOrWhiteSpace(dto.Name)) return "Give the delivery option a name, e.g. \"Standard Parcel\".";
+        if (dto.Cost < 0) return "Delivery cost cannot be negative.";
         return null;
     }
 

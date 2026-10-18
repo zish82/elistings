@@ -21,6 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Lets Server.Tests unit-test internal parsing helpers. -->
+    <InternalsVisibleTo Include="Server.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />
     <ProjectReference Include="..\Client\Client.csproj" />
   </ItemGroup>

@@ -10,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
+builder.Services.AddMemoryCache(); // e.g. eBay category item specifics
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
@@ -75,9 +76,12 @@ builder.Services.AddHttpClient<Server.Services.DropShipMallWebsiteClient>();
 builder.Services.AddScoped<Server.Services.ISupplierProductEnricher, Server.Services.DropShipMallProductEnricher>();
 builder.Services.AddScoped<Server.Services.ProductEnrichmentService>();
 builder.Services.AddScoped<Server.Services.ISupplierStockChecker, Server.Services.DropShipMallStockChecker>();
+builder.Services.AddScoped<Server.Services.ISupplierStockChecker, Server.Services.EdenStockChecker>(); // before the legacy adapter, so it wins for imported Eden products
 builder.Services.AddScoped<Server.Services.ISupplierStockChecker, Server.Services.WebsiteStockCheckerAdapter>(); // Eden, Safelincs
 builder.Services.AddScoped<Server.Services.SupplierStockService>();
 builder.Services.AddScoped<Server.Services.SkuService>();
+builder.Services.AddScoped<Server.Services.EdenCatalogImportService>();
+builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.EdenCatalogImportService>());
 
 builder.Services.AddHttpClient<Server.Services.IEbayService, Server.Services.EbayService>();
 builder.Services.AddHttpClient<Server.Services.IMarketplaceImageService, Server.Services.EbayImageService>();
@@ -662,6 +666,25 @@ using (var scope = app.Services.CreateScope())
         EnsureColumn("Listings", "ItemSpecificsJson", "TEXT NULL");
         EnsureColumn("Listings", "Barcode", "TEXT NULL");
         EnsureColumn("Suppliers", "SkuPrefix", "TEXT NULL");
+        EnsureColumn("Listings", "SourceTitle", "TEXT NULL");
+        EnsureColumn("SupplierProducts", "GroupKey", "TEXT NULL");
+        EnsureColumn("SupplierProducts", "VariantName", "TEXT NULL");
+        EnsureColumn("SupplierProducts", "VariantOptionsJson", "TEXT NULL");
+        EnsureColumn("SupplierProducts", "RrpPrice", "TEXT NULL");
+        EnsureColumn("SupplierProducts", "PriceIsEstimate", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn("SupplierProducts", "TradePriceFetchedAtUtc", "TEXT NULL");
+        EnsureColumn("SupplierProducts", "RemovedFromSupplierAtUtc", "TEXT NULL");
+
+        // Eden Horticulture catalogue "feed" (Shopify product data), imported by EdenCatalogImportService.
+        db.Database.ExecuteSqlRaw(@"
+            INSERT OR IGNORE INTO ""SupplierFeeds"" (""Supplier"", ""FeedType"", ""Url"", ""Description"", ""IsRecommended"", ""CreatedAtUtc"")
+            VALUES ('EdenHorticulture', 'Shopify Catalogue', 'https://edenhorticulture.co.uk/products.json',
+                    'Public catalogue + logged-in trade prices and stock. Runs in the background.', 1, CURRENT_TIMESTAMP);");
+
+        // Backfill the original title for listings created from supplier products.
+        db.Database.ExecuteSqlRaw(@"
+            UPDATE ""Listings"" SET ""SourceTitle"" = (SELECT p.""Title"" FROM ""SupplierProducts"" p WHERE p.""Id"" = ""Listings"".""SupplierProductId"")
+            WHERE ""SourceTitle"" IS NULL AND ""SupplierProductId"" IS NOT NULL;");
 
         // Seed known suppliers. Existing rows (and any edits made on /suppliers) are left alone.
         db.Database.ExecuteSqlRaw(@"
@@ -713,6 +736,15 @@ using (var hangfireScope = app.Services.CreateScope())
         "dropshipmall-catalogue-import",
         svc => svc.RunCatalogueImportAsync(),
         "0 1 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.Utc
+        });
+
+    recurringJobs.AddOrUpdate<Server.Services.EdenCatalogImportService>(
+        "eden-catalogue-import",
+        svc => svc.RunScheduledAsync(),
+        "30 2 * * *",
         new RecurringJobOptions
         {
             TimeZone = TimeZoneInfo.Utc

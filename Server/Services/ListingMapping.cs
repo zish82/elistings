@@ -44,6 +44,11 @@ public static class ListingMapping
         listing.IncludeDeliveryInPrice = true;
         listing.ItemSpecificsJson = WriteSpecifics(request.ItemSpecifics);
         listing.Barcode = string.IsNullOrWhiteSpace(request.Barcode) ? null : request.Barcode.Trim();
+        // The original title is write-once, so later edits can't overwrite the tracking copy.
+        if (string.IsNullOrWhiteSpace(listing.SourceTitle) && !string.IsNullOrWhiteSpace(request.SourceTitle))
+        {
+            listing.SourceTitle = request.SourceTitle.Trim();
+        }
     }
 
     /// <summary>Copies the delivery / marketplace / specifics fields onto a DTO.</summary>
@@ -55,6 +60,7 @@ public static class ListingMapping
         dto.IncludeDeliveryInPrice = listing.IncludeDeliveryInPrice;
         dto.ItemSpecifics = ReadSpecifics(listing.ItemSpecificsJson);
         dto.Barcode = listing.Barcode;
+        dto.SourceTitle = listing.SourceTitle;
         return dto;
     }
 }

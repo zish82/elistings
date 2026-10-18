@@ -43,6 +43,9 @@ public class ListingDto
     public bool IncludeDeliveryInPrice { get; set; } = true;
     public Dictionary<string, string> ItemSpecifics { get; set; } = new();
     public string? Barcode { get; set; }
+    public string? SourceTitle { get; set; }
+    /// <summary>Group of the linked supplier product (variants of the same product share it). Read-only.</summary>
+    public string? SupplierGroupKey { get; set; }
 
     /// <summary>Item price + delivery (when included): what the marketplace listing is priced at.</summary>
     public decimal TotalPrice => PricingMath.ListingTotal(Price, DeliveryCost, IncludeDeliveryInPrice);

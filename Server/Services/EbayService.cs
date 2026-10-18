@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Server.Configuration;
 using Shared;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Server.Services;
 
@@ -15,13 +16,15 @@ public class EbayService : IEbayService
     private readonly HttpClient _httpClient;
     private readonly IServiceProvider _serviceProvider;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IMemoryCache _cache;
 
-    public EbayService(IOptions<EbaySettings> settings, HttpClient httpClient, IServiceProvider serviceProvider, ICurrentUserService currentUserService)
+    public EbayService(IOptions<EbaySettings> settings, HttpClient httpClient, IServiceProvider serviceProvider, ICurrentUserService currentUserService, IMemoryCache cache)
     {
         _settings = settings.Value;
         _httpClient = httpClient;
         _serviceProvider = serviceProvider;
         _currentUserService = currentUserService;
+        _cache = cache;
     }
 
     public async Task<System.Text.Json.Nodes.JsonNode?> GetFeeEstimateAsync(Shared.ListingDto listing)
@@ -689,6 +692,96 @@ public class EbayService : IEbayService
         }
 
         return suggestions;
+    }
+
+    // Category aspects rarely change; caching avoids an eBay call every time a listing is opened.
+    private static readonly TimeSpan AspectCacheDuration = TimeSpan.FromHours(24);
+    private const string UkCategoryTreeId = "3";
+
+    public async Task<List<CategoryAspectDto>> GetCategoryAspectsAsync(string categoryId, int? accountId = null)
+    {
+        categoryId = categoryId?.Trim() ?? string.Empty;
+        if (categoryId.Length == 0 || !categoryId.All(char.IsDigit))
+        {
+            throw new EbayApiException($"'{categoryId}' is not a valid eBay category ID.");
+        }
+
+        var cacheKey = $"ebay-aspects:{(_settings.IsSandbox ? "sandbox" : "prod")}:{UkCategoryTreeId}:{categoryId}";
+        if (_cache.TryGetValue(cacheKey, out List<CategoryAspectDto>? cached) && cached != null)
+        {
+            return cached;
+        }
+
+        string token;
+        try
+        {
+            token = await GetOAuthTokenAsync(accountId);
+        }
+        catch (Exception ex)
+        {
+            throw new EbayApiException($"Can't load item specifics for category {categoryId}: {ex.Message}", inner: ex);
+        }
+
+        var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            $"{baseUrl}/commerce/taxonomy/v1/category_tree/{UkCategoryTreeId}/get_item_aspects_for_category?category_id={Uri.EscapeDataString(categoryId)}");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        using var response = await _httpClient.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await EbayApiException.FromResponseAsync(response, $"Loading item specifics for category {categoryId}");
+        }
+
+        List<CategoryAspectDto> aspects;
+        try
+        {
+            aspects = ParseAspects(await response.Content.ReadFromJsonAsync<JsonNode>());
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException)
+        {
+            throw new EbayApiException($"eBay returned item specifics for category {categoryId} in an unexpected format: {ex.Message}", inner: ex);
+        }
+        _cache.Set(cacheKey, aspects, AspectCacheDuration);
+        return aspects;
+    }
+
+    internal static List<CategoryAspectDto> ParseAspects(JsonNode? node)
+    {
+        var result = new List<CategoryAspectDto>();
+        var aspects = node?["aspects"]?.AsArray();
+        if (aspects == null) return result;
+
+        foreach (var a in aspects)
+        {
+            var name = AsString(a?["localizedAspectName"]);
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var constraint = a?["aspectConstraint"];
+            result.Add(new CategoryAspectDto
+            {
+                Name = name,
+                Required = constraint?["aspectRequired"] is JsonValue req && req.TryGetValue<bool>(out var isRequired) && isRequired,
+                Usage = AsString(constraint?["aspectUsage"]) ?? "OPTIONAL",
+                SelectionOnly = string.Equals(AsString(constraint?["aspectMode"]), "SELECTION_ONLY", StringComparison.OrdinalIgnoreCase),
+                MultipleValues = string.Equals(AsString(constraint?["itemToAspectCardinality"]), "MULTI", StringComparison.OrdinalIgnoreCase),
+                Values = (a?["aspectValues"] as JsonArray)?
+                    .Select(v => AsString(v?["localizedValue"]))
+                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                    .Select(v => v!)
+                    .ToList() ?? new List<string>()
+            });
+        }
+
+        static string? AsString(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+        // Required first, then recommended, then optional; keep eBay's order within each group.
+        return result
+            .Select((aspect, index) => (aspect, index))
+            .OrderBy(x => x.aspect.Required ? 0 : x.aspect.Usage == "RECOMMENDED" ? 1 : 2)
+            .ThenBy(x => x.index)
+            .Select(x => x.aspect)
+            .ToList();
     }
 }
 

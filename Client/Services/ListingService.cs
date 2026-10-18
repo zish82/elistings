@@ -186,6 +186,9 @@ public class ListingService
                ?? new FeedSyncResult { ErrorMessage = "No response from server." };
     }
 
+    public async Task<SupplierImportStatusDto> GetSupplierImportStatusAsync(string supplier)
+        => await GetAsync<SupplierImportStatusDto>($"api/supplierproducts/import-status?supplier={Uri.EscapeDataString(supplier)}") ?? new SupplierImportStatusDto();
+
     public async Task<FeedSyncResult> SyncSupplierFeedAsync(int feedId)
     {
         return await SendAsync<FeedSyncResult>(HttpMethod.Post, $"api/supplierproducts/sync/feed/{feedId}")
@@ -205,6 +208,29 @@ public class ListingService
         var result = await SendAsync<BulkProductDeleteResult>(HttpMethod.Post, "api/supplierproducts/delete", productIds);
         return result?.Deleted ?? 0;
     }
+
+    public async Task<List<SupplierProductListItemDto>> GetSupplierProductsAsync(SupplierProductQuery q)
+    {
+        var query = new List<string>();
+        void Add(string key, string? value) { if (!string.IsNullOrWhiteSpace(value)) query.Add($"{key}={Uri.EscapeDataString(value)}"); }
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+
+        Add("supplier", q.Supplier);
+        Add("search", q.Search);
+        Add("category", q.Category);
+        Add("minPrice", q.MinPrice?.ToString(inv));
+        Add("maxPrice", q.MaxPrice?.ToString(inv));
+        if (q.InStockOnly) Add("inStockOnly", "true");
+        if (q.HideAdded) Add("hideAdded", "true");
+        Add("groupKey", q.GroupKey);
+        Add("sort", q.Sort);
+        Add("limit", q.Limit.ToString(inv));
+
+        return await GetAsync<List<SupplierProductListItemDto>>("api/supplierproducts?" + string.Join("&", query)) ?? new List<SupplierProductListItemDto>();
+    }
+
+    public async Task<List<string>> GetSupplierProductCategoriesAsync(string? supplier)
+        => await GetAsync<List<string>>($"api/supplierproducts/categories?supplier={Uri.EscapeDataString(supplier ?? string.Empty)}") ?? new List<string>();
 
     public async Task<List<SupplierProductListItemDto>> GetSupplierProductsAsync(string? supplier = null, string? search = null)
     {
@@ -270,6 +296,13 @@ public class ListingService
         }
 
         throw new Exception($"Failed to delete eBay account. Status: {response.StatusCode}");
+    }
+
+    public async Task<List<CategoryAspectDto>> GetCategoryAspectsAsync(string categoryId, int? accountId = null)
+    {
+        var url = $"api/ebaypolicies/category-aspects?categoryId={Uri.EscapeDataString(categoryId)}";
+        if (accountId.HasValue) url += $"&accountId={accountId.Value}";
+        return await GetAsync<List<CategoryAspectDto>>(url) ?? new List<CategoryAspectDto>();
     }
 
     public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null)

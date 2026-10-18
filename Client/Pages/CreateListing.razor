@@ -87,7 +87,8 @@
         <div class="col-md-12">
             <label for="title" class="form-label">Product Title</label>
             <div class="input-group">
-                <InputText id="title" class="form-control" @bind-Value="listing.Title" required />
+                @* Plain input bound on every keystroke so the character counter updates while typing. *@
+                <input id="title" class="form-control @(TitleLength > TitleMaxLength ? "is-invalid" : "")" @bind="listing.Title" @bind:event="oninput" required />
                 <button class="btn btn-outline-info" type="button" @onclick="HandleSuggestCategories" disabled="@(isSuggesting || string.IsNullOrWhiteSpace(listing.Title))">
                     @if (isSuggesting)
                     {
@@ -99,6 +100,17 @@
                     }
                 </button>
             </div>
+            <div class="d-flex justify-content-between small mt-1">
+                <span class="text-muted">
+                    Formula: <strong>Brand</strong> + <strong>what it is</strong> + <strong>key attributes</strong> (size, colour, material, quantity) + <strong>use/occasion</strong>.
+                    Put buyer search words first; only true facts; no symbols or filler words.
+                </span>
+                <span class="ms-2 text-nowrap @(TitleLength > TitleMaxLength ? "text-danger fw-bold" : TitleLength >= 65 ? "text-success" : "text-muted")">@TitleLength/@TitleMaxLength</span>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(listing.SourceTitle) && listing.SourceTitle != listing.Title)
+            {
+                <div class="small text-muted mt-1">Original supplier title: <em>@listing.SourceTitle</em></div>
+            }
             @if (suggestions.Any())
             {
                 <div class="mt-2 p-2 border rounded bg-white shadow-sm">
@@ -238,7 +250,7 @@
 
         <div class="col-md-8">
             <label for="category" class="form-label">eBay Category ID</label>
-            <input id="category" class="form-control" value="@listing.CategoryId" @oninput="OnCategoryIdInput" placeholder="e.g. 57013" />
+            <input id="category" class="form-control" value="@listing.CategoryId" @oninput="OnCategoryIdInput" @onblur="LoadCategoryAspects" placeholder="e.g. 57013" />
             <div class="small mt-1">
                 <span class="text-muted">Need to find an ID? </span>
                 <a href="https://www.ebay.co.uk/n/all-categories" target="_blank" class="text-decoration-none small">eBay UK Category Tree</a>
@@ -358,6 +370,18 @@
                 </div>
             </div>
         }
+
+        <div class="col-md-12">
+            @if (isLoadingAspects)
+            {
+                <div class="small text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Loading eBay item specifics for this category...</div>
+            }
+            else if (!string.IsNullOrWhiteSpace(aspectsError))
+            {
+                <div class="small text-warning">@aspectsError</div>
+            }
+            <CategoryAspectsEditor Listing="listing" Aspects="categoryAspects" OnChanged="StateHasChanged" />
+        </div>
 
         <div class="col-md-12">
             <label class="form-label">Images</label>
@@ -566,6 +590,8 @@
 
     private string listingStatus = "Draft";
     private bool IsPublished => Id.HasValue && listingStatus == "Published";
+    private const int TitleMaxLength = 80; // eBay limit
+    private int TitleLength => listing.Title?.Length ?? 0;
     private string? saveError;
     private string? imageUploadError;
 
@@ -609,6 +635,7 @@
         listing.IncludeDeliveryInPrice = true; // separate postage not implemented yet
         listing.ItemSpecifics = source.ItemSpecifics ?? new Dictionary<string, string>();
         listing.Barcode = source.Barcode;
+        listing.SourceTitle = source.SourceTitle;
     }
 
     /// <summary>Loads supplier VAT/delivery settings; on a listing without delivery yet, applies the suggested option.</summary>
@@ -751,6 +778,7 @@
 
                 await LoadSupplierStatus();
                 await LoadSupplierContext();
+                await LoadCategoryAspects();
 
                 Console.WriteLine($"[Edit] Loaded Listing {Id}: Payment={listing.PaymentPolicyId}, Shipping={listing.FulfillmentPolicyId}, Returns={listing.ReturnPolicyId}, SourceUrl={listing.SourceUrl}");
             }
@@ -994,6 +1022,7 @@
         var value = e.Value?.ToString();
         listing.EbayAccountId = int.TryParse(value, out var accountId) ? accountId : null;
         await LoadPolicies();
+        await LoadCategoryAspects();
         suggestions.Clear();
         suggestStatusMessage = null;
     }
@@ -1089,7 +1118,11 @@
         try
         {
             var details = await ListingService.ExtractDetailsAsync(extractionUrl);
-            if (!string.IsNullOrEmpty(details.Title)) listing.Title = details.Title;
+            if (!string.IsNullOrEmpty(details.Title))
+            {
+                listing.Title = details.Title;
+                if (!Id.HasValue) listing.SourceTitle = details.Title; // original supplier title, for tracking
+            }
             if (!string.IsNullOrEmpty(details.Description)) listing.Description = details.Description;
             if (!string.IsNullOrEmpty(details.Category)) extractedCategory = details.Category;
             if (!string.IsNullOrEmpty(details.Brand)) listing.Brand = details.Brand;
@@ -1192,12 +1225,57 @@
         }
     }
 
-    private void SelectSuggestion(CategorySuggestionDto suggestion)
+    private async Task SelectSuggestion(CategorySuggestionDto suggestion)
     {
         listing.CategoryId = suggestion.CategoryId;
         listing.CategoryName = suggestion.CategoryName;
         suggestions.Clear();
         suggestStatusMessage = null;
+        await LoadCategoryAspects();
+    }
+
+    // ---- eBay item specifics for the selected category
+    private List<CategoryAspectDto> categoryAspects = new();
+    private string? aspectsLoadedFor;
+    private bool isLoadingAspects;
+    private string? aspectsError;
+
+    private async Task LoadCategoryAspects()
+    {
+        var categoryId = listing.CategoryId?.Trim();
+        if (string.IsNullOrEmpty(categoryId))
+        {
+            categoryAspects = new();
+            aspectsLoadedFor = null;
+            aspectsError = null;
+            return;
+        }
+        if (categoryId == aspectsLoadedFor) return;
+        if (!listing.EbayAccountId.HasValue)
+        {
+            categoryAspects = new();
+            aspectsLoadedFor = null;
+            aspectsError = "Select an eBay account to load the item specifics for this category.";
+            return;
+        }
+
+        isLoadingAspects = true;
+        aspectsError = null;
+        try
+        {
+            categoryAspects = await ListingService.GetCategoryAspectsAsync(categoryId, listing.EbayAccountId);
+            aspectsLoadedFor = categoryId;
+        }
+        catch (Exception ex)
+        {
+            // Not fatal: the listing can still be saved and published; eBay will report missing specifics.
+            categoryAspects = new();
+            aspectsError = $"Couldn't load item specifics for category {categoryId}: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingAspects = false;
+        }
     }
 
     private void OnCategoryIdInput(ChangeEventArgs e)
@@ -1243,6 +1321,15 @@
         if (isQuillReady)
         {
             listing.Description = await JS.InvokeAsync<string>("quillInterop.getHtml", quillElement);
+        }
+
+        // Warn (don't block) when eBay's required item specifics for the category are empty.
+        var missingAspects = CategoryAspectsEditor.MissingRequired(categoryAspects, listing).ToList();
+        if (missingAspects.Any())
+        {
+            var proceed = await JS.InvokeAsync<bool>("confirm",
+                $"These item specifics are required by eBay for this category and are empty: {string.Join(", ", missingAspects)}.\n\neBay will probably reject the listing. Publish anyway?");
+            if (!proceed) return;
         }
 
         isPublishing = true;

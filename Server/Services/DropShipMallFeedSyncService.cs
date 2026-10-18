@@ -255,7 +255,7 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
                 entity.SupplierFeedId = feed.Id;
                 entity.SupplierSku ??= sku;
                 entity.Handle ??= handle;
-                entity.Title = title.Replace("\"\"", "\"").Trim();
+                entity.Title = CleanText(title.Replace("\"\"", "\""));
 
                 var description = Pick(row, "Body (HTML)", "Description");
                 if (description != null) entity.Description = description;
@@ -264,7 +264,7 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
                 if (brand != null) entity.Brand = brand;
 
                 var category = Pick(row, "Primary Category", "Product Category", "Category");
-                if (category != null) entity.CategoryName = category.Trim();
+                if (category != null) entity.CategoryName = CleanText(category);
 
                 var images = ParseImageUrls(Pick(row, "Images", "Image Src", "Image URLs", "Main Image"));
                 if (images.Length > 0)
@@ -465,7 +465,7 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
     /// DropShipMall values like <c>1.5" Steel Pins</c> that contain unescaped quotes.
     /// Row keys are normalised (see <see cref="NormalizeKey"/>).
     /// </summary>
-    private static List<Dictionary<string, string>> ParseCsv(string content)
+    internal static List<Dictionary<string, string>> ParseCsv(string content)
     {
         var records = new List<List<string>>();
         var firstLineEnd = content.IndexOf('\n');
@@ -552,7 +552,7 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
     private static string NormalizeKey(string key)
         => new string(key.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
-    private static string? Pick(Dictionary<string, string> row, params string[] keys)
+    internal static string? Pick(Dictionary<string, string> row, params string[] keys)
     {
         foreach (var key in keys)
         {
@@ -577,6 +577,16 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
                         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    /// <summary>
+    /// The feeds contain HTML-encoded text (e.g. "Oil Burner &amp;amp; Wax Melts", "2.5&amp;quot;").
+    /// Decode it (twice, for double-encoded values) and collapse whitespace.
+    /// </summary>
+    private static string CleanText(string value)
+    {
+        var decoded = WebUtility.HtmlDecode(WebUtility.HtmlDecode(value));
+        return System.Text.RegularExpressions.Regex.Replace(decoded, @"\s+", " ").Trim();
     }
 
     private static string? FirstNonEmpty(params string?[] values)

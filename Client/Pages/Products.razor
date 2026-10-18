@@ -23,7 +23,7 @@
     </div>
     <div class="col-md-6">
         <label class="form-label">Search</label>
-        <input class="form-control" @bind="search" @bind:event="oninput" placeholder="Search by title or SKU" />
+        <input class="form-control" @bind="search" @bind:event="oninput" @onkeyup="OnSearchKeyUp" placeholder="Search by title or SKU (press Enter)" />
     </div>
     <div class="col-md-3 d-flex align-items-end">
         <button class="btn btn-outline-secondary w-100" @onclick="LoadProducts" disabled="@isLoading">Refresh</button>
@@ -35,13 +35,24 @@
     <div class="d-flex gap-2 flex-wrap">
         @foreach (var feed in selectedFeeds)
         {
-            <button class="btn btn-outline-primary" @onclick="() => SyncFeed(feed)" disabled="@isBusy">
-                Import @feed.FeedType
+            <button class="btn btn-outline-primary" @onclick="() => SyncFeed(feed)" disabled="@(isBusy || importRunning)">
+                @if (importRunning)
+                {
+                    <span class="spinner-border spinner-border-sm me-1"></span><span>Importing...</span>
+                }
+                else
+                {
+                    <span>Import @feed.FeedType</span>
+                }
             </button>
         }
         @if (!selectedFeeds.Any())
         {
             <span class="text-muted">No feeds configured for this supplier.</span>
+        }
+        @if (lastUpdatedAtUtc.HasValue)
+        {
+            <span class="small text-muted align-self-center">Last updated: @lastUpdatedAtUtc.Value.ToLocalTime().ToString("g")</span>
         }
     </div>
 </div>
@@ -55,6 +66,13 @@
     <div class="alert @statusCss">@statusMessage</div>
 }
 
+@if (!string.IsNullOrEmpty(importJobId))
+{
+    <div class="mb-3">
+        <BulkJobProgress JobId="@importJobId" Title="Supplier catalogue import" OnFinished="OnImportFinished" />
+    </div>
+}
+
 @if (!string.IsNullOrEmpty(enrichJobId))
 {
     <div class="mb-3">
@@ -62,13 +80,72 @@
     </div>
 }
 
+@if (!string.IsNullOrEmpty(groupKey))
+{
+    <div class="alert alert-secondary d-flex justify-content-between align-items-center py-2 mb-2">
+        <span>Showing all variants of <strong>@groupLabel</strong>. Tick them and use <em>Add all selected to my listings</em>.</span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearGroup">Show all products</button>
+    </div>
+}
+
+@* Filters and sorting sit directly above the product list. *@
+<div class="row g-2 mb-2 align-items-end p-2 border rounded bg-light">
+    <div class="col-md-3">
+        <label class="form-label small">Sort by</label>
+        <select class="form-select form-select-sm" value="@sort" @onchange="OnSortChanged">
+            <option value="@SupplierProductSort.PriceHighToLow">Supplier price: high to low</option>
+            <option value="@SupplierProductSort.ProfitHighToLow">Approx. profit: high to low</option>
+            <option value="@SupplierProductSort.PriceLowToHigh">Supplier price: low to high</option>
+            <option value="@SupplierProductSort.StockHighToLow">Stock: high to low</option>
+            <option value="@SupplierProductSort.Title">Title (A–Z)</option>
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label small">Category</label>
+        <select class="form-select form-select-sm" value="@category" @onchange="OnCategoryChanged">
+            <option value="">All categories</option>
+            @foreach (var c in categories)
+            {
+                <option value="@c">@c</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small">Min price £</label>
+        <input type="number" step="0.01" min="0" class="form-control form-control-sm" @bind="minPrice" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small">Max price £</label>
+        <input type="number" step="0.01" min="0" class="form-control form-control-sm" @bind="maxPrice" />
+    </div>
+    <div class="col-md-2">
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="inStockOnly" @bind="inStockOnly" />
+            <label class="form-check-label small" for="inStockOnly">In stock only</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="hideAdded" @bind="hideAdded" />
+            <label class="form-check-label small" for="hideAdded">Hide already added</label>
+        </div>
+    </div>
+    <div class="col-12 d-flex gap-2">
+        <button class="btn btn-sm btn-primary" @onclick="LoadProducts" disabled="@isLoading">Apply filters</button>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFilters" disabled="@isLoading">Clear</button>
+        <span class="small text-muted align-self-center">
+            @products.Count product(s)@(products.Count >= SupplierProductQuery.DefaultLimit ? $" (first {SupplierProductQuery.DefaultLimit} shown – narrow the filters to see more)" : "")
+        </span>
+    </div>
+</div>
+
 @if (isLoading)
 {
     <p><em>Loading products...</em></p>
 }
 else if (!products.Any())
 {
-    <div class="alert alert-warning">No products found. Run catalogue sync first.</div>
+    <div class="alert alert-warning">
+        @(HasActiveFilters ? "No products match these filters." : "No products found. Run catalogue sync first.")
+    </div>
 }
 else
 {
@@ -77,13 +154,14 @@ else
             <thead>
                 <tr>
                     <th style="width: 36px;"><input type="checkbox" class="form-check-input" checked="@(products.Any() && products.All(p => selectedIds.Contains(p.Id)))" @onchange="ToggleSelectAll" /></th>
-                    <th>Product</th>
+                    <th>@SortHeader("Product", SupplierProductSort.Title)</th>
                     <th>Category</th>
                     <th>Image</th>
                     <th>SKU</th>
-                    <th>Stock</th>
-                    <th>Supplier Price</th>
+                    <th>@SortHeader("Stock", SupplierProductSort.StockHighToLow)</th>
+                    <th>@SortHeader("Supplier Price", SupplierProductSort.PriceHighToLow, SupplierProductSort.PriceLowToHigh)</th>
                     <th>Suggested Price</th>
+                    <th title="Suggested price minus supplier price. Before VAT, delivery and marketplace fees.">@SortHeader("Approx. Profit", SupplierProductSort.ProfitHighToLow)</th>
                     <th>Status</th>
                     <th class="text-end">Actions</th>
                 </tr>
@@ -96,6 +174,10 @@ else
                         <td><input type="checkbox" class="form-check-input" checked="@selectedIds.Contains(product.Id)" @onchange="() => ToggleSelection(product.Id)" /></td>
                         <td>
                             <a href="/products/@product.Id">@product.Title</a>
+                            @if (product.GroupSize > 1 && product.GroupKey != null && groupKey != product.GroupKey)
+                            {
+                                <div><a href="javascript:void(0)" class="small" @onclick="() => ShowGroup(product)">@product.GroupSize sizes / variants</a></div>
+                            }
                             @if (!string.IsNullOrWhiteSpace(product.ProductUrl))
                             {
                                 <div><a class="small text-muted" href="@product.ProductUrl" target="_blank">Source</a></div>
@@ -118,8 +200,19 @@ else
                         </td>
                         <td>@(string.IsNullOrWhiteSpace(product.SupplierSku) ? "-" : product.SupplierSku)</td>
                         <td>@(product.StockLevel?.ToString() ?? "-")</td>
-                        <td>@(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")</td>
+                        <td>
+                            @(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")
+                            @if (product.PriceIsEstimate)
+                            {
+                                <span class="badge bg-warning text-dark" title="Trade price not confirmed yet (showing RRP)">est.</span>
+                            }
+                            @if (product.RrpPrice.HasValue && !product.PriceIsEstimate)
+                            {
+                                <div class="small text-muted">RRP £@product.RrpPrice.Value.ToString("F2")</div>
+                            }
+                        </td>
                         <td>@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</td>
+                        <td>@(product.ApproxProfit.HasValue ? $"£{product.ApproxProfit.Value:F2}" : "-")</td>
                         <td>
                             @if (product.AlreadyAdded)
                             {
@@ -159,10 +252,74 @@ else
 
     private string selectedSupplier = "DropShipMall";
     private string search = string.Empty;
+    // Filters / sorting (applied on the server, so sorting covers all products, not just the loaded page).
+    private string sort = SupplierProductSort.PriceHighToLow;
+    private string category = string.Empty;
+    private decimal? minPrice;
+    private decimal? maxPrice;
+    private bool inStockOnly;
+    private bool hideAdded;
+    private List<string> categories = new();
+
+    // Group view: all variants of one supplier product (also reachable as /products?group=...).
+    [SupplyParameterFromQuery(Name = "group")] public string? GroupFromUrl { get; set; }
+    [SupplyParameterFromQuery(Name = "supplier")] public string? SupplierFromUrl { get; set; }
+    private string? groupKey;
+    private string groupLabel = "this product";
+
+    private async Task ShowGroup(SupplierProductListItemDto product)
+    {
+        groupKey = product.GroupKey;
+        groupLabel = string.IsNullOrWhiteSpace(product.VariantName)
+            ? product.Title
+            : product.Title.Replace(" - " + product.VariantName, string.Empty);
+        selectedIds.Clear();
+        await LoadProducts();
+    }
+
+    private async Task ClearGroup()
+    {
+        groupKey = null;
+        selectedIds.Clear();
+        Navigation.NavigateTo("/products", replace: true);
+        await LoadProducts();
+    }
+    private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrWhiteSpace(category) || !string.IsNullOrEmpty(groupKey)
+                                     || minPrice.HasValue || maxPrice.HasValue || inStockOnly || hideAdded;
     private bool isLoading;
     private bool isBusy;
     private string? statusMessage;
     private string? enrichJobId;
+    private string? importJobId;
+    private bool importRunning;
+    private DateTime? lastUpdatedAtUtc;
+
+    /// <summary>Re-attaches to a running/recent import after a page refresh and shows when the supplier was last updated.</summary>
+    private async Task LoadImportStatus()
+    {
+        try
+        {
+            var status = await ListingService.GetSupplierImportStatusAsync(selectedSupplier);
+            lastUpdatedAtUtc = status.LastUpdatedAtUtc;
+            importRunning = status.IsRunning;
+            if (status.IsRunning && status.JobId != null) importJobId = status.JobId; // finished imports just show "Last updated"
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not load import status: {ex.Message}");
+        }
+    }
+
+    private async Task OnImportFinished(BulkJobDto job)
+    {
+        importRunning = false;
+        statusCss = job.Status == "Failed" ? "alert-danger" : "alert-success";
+        await LoadCategories();
+        await LoadProducts();
+        await LoadImportStatus();
+        statusMessage = job.Status == "Failed" ? $"Import failed: {job.Message}" : $"Import finished. {job.Message}";
+        StateHasChanged();
+    }
     private string statusCss = "alert-info";
 
     private IEnumerable<SupplierFeedDto> selectedFeeds => feeds
@@ -177,6 +334,66 @@ else
         }
 
         await LoadFeeds();
+        if (!string.IsNullOrWhiteSpace(SupplierFromUrl)) selectedSupplier = SupplierFromUrl;
+        if (!string.IsNullOrWhiteSpace(GroupFromUrl)) groupKey = GroupFromUrl;
+        await LoadCategories();
+        await LoadImportStatus();
+        await LoadProducts();
+        if (!string.IsNullOrEmpty(groupKey) && products.Any())
+        {
+            var first = products[0];
+            selectedSupplier = first.Supplier;
+            groupLabel = string.IsNullOrWhiteSpace(first.VariantName) ? first.Title : first.Title.Replace(" - " + first.VariantName, string.Empty);
+        }
+    }
+
+    private async Task LoadCategories()
+    {
+        try { categories = await ListingService.GetSupplierProductCategoriesAsync(selectedSupplier); }
+        catch (Exception ex) { Console.WriteLine($"Could not load categories: {ex.Message}"); categories = new(); }
+    }
+
+    private async Task OnSortChanged(ChangeEventArgs e)
+    {
+        sort = e.Value?.ToString() ?? SupplierProductSort.PriceHighToLow;
+        await LoadProducts();
+    }
+
+    /// <summary>Clickable column header; a second click toggles to <paramref name="alternate"/> when given.</summary>
+    private RenderFragment SortHeader(string label, string primary, string? alternate = null) => __builder =>
+    {
+        var active = sort == primary || (alternate != null && sort == alternate);
+        var arrow = !active ? "" : sort == SupplierProductSort.PriceLowToHigh || sort == SupplierProductSort.Title ? " ▲" : " ▼";
+        <a href="javascript:void(0)" class="text-decoration-none @(active ? "fw-bold" : "text-reset")" @onclick="() => SortBy(primary, alternate)">@label@arrow</a>
+    };
+
+    private async Task SortBy(string primary, string? alternate)
+    {
+        sort = sort == primary && alternate != null ? alternate : primary;
+        await LoadProducts();
+    }
+
+    private async Task OnCategoryChanged(ChangeEventArgs e)
+    {
+        category = e.Value?.ToString() ?? string.Empty;
+        await LoadProducts();
+    }
+
+    private async Task OnSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadProducts();
+    }
+
+    private async Task ClearFilters()
+    {
+        search = string.Empty;
+        category = string.Empty;
+        minPrice = null;
+        maxPrice = null;
+        inStockOnly = false;
+        hideAdded = false;
+        groupKey = null;
+        sort = SupplierProductSort.PriceHighToLow;
         await LoadProducts();
     }
 
@@ -205,6 +422,12 @@ else
     {
         selectedSupplier = e.Value?.ToString() ?? string.Empty;
         selectedIds.Clear();
+        category = string.Empty;
+        importJobId = null;
+        importRunning = false;
+        groupKey = null;
+        await LoadCategories();
+        await LoadImportStatus();
         await LoadProducts();
     }
 
@@ -214,7 +437,19 @@ else
         statusMessage = null;
         try
         {
-            var loaded = await ListingService.GetSupplierProductsAsync(selectedSupplier, search);
+            var loaded = await ListingService.GetSupplierProductsAsync(new SupplierProductQuery
+            {
+                // A group link (e.g. from the Dashboard) doesn't know the supplier; group keys are unique enough.
+                Supplier = string.IsNullOrEmpty(groupKey) ? selectedSupplier : null,
+                Search = search,
+                Category = string.IsNullOrWhiteSpace(category) ? null : category,
+                MinPrice = minPrice,
+                MaxPrice = maxPrice,
+                InStockOnly = inStockOnly,
+                HideAdded = hideAdded,
+                GroupKey = string.IsNullOrEmpty(groupKey) ? null : groupKey,
+                Sort = sort
+            });
             products.Clear();
             products.AddRange(loaded);
             selectedIds.RemoveWhere(id => products.All(p => p.Id != id));
@@ -309,7 +544,15 @@ else
         try
         {
             var result = await ListingService.SyncSupplierFeedAsync(feed.Id);
-            if (!result.IsSuccess)
+            if (result.IsSuccess && !string.IsNullOrEmpty(result.JobId))
+            {
+                // Long imports (e.g. Eden) continue in the background.
+                importJobId = result.JobId;
+                importRunning = true;
+                statusCss = "alert-info";
+                statusMessage = $"{feed.FeedType} import started. It takes a few minutes; you can keep using the app.";
+            }
+            else if (!result.IsSuccess)
             {
                 statusCss = "alert-danger";
                 statusMessage = result.ErrorMessage;

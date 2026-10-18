@@ -42,6 +42,20 @@ public class EbayPoliciesController : ControllerBase
         }
     }
 
+    /// <summary>Item specifics eBay requires/recommends for a category, with allowed values.</summary>
+    [HttpGet("category-aspects")]
+    public async Task<ActionResult<List<CategoryAspectDto>>> GetCategoryAspects([FromQuery] string categoryId, [FromQuery] int? accountId = null)
+    {
+        try
+        {
+            return Ok(await _ebayService.GetCategoryAspectsAsync(categoryId, accountId));
+        }
+        catch (EbayApiException ex)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, ex.Message);
+        }
+    }
+
     [HttpGet("category-suggestions")]
     public async Task<ActionResult<List<CategorySuggestionDto>>> GetCategorySuggestions([FromQuery] string title, [FromQuery] int? accountId = null)
     {

@@ -123,6 +123,17 @@ else
         </div>
     </div>
 
+    @if (groupFilter != null)
+    {
+        <div class="alert alert-secondary d-flex justify-content-between align-items-center py-2">
+            <span>
+                Showing listings for one product group (all its sizes/variants). Tick them and use <em>Bulk Publish to eBay</em>.
+                <a href="/products?group=@Uri.EscapeDataString(groupFilter)" class="ms-2">See all variants in Products</a>
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearGroup">Show all listings</button>
+        </div>
+    }
+
     @if (selectedIds.Any())
     {
         <div class="alert alert-primary d-flex justify-content-between align-items-center mb-3">
@@ -203,7 +214,13 @@ else
                                checked="@selectedIds.Contains(listing.Id)"
                                @onchange="() => ToggleSelection(listing.Id)" />
                     </td>
-                    <td><div class="fw-bold">@listing.Title</div></td>
+                    <td>
+                        <div class="fw-bold">@listing.Title</div>
+                        @if (groupFilter == null && GroupCount(listing.SupplierGroupKey) > 1)
+                        {
+                            <a href="javascript:void(0)" class="small" @onclick="() => ShowGroup(listing.SupplierGroupKey!)">Group: @GroupCount(listing.SupplierGroupKey) listings</a>
+                        }
+                    </td>
                     <td>
                         £@listing.TotalPrice.ToString("F2")
                         @if (listing.DeliveryCost.HasValue && listing.DeliveryCost > 0)
@@ -284,8 +301,26 @@ else
                     || (selectedEbayAccountFilterId.Value == 0
                         ? !listing.EbayAccountId.HasValue
                         : listing.EbayAccountId == selectedEbayAccountFilterId.Value))
+            .Where(listing => groupFilter == null || listing.SupplierGroupKey == groupFilter)
             .ToList()
         ?? new List<ListingDto>();
+
+    // Group filter: listings made from variants of the same supplier product, so they can be published together.
+    private string? groupFilter;
+
+    private int GroupCount(string? key) => key == null ? 0 : listings?.Count(l => l.SupplierGroupKey == key) ?? 0;
+
+    private void ShowGroup(string key)
+    {
+        groupFilter = key;
+        selectedIds.Clear();
+    }
+
+    private void ClearGroup()
+    {
+        groupFilter = null;
+        selectedIds.Clear();
+    }
 
     protected override async Task OnInitializedAsync()
     {

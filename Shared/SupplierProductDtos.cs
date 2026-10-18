@@ -15,6 +15,45 @@ public class SupplierProductListItemDto
     public int? ExistingListingId { get; set; }
     public string? CategoryName { get; set; }
     public string? ImageUrlsJson { get; set; } // JSON array of image URLs
+    public decimal? RrpPrice { get; set; }
+    /// <summary>True when SupplierPrice isn't a confirmed trade price yet.</summary>
+    public bool PriceIsEstimate { get; set; }
+    public string? GroupKey { get; set; }
+    public string? VariantName { get; set; }
+    /// <summary>How many visible products share <see cref="GroupKey"/> (1 when not part of a group).</summary>
+    public int GroupSize { get; set; } = 1;
+
+    /// <summary>Approximate profit per item: suggested price minus supplier price (before VAT, delivery and fees).</summary>
+    public decimal? ApproxProfit => SuggestedPrice.HasValue && SupplierPrice.HasValue ? SuggestedPrice - SupplierPrice : null;
+}
+
+/// <summary>Filters and sort order for the /products grid (bound from the query string).</summary>
+public class SupplierProductQuery
+{
+    public const int DefaultLimit = 500;
+    public const int MaxLimit = 2000;
+
+    public string? Supplier { get; set; }
+    public string? Search { get; set; }
+    public string? Category { get; set; }
+    public decimal? MinPrice { get; set; }
+    public decimal? MaxPrice { get; set; }
+    public bool InStockOnly { get; set; }
+    public bool HideAdded { get; set; }
+    /// <summary>Only products of this group (all variants of one supplier product).</summary>
+    public string? GroupKey { get; set; }
+    /// <summary>One of <see cref="SupplierProductSort"/>.</summary>
+    public string? Sort { get; set; }
+    public int Limit { get; set; } = DefaultLimit;
+}
+
+public static class SupplierProductSort
+{
+    public const string PriceHighToLow = "price_desc";
+    public const string PriceLowToHigh = "price_asc";
+    public const string ProfitHighToLow = "profit_desc";
+    public const string StockHighToLow = "stock_desc";
+    public const string Title = "title";
 }
 
 public class SupplierProductDetailDto : SupplierProductListItemDto

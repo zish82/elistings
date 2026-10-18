@@ -70,6 +70,7 @@ public class ProductEnrichmentService
     public async Task FillListingFromProductAsync(Listing listing, SupplierProduct product)
     {
         if (string.IsNullOrWhiteSpace(listing.Title)) listing.Title = product.Title;
+        listing.SourceTitle ??= product.Title;
         // The rich-text editor saves an empty description as "<p><br></p>", so check the text, not the HTML.
         if (IsBlankHtml(listing.Description) && !IsBlankHtml(product.Description))
         {
@@ -85,6 +86,11 @@ public class ProductEnrichmentService
         }
 
         var specifics = ListingMapping.ReadSpecifics(product.SpecificsJson);
+        // Variant options (e.g. Size: 1L) become item specifics, so per-size listings are distinct on eBay.
+        foreach (var option in ListingMapping.ReadSpecifics(product.VariantOptionsJson))
+        {
+            specifics.TryAdd(option.Key, option.Value);
+        }
         if (string.IsNullOrWhiteSpace(listing.ItemSpecificsJson) && specifics.Count > 0)
         {
             listing.ItemSpecificsJson = ListingMapping.WriteSpecifics(specifics);

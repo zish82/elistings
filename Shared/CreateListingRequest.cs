@@ -37,4 +37,6 @@ public class CreateListingRequest
     public bool IncludeDeliveryInPrice { get; set; } = true;
     public Dictionary<string, string> ItemSpecifics { get; set; } = new();
     public string? Barcode { get; set; }
+    /// <summary>Original supplier title. Only stored when the listing doesn't have one yet.</summary>
+    public string? SourceTitle { get; set; }
 }

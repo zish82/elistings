@@ -12,6 +12,8 @@ public class SupplierDto
     public decimal DefaultMarginPercent { get; set; } = 20m;
     public bool IsActive { get; set; } = true;
     public List<SupplierDeliveryOptionDto> DeliveryOptions { get; set; } = new();
+    /// <summary>Postage classes found in this supplier's imported products (e.g. "Standard Parcel"). Read-only.</summary>
+    public List<string> KnownPostageCategories { get; set; } = new();
 }
 
 public class SupplierDeliveryOptionDto

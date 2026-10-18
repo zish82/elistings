@@ -17,6 +17,8 @@ public class BulkJobRunner
         public string Id { get; } = Guid.NewGuid().ToString("N");
         public string Type { get; init; } = string.Empty;
         public int OwnerUserId { get; init; }
+        /// <summary>Optional grouping key, e.g. the supplier code for imports.</summary>
+        public string? Tag { get; init; }
         public DateTime StartedAtUtc { get; } = DateTime.UtcNow;
         public DateTime? FinishedAtUtc { get; private set; }
         public string Status { get; private set; } = "Running";
@@ -77,11 +79,11 @@ public class BulkJobRunner
     /// Starts <paramref name="work"/> on a background thread inside a fresh DI scope that
     /// impersonates <paramref name="user"/> (so ICurrentUserService / eBay tokens resolve correctly).
     /// </summary>
-    public BulkJob Start(string type, ClaimsPrincipal user, int ownerUserId, Func<IServiceProvider, BulkJob, Task> work)
+    public BulkJob Start(string type, ClaimsPrincipal user, int ownerUserId, Func<IServiceProvider, BulkJob, Task> work, string? tag = null)
     {
         CleanupOldJobs();
 
-        var job = new BulkJob { Type = type, OwnerUserId = ownerUserId };
+        var job = new BulkJob { Type = type, OwnerUserId = ownerUserId, Tag = tag };
         _jobs[job.Id] = job;
 
         _ = Task.Run(async () =>
@@ -104,6 +106,13 @@ public class BulkJobRunner
     }
 
     public BulkJob? Get(string id) => _jobs.TryGetValue(id, out var job) ? job : null;
+
+    /// <summary>Most recent job of a type/tag (e.g. the last Eden import), so a page can re-attach after a refresh.</summary>
+    public BulkJob? FindLatest(string type, string tag)
+        => _jobs.Values
+            .Where(j => j.Type == type && string.Equals(j.Tag, tag, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(j => j.StartedAtUtc)
+            .FirstOrDefault();
 
     private void CleanupOldJobs()
     {

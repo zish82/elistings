@@ -106,6 +106,8 @@ public class Listing
     /// <summary>JSON object of item specifics (e.g. {"Material":"Plastic"}) sent to the marketplace.</summary>
     public string? ItemSpecificsJson { get; set; }
     public string? Barcode { get; set; }
+    /// <summary>The supplier's original title, kept for tracing after the listing title is optimised.</summary>
+    public string? SourceTitle { get; set; }
 }
 
 public class Policy
@@ -200,4 +202,24 @@ public class SupplierProduct
     public string? SpecificsJson { get; set; }
     /// <summary>When description/specifics were last fetched from the supplier website.</summary>
     public DateTime? DetailsFetchedAtUtc { get; set; }
+
+    // ---- Variants. One SupplierProduct row per sellable variant (size/colour);
+    // rows of the same supplier product share GroupKey, ready for multi-variation listings later.
+    /// <summary>Supplier's parent product id (e.g. Shopify product id). Null for single products without one.</summary>
+    public string? GroupKey { get; set; }
+    /// <summary>Variant label, e.g. "1L" or "100 Bag". Null for single-variant products.</summary>
+    public string? VariantName { get; set; }
+    /// <summary>JSON object of variant options, e.g. {"Size":"1L"}.</summary>
+    public string? VariantOptionsJson { get; set; }
+
+    /// <summary>Supplier's recommended retail price, when known.</summary>
+    public decimal? RrpPrice { get; set; }
+    /// <summary>True while <see cref="SupplierPrice"/> is not a confirmed trade price.</summary>
+    public bool PriceIsEstimate { get; set; }
+    public DateTime? TradePriceFetchedAtUtc { get; set; }
+    /// <summary>
+    /// Set when the product no longer appears in the supplier's full catalogue (removed from their site);
+    /// cleared if it comes back. Separate from IsActive, which is the user's own delete.
+    /// </summary>
+    public DateTime? RemovedFromSupplierAtUtc { get; set; }
 }

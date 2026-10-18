@@ -41,28 +41,80 @@ public class SupplierProductsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<SupplierProductListItemDto>>> GetProducts([FromQuery] string? supplier = null, [FromQuery] string? search = null)
+    public async Task<ActionResult<List<SupplierProductListItemDto>>> GetProducts([FromQuery] SupplierProductQuery q)
     {
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
 
-        var query = _context.SupplierProducts.AsQueryable().Where(p => p.IsActive);
-        if (!string.IsNullOrWhiteSpace(supplier))
+        // Hidden: deleted by the user (IsActive) or no longer sold by the supplier.
+        var query = _context.SupplierProducts.AsQueryable().Where(p => p.IsActive && p.RemovedFromSupplierAtUtc == null);
+        if (!string.IsNullOrWhiteSpace(q.Supplier))
         {
-            query = query.Where(p => p.Supplier == supplier);
+            query = query.Where(p => p.Supplier == q.Supplier);
         }
 
-        if (!string.IsNullOrWhiteSpace(search))
+        if (!string.IsNullOrWhiteSpace(q.Search))
         {
-            var term = search.Trim();
+            var term = q.Search.Trim();
             query = query.Where(p => p.Title.Contains(term) || (p.SupplierSku ?? string.Empty).Contains(term));
         }
 
-        var products = await query
-            .OrderBy(p => p.Supplier)
-            .ThenBy(p => p.Title)
-            .Take(1000)
-            .ToListAsync();
+        if (!string.IsNullOrWhiteSpace(q.Category))
+        {
+            query = query.Where(p => p.CategoryName == q.Category);
+        }
+
+        if (!string.IsNullOrWhiteSpace(q.GroupKey))
+        {
+            query = query.Where(p => p.GroupKey == q.GroupKey);
+        }
+
+        // SQLite stores decimals as TEXT and EF can't compare/sort them there, so cast to double (REAL) in SQL.
+        if (q.MinPrice.HasValue)
+        {
+            var min = (double)q.MinPrice.Value;
+            query = query.Where(p => p.SupplierPrice != null && (double)p.SupplierPrice >= min);
+        }
+        if (q.MaxPrice.HasValue)
+        {
+            var max = (double)q.MaxPrice.Value;
+            query = query.Where(p => p.SupplierPrice != null && (double)p.SupplierPrice <= max);
+        }
+
+        if (q.InStockOnly)
+        {
+            query = query.Where(p => p.StockLevel > 0);
+        }
+
+        if (q.HideAdded)
+        {
+            var uid = userId.Value;
+            query = query.Where(p => !_context.Listings.Any(l => l.OwnerUserId == uid && l.SupplierProductId == p.Id));
+        }
+
+        query = q.Sort switch
+        {
+            SupplierProductSort.PriceHighToLow => query.OrderByDescending(p => p.SupplierPrice != null).ThenByDescending(p => (double?)p.SupplierPrice),
+            SupplierProductSort.PriceLowToHigh => query.OrderByDescending(p => p.SupplierPrice != null).ThenBy(p => (double?)p.SupplierPrice),
+            SupplierProductSort.ProfitHighToLow => query
+                .OrderByDescending(p => p.SuggestedPrice != null && p.SupplierPrice != null)
+                .ThenByDescending(p => (double?)p.SuggestedPrice - (double?)p.SupplierPrice),
+            SupplierProductSort.StockHighToLow => query.OrderByDescending(p => p.StockLevel ?? -1),
+            _ => query.OrderBy(p => p.Supplier).ThenBy(p => p.Title)
+        };
+
+        var limit = Math.Clamp(q.Limit, 1, SupplierProductQuery.MaxLimit);
+        var products = await query.Take(limit).ToListAsync();
+
+        // Variant counts per group (visible products only), for the "N sizes" link.
+        var groupKeys = products.Where(p => p.GroupKey != null).Select(p => p.GroupKey!).Distinct().ToList();
+        var groupSizes = groupKeys.Count == 0
+            ? new Dictionary<string, int>()
+            : await _context.SupplierProducts
+                .Where(p => p.IsActive && p.RemovedFromSupplierAtUtc == null && p.GroupKey != null && groupKeys.Contains(p.GroupKey))
+                .GroupBy(p => p.GroupKey!)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.Count);
 
         var productIds = products.Select(p => p.Id).ToList();
         var existingMap = await _context.Listings
@@ -85,10 +137,43 @@ public class SupplierProductsController : ControllerBase
             AlreadyAdded = existingMap.ContainsKey(p.Id),
             ExistingListingId = existingMap.GetValueOrDefault(p.Id),
             CategoryName = p.CategoryName,
-            ImageUrlsJson = p.ImageUrlsJson
+            ImageUrlsJson = p.ImageUrlsJson,
+            RrpPrice = p.RrpPrice,
+            PriceIsEstimate = p.PriceIsEstimate,
+            GroupKey = p.GroupKey,
+            VariantName = p.VariantName,
+            GroupSize = p.GroupKey != null && groupSizes.TryGetValue(p.GroupKey, out var size) ? size : 1
         }).ToList();
 
         return Ok(payload);
+    }
+
+    /// <summary>Latest background import for a supplier (to show progress after a page refresh) and last update time.</summary>
+    [HttpGet("import-status")]
+    public async Task<ActionResult<SupplierImportStatusDto>> GetImportStatus([FromQuery] string supplier)
+    {
+        var job = _jobRunner.FindLatest("import", supplier ?? string.Empty);
+        var lastUpdated = await _context.SupplierProducts
+            .Where(p => p.Supplier == supplier)
+            .OrderByDescending(p => p.UpdatedAtUtc)
+            .Select(p => (DateTime?)p.UpdatedAtUtc)
+            .FirstOrDefaultAsync();
+
+        return Ok(new SupplierImportStatusDto
+        {
+            JobId = job?.Id,
+            IsRunning = job != null && !job.ToDto().IsFinished,
+            LastUpdatedAtUtc = lastUpdated
+        });
+    }
+
+    /// <summary>Distinct categories for the category filter.</summary>
+    [HttpGet("categories")]
+    public async Task<ActionResult<List<string>>> GetCategories([FromQuery] string? supplier = null)
+    {
+        var query = _context.SupplierProducts.Where(p => p.IsActive && p.CategoryName != null && p.CategoryName != "");
+        if (!string.IsNullOrWhiteSpace(supplier)) query = query.Where(p => p.Supplier == supplier);
+        return Ok(await query.Select(p => p.CategoryName!).Distinct().OrderBy(c => c).ToListAsync());
     }
 
     [HttpGet("{id:int}")]
@@ -236,8 +321,36 @@ public class SupplierProductsController : ControllerBase
     }
 
     [HttpPost("sync/feed/{feedId:int}")]
-    public async Task<ActionResult<FeedSyncResult>> SyncFeed(int feedId)
+    public async Task<ActionResult<FeedSyncResult>> SyncFeed(int feedId, [FromServices] IEnumerable<ISupplierCatalogImporter> importers)
     {
+        // Suppliers with their own importer (e.g. Eden) run in the background; progress via bulk-jobs.
+        var feed = await _context.SupplierFeeds.FirstOrDefaultAsync(f => f.Id == feedId);
+        var importer = feed == null ? null : importers.FirstOrDefault(i => i.SupplierCode.Equals(feed.Supplier, StringComparison.OrdinalIgnoreCase));
+        if (feed != null && importer != null)
+        {
+            var running = _jobRunner.FindLatest("import", importer.SupplierCode);
+            if (running != null && !running.ToDto().IsFinished)
+            {
+                // Re-attach to the import that's already running instead of starting another.
+                return Ok(new FeedSyncResult { Supplier = feed.Supplier, FeedType = feed.FeedType, JobId = running.Id });
+            }
+
+            var userId = _currentUserService.UserId;
+            if (userId == null) return Unauthorized();
+            var supplierCode = importer.SupplierCode;
+
+            var job = _jobRunner.Start("import", User, userId.Value, async (services, bulkJob) =>
+            {
+                var scopedImporter = services.GetRequiredService<IEnumerable<ISupplierCatalogImporter>>()
+                    .First(i => i.SupplierCode == supplierCode);
+                var progress = new SyncProgress(message => bulkJob.Message = message);
+                var importResult = await scopedImporter.ImportAsync("manual", progress);
+                if (!importResult.IsSuccess) throw new InvalidOperationException(importResult.ErrorMessage);
+            }, tag: supplierCode);
+
+            return Ok(new FeedSyncResult { Supplier = feed.Supplier, FeedType = feed.FeedType, JobId = job.Id });
+        }
+
         var result = await _feedProductSyncService.SyncFeedAsync(feedId, "manual-api");
         if (!result.IsSuccess) return BadRequest(result);
         return Ok(result);
@@ -321,4 +434,12 @@ public class SupplierProductsController : ControllerBase
             _ => string.Empty
         };
     }
+}
+
+/// <summary>Runs progress callbacks inline and in order (unlike Progress&lt;T&gt;, which posts to the thread pool).</summary>
+internal sealed class SyncProgress : IProgress<string>
+{
+    private readonly Action<string> _report;
+    public SyncProgress(Action<string> report) => _report = report;
+    public void Report(string value) => _report(value);
 }

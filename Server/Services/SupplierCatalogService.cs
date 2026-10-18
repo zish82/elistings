@@ -29,6 +29,27 @@ public class SupplierCatalogService
         return suppliers.Select(s => ToDto(s, options.Where(o => o.SupplierId == s.Id))).ToList();
     }
 
+    /// <summary>All suppliers plus the postage classes seen in their products (for the /suppliers page).</summary>
+    public async Task<List<SupplierDto>> GetAllForSettingsAsync()
+    {
+        var suppliers = await GetAllAsync(includeInactiveOptions: true);
+        var categories = await _context.SupplierProducts
+            .Where(p => p.PostageCategory != null && p.PostageCategory != "")
+            .Select(p => new { p.Supplier, p.PostageCategory })
+            .Distinct()
+            .ToListAsync();
+
+        foreach (var s in suppliers)
+        {
+            s.KnownPostageCategories = categories
+                .Where(c => c.Supplier.Equals(s.Code, StringComparison.OrdinalIgnoreCase))
+                .Select(c => c.PostageCategory!)
+                .OrderBy(c => c)
+                .ToList();
+        }
+        return suppliers;
+    }
+
     /// <summary>Finds the supplier by product supplier code first, then by the source URL's host.</summary>
     public async Task<SupplierDto?> FindAsync(string? supplierCode, string? sourceUrl)
     {

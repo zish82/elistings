@@ -73,46 +73,99 @@
                         </div>
                     </div>
 
-                    <h6 class="mt-2">Delivery options</h6>
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle">
-                            <thead>
-                                <tr class="small text-muted">
-                                    <th>Name</th>
-                                    <th>Postage categories (comma separated)</th>
-                                    <th style="width:110px">Cost £</th>
-                                    <th>Inc VAT?</th>
-                                    <th>Cost inc VAT</th>
-                                    <th>Default</th>
-                                    <th>Active</th>
-                                    <th style="width:70px">Order</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var o in s.DeliveryOptions.OrderBy(o => o.SortOrder))
-                                {
-                                    <tr>
-                                        <td>
-                                            <input class="form-control form-control-sm" @bind="o.Name" />
-                                            <input class="form-control form-control-sm mt-1" @bind="o.Description" placeholder="Description" />
-                                        </td>
-                                        <td><input class="form-control form-control-sm" @bind="o.PostageCategories" /></td>
-                                        <td><input type="number" step="0.01" class="form-control form-control-sm" @bind="o.Cost" /></td>
-                                        <td><input type="checkbox" class="form-check-input" @bind="o.CostIncludesVat" /></td>
-                                        <td class="small">£@PricingMath.DeliveryIncVat(o, s).ToString("F2")</td>
-                                        <td><input type="radio" class="form-check-input" name="default-@s.Id" checked="@o.IsDefault" @onchange="() => SetDefault(s, o)" /></td>
-                                        <td><input type="checkbox" class="form-check-input" @bind="o.IsActive" /></td>
-                                        <td><input type="number" class="form-control form-control-sm" @bind="o.SortOrder" /></td>
-                                        <td class="text-nowrap">
-                                            <button class="btn btn-sm btn-outline-primary" @onclick="() => SaveOption(s, o)">Save</button>
-                                            <button class="btn btn-sm btn-outline-danger ms-1" @onclick="() => DeleteOption(s, o)">&times;</button>
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
+                    <h6 class="mt-2">Delivery options <span class="small text-muted fw-normal">– what @s.Name charges you to deliver one order</span></h6>
+                    <details class="small text-muted mb-2">
+                        <summary>How delivery options work</summary>
+                        <ul class="mb-0 mt-1">
+                            <li><strong>Option name</strong> is what you pick in the listing's <em>Delivery Option</em> dropdown (e.g. "Standard Parcel").</li>
+                            <li><strong>Cost</strong> is the supplier's charge. Tick <em>already includes VAT</em> only if the supplier's price includes VAT; otherwise VAT is added for you.</li>
+                            <li><strong>Postage classes</strong> (optional) automatically pick this option for products in those classes. Leave blank if unsure.</li>
+                            <li><strong>Default</strong> is used when no postage class matches – choose one per supplier.</li>
+                            <li><strong>Active</strong> hides/shows the option on listings; <strong>List order</strong> sorts the dropdown (lower first).</li>
+                        </ul>
+                    </details>
+
+                    @if (!s.DeliveryOptions.Any())
+                    {
+                        <div class="small text-muted mb-2">No delivery options yet.</div>
+                    }
+
+                    @foreach (var o in s.DeliveryOptions.OrderBy(o => o.SortOrder))
+                    {
+                        var key = OptionKey(o);
+                        <div class="border rounded p-2 mb-2 @(o.Id == 0 ? "border-success" : "")">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-3">
+                                    <label class="form-label small mb-0">Option name <span class="text-danger">*</span></label>
+                                    <input class="form-control form-control-sm" @bind="o.Name" placeholder="e.g. Standard Parcel" />
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small mb-0">Notes (optional)</label>
+                                    <input class="form-control form-control-sm" @bind="o.Description" placeholder="e.g. Royal Mail 48, small items" />
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small mb-0">Cost £</label>
+                                    <input type="number" step="0.01" min="0" class="form-control form-control-sm" @bind="o.Cost" />
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="incvat-@key" @bind="o.CostIncludesVat" />
+                                        <label class="form-check-label small" for="incvat-@key">Cost already includes VAT</label>
+                                    </div>
+                                    <div class="small text-muted">= £@PricingMath.DeliveryIncVat(o, s).ToString("F2") inc VAT</div>
+                                </div>
+                                <div class="col-md-2 text-end">
+                                    <button class="btn btn-sm btn-primary" @onclick="() => SaveOption(s, o)" disabled="@(optionBusy.Contains(key))">
+                                        @(optionBusy.Contains(key) ? "Saving..." : o.Id == 0 ? "Add" : "Save")
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger ms-1" title="Delete" @onclick="() => DeleteOption(s, o)">&times;</button>
+                                </div>
+
+                                <div class="col-md-6">
+                                    <label class="form-label small mb-0">Use automatically for postage classes (optional, comma separated)</label>
+                                    <input class="form-control form-control-sm" @bind="o.PostageCategories" placeholder="Leave blank if unsure" />
+                                    @if (s.KnownPostageCategories.Any())
+                                    {
+                                        <div class="small text-muted mt-1">
+                                            This supplier's classes:
+                                            @foreach (var c in s.KnownPostageCategories)
+                                            {
+                                                <a href="javascript:void(0)" class="badge bg-light text-dark border me-1 text-decoration-none" @onclick="() => AddCategory(o, c)">+ @c</a>
+                                            }
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="small text-muted mt-1">This supplier's products have no postage classes – leave blank and mark one option as Default.</div>
+                                    }
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="form-check">
+                                        <input type="radio" class="form-check-input" id="default-@key" name="default-@s.Id" checked="@o.IsDefault" @onchange="() => SetDefault(s, o)" />
+                                        <label class="form-check-label small" for="default-@key">Default</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="active-@key" @bind="o.IsActive" />
+                                        <label class="form-check-label small" for="active-@key">Active</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small mb-0">List order</label>
+                                    <input type="number" class="form-control form-control-sm" @bind="o.SortOrder" />
+                                </div>
+                                <div class="col-md-2 small">
+                                    @if (optionStatus.TryGetValue(key, out var st))
+                                    {
+                                        <span class="@(st.Error ? "text-danger" : "text-success")">@st.Text</span>
+                                    }
+                                    else if (o.Id == 0)
+                                    {
+                                        <span class="text-muted">Not saved yet – click Add.</span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
                     <button class="btn btn-sm btn-outline-success" @onclick="() => AddOption(s)">+ Add delivery option</button>
                 </div>
             </div>
@@ -175,35 +228,78 @@
         foreach (var o in s.DeliveryOptions) o.IsDefault = o == selected;
     }
 
+    // Per-option feedback shown next to the option (not only at the top of the page).
+    private readonly Dictionary<string, (string Text, bool Error)> optionStatus = new();
+    private readonly HashSet<string> optionBusy = new();
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<SupplierDeliveryOptionDto, string> newOptionKeys = new();
+
+    private string OptionKey(SupplierDeliveryOptionDto o)
+        => o.Id != 0 ? $"o{o.Id}" : newOptionKeys.GetValue(o, _ => "new" + Guid.NewGuid().ToString("N"));
+
     private void AddOption(SupplierDto s)
     {
         s.DeliveryOptions.Add(new SupplierDeliveryOptionDto
         {
             SupplierId = s.Id,
-            Name = "New delivery option",
+            Name = string.Empty,
             SortOrder = (s.DeliveryOptions.Any() ? s.DeliveryOptions.Max(o => o.SortOrder) : 0) + 10,
-            CostIncludesVat = s.PricesIncludeVat
+            CostIncludesVat = s.PricesIncludeVat,
+            IsDefault = !s.DeliveryOptions.Any(o => o.IsDefault),
+            IsActive = true
         });
+    }
+
+    private void AddCategory(SupplierDeliveryOptionDto o, string category)
+    {
+        var current = (o.PostageCategories ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        if (!current.Contains(category, StringComparer.OrdinalIgnoreCase)) current.Add(category);
+        o.PostageCategories = string.Join(",", current);
     }
 
     private async Task SaveOption(SupplierDto s, SupplierDeliveryOptionDto o)
     {
+        var key = OptionKey(o);
+        optionStatus.Remove(key);
+
+        if (string.IsNullOrWhiteSpace(o.Name))
+        {
+            optionStatus[key] = ("Enter an option name first.", true);
+            return;
+        }
+
+        optionBusy.Add(key);
         try
         {
             if (o.Id == 0)
             {
                 var created = await ListingService.AddDeliveryOptionAsync(s.Id, o);
-                if (created != null) o.Id = created.Id;
+                if (created == null) throw new Exception("The server didn't return the new option.");
+                o.Id = created.Id;
+                key = OptionKey(o);
             }
             else
             {
                 await ListingService.UpdateDeliveryOptionAsync(o);
             }
-            // The server keeps a single default; save the others so the UI and DB agree.
-            Show($"Saved '{o.Name}'.");
-            if (o.IsDefault) await Load();
+
+            // The server keeps one default per supplier; mirror that here without reloading
+            // (a reload would throw away unsaved edits on other options).
+            if (o.IsDefault)
+            {
+                foreach (var other in s.DeliveryOptions.Where(x => x != o)) other.IsDefault = false;
+            }
+            optionStatus[key] = ("✓ Saved", false);
         }
-        catch (Exception ex) { Show($"Save failed: {ex.Message}", true); }
+        catch (Exception ex)
+        {
+            optionStatus[key] = ($"Not saved: {ex.Message}", true);
+        }
+        finally
+        {
+            optionBusy.Remove(OptionKey(o));
+            optionBusy.Remove(key);
+        }
     }
 
     private async Task DeleteOption(SupplierDto s, SupplierDeliveryOptionDto o)
