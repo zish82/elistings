@@ -47,8 +47,9 @@ public class EdenSupplierSyncService : IEdenSupplierSyncService
         var listings = await _context.Listings
             .Where(l => l.Status == "Published"
                         && !string.IsNullOrWhiteSpace(l.SourceUrl)
-                        && (EF.Functions.Like(l.SourceUrl!, "%edenhorticulture.co.uk%")
-                            || EF.Functions.Like(l.SourceUrl!, "%safelincs.co.uk%")))
+                        // ToLower: works the same on PostgreSQL (case-sensitive LIKE) and SQLite.
+                        && (l.SourceUrl!.ToLower().Contains("edenhorticulture.co.uk")
+                            || l.SourceUrl!.ToLower().Contains("safelincs.co.uk")))
             .ToListAsync();
 
         run.ProcessedCount = listings.Count;

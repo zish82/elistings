@@ -29,3 +29,6 @@ Server/appsettings.Development.json
 
 # FUSE temp files
 .fuse_hidden*
+
+# Docker secrets
+.env

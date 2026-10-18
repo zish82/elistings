@@ -308,6 +308,8 @@ working or even refresh the page – the progress bar picks up where it was.
   (development mode), and trigger scheduled jobs from there.
 - If the server restarts while a job is running, it shows *Interrupted by a server restart*; Hangfire normally
   resumes it automatically.
+- Hangfire keeps its data in the app database (PostgreSQL schema `hangfire`). See **DEPLOY.md** for the database,
+  Docker and hosting setup.
 
 ---
 

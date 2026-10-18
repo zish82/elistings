@@ -18,6 +18,29 @@ public class AppDbContext : DbContext
     public DbSet<Supplier> Suppliers { get; set; }
     public DbSet<SupplierDeliveryOption> SupplierDeliveryOptions { get; set; }
     public DbSet<BulkJobRecord> BulkJobs { get; set; }
+
+    /// <summary>
+    /// Indexes (used when EF creates the schema, i.e. PostgreSQL and new databases; existing SQLite databases
+    /// get the same indexes from LegacySqliteSchema).
+    /// </summary>
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<AppUser>().HasIndex(u => u.Email).IsUnique();
+        modelBuilder.Entity<EbayTokenInfo>().HasIndex(t => t.UserId);
+        modelBuilder.Entity<Listing>().HasIndex(l => l.OwnerUserId);
+        modelBuilder.Entity<Listing>().HasIndex(l => l.SupplierProductId);
+        modelBuilder.Entity<Listing>().HasIndex(l => l.Sku);
+        modelBuilder.Entity<SupplierFeed>().HasIndex(f => new { f.Supplier, f.FeedType, f.Url }).IsUnique();
+        modelBuilder.Entity<SupplierProduct>().HasIndex(p => new { p.Supplier, p.SupplierSku });
+        modelBuilder.Entity<SupplierProduct>().HasIndex(p => new { p.Supplier, p.ExternalProductId });
+        modelBuilder.Entity<SupplierProduct>().HasIndex(p => p.GroupKey);
+        modelBuilder.Entity<SupplierListingSnapshot>().HasIndex(s => new { s.ListingId, s.CheckedAtUtc });
+        modelBuilder.Entity<Supplier>().HasIndex(s => s.Code).IsUnique();
+        modelBuilder.Entity<SupplierDeliveryOption>().HasIndex(o => o.SupplierId);
+        modelBuilder.Entity<BulkJobRecord>().HasIndex(j => new { j.Type, j.Tag });
+    }
 }
 
 /// <summary>

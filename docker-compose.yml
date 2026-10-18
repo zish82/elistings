@@ -1,0 +1,75 @@
+# eListings: app + PostgreSQL (+ optional Caddy for HTTPS on a server).
+#
+#   Local:      cp .env.example .env   (fill in values)   then   docker compose up --build
+#               App: http://localhost:8080
+#   Server:     set DOMAIN in .env and run   docker compose --profile https up -d --build
+#               Caddy gets a free HTTPS certificate for DOMAIN automatically.
+#
+# Data lives in the "pgdata" volume (back it up – see DEPLOY.md).
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-elistings}
+      POSTGRES_USER: ${POSTGRES_USER:-elistings}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Only reachable from this machine (for tools / the one-off SQLite copy). Remove if not needed.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-elistings} -d ${POSTGRES_DB:-elistings}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-local}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=${POSTGRES_DB:-elistings};Username=${POSTGRES_USER:-elistings};Password=${POSTGRES_PASSWORD}"
+      # eBay (production keys from developer.ebay.com). RuName "auth accepted URL" must be https://DOMAIN/api/auth/callback
+      EbaySettings__AppId: ${EBAY_APP_ID:-}
+      EbaySettings__CertId: ${EBAY_CERT_ID:-}
+      EbaySettings__DevId: ${EBAY_DEV_ID:-}
+      EbaySettings__RuName: ${EBAY_RUNAME:-}
+      EbaySettings__RedirectUri: https://${DOMAIN:-localhost}/api/auth/callback
+      EbaySettings__IsSandbox: ${EBAY_IS_SANDBOX:-false}
+      # Supplier trade logins
+      EdenSupplier__Username: ${EDEN_USERNAME:-}
+      EdenSupplier__Password: ${EDEN_PASSWORD:-}
+      DropShipMall__Username: ${DSM_USERNAME:-}
+      DropShipMall__Password: ${DSM_PASSWORD:-}
+    ports:
+      - "8080:8080"
+
+  # HTTPS reverse proxy for a real server: docker compose --profile https up -d
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    depends_on: [app]
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env for HTTPS}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

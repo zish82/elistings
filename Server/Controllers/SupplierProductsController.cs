@@ -55,8 +55,9 @@ public class SupplierProductsController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(q.Search))
         {
-            var term = q.Search.Trim();
-            query = query.Where(p => p.Title.Contains(term) || (p.SupplierSku ?? string.Empty).Contains(term));
+            // Lower-cased on both sides: PostgreSQL's LIKE is case-sensitive (SQLite's isn't).
+            var term = q.Search.Trim().ToLower();
+            query = query.Where(p => p.Title.ToLower().Contains(term) || (p.SupplierSku ?? string.Empty).ToLower().Contains(term));
         }
 
         if (!string.IsNullOrWhiteSpace(q.Category))

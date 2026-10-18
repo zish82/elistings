@@ -1,0 +1,5 @@
+# HTTPS for the app. DOMAIN comes from .env (e.g. listings.example.co.uk); its DNS A record must point at this server.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:8080
+}
