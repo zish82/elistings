@@ -19,7 +19,7 @@ public class SupplierProductsController : ControllerBase
     private readonly IFeedProductSyncService _feedProductSyncService;
     private readonly IOptions<EbaySettings> _ebaySettings;
     private readonly ProductEnrichmentService _enrichment;
-    private readonly BulkJobRunner _jobRunner;
+    private readonly Server.Services.Jobs.BulkJobService _jobs;
     private readonly SkuService _skuService;
 
     public SupplierProductsController(
@@ -28,7 +28,7 @@ public class SupplierProductsController : ControllerBase
         IFeedProductSyncService feedProductSyncService,
         IOptions<EbaySettings> ebaySettings,
         ProductEnrichmentService enrichment,
-        BulkJobRunner jobRunner,
+        Server.Services.Jobs.BulkJobService jobs,
         SkuService skuService)
     {
         _skuService = skuService;
@@ -37,7 +37,7 @@ public class SupplierProductsController : ControllerBase
         _feedProductSyncService = feedProductSyncService;
         _ebaySettings = ebaySettings;
         _enrichment = enrichment;
-        _jobRunner = jobRunner;
+        _jobs = jobs;
     }
 
     [HttpGet]
@@ -152,7 +152,7 @@ public class SupplierProductsController : ControllerBase
     [HttpGet("import-status")]
     public async Task<ActionResult<SupplierImportStatusDto>> GetImportStatus([FromQuery] string supplier)
     {
-        var job = _jobRunner.FindLatest("import", supplier ?? string.Empty);
+        var job = await _jobs.FindLatestAsync("import", supplier);
         var lastUpdated = await _context.SupplierProducts
             .Where(p => p.Supplier == supplier)
             .OrderByDescending(p => p.UpdatedAtUtc)
@@ -162,7 +162,7 @@ public class SupplierProductsController : ControllerBase
         return Ok(new SupplierImportStatusDto
         {
             JobId = job?.Id,
-            IsRunning = job != null && !job.ToDto().IsFinished,
+            IsRunning = Server.Services.Jobs.BulkJobService.IsActive(job),
             LastUpdatedAtUtc = lastUpdated
         });
     }
@@ -265,32 +265,8 @@ public class SupplierProductsController : ControllerBase
             .ToList();
         if (toEnrich.Any())
         {
-            var job = _jobRunner.Start("enrich", User, userId.Value, async (services, bulkJob) =>
-            {
-                var context = services.GetRequiredService<AppDbContext>();
-                var enrichment = services.GetRequiredService<ProductEnrichmentService>();
-                bulkJob.Total = toEnrich.Count;
-                bulkJob.Message = "Fetching product details from supplier websites...";
-                foreach (var listingId in toEnrich)
-                {
-                    try
-                    {
-                        var listing = await context.Listings.FirstOrDefaultAsync(l => l.Id == listingId);
-                        if (listing == null) { bulkJob.ItemSkipped(); continue; }
-                        var (ok, message) = await enrichment.EnrichListingAsync(listing, force: false);
-                        if (ok && !message.StartsWith("Could not", StringComparison.Ordinal) && !message.StartsWith("Product page not found", StringComparison.Ordinal)) bulkJob.ItemSucceeded();
-                        else bulkJob.ItemFailed($"#{listingId} {listing.Title}: {message}");
-                    }
-                    catch (Exception ex)
-                    {
-                        context.ChangeTracker.Clear();
-                        bulkJob.ItemFailed($"#{listingId}: {ex.Message}");
-                    }
-                    await Task.Delay(400); // be polite to the supplier site
-                }
-                bulkJob.Message = "Supplier details fetched.";
-            });
-            result.EnrichmentJobId = job.Id;
+            // Runs on Hangfire (BackgroundJobs.EnrichListingsAsync); the page shows its progress.
+            result.EnrichmentJobId = await _jobs.EnqueueEnrichAsync(userId.Value, toEnrich);
         }
 
         return Ok(result);
@@ -328,27 +304,19 @@ public class SupplierProductsController : ControllerBase
         var importer = feed == null ? null : importers.FirstOrDefault(i => i.SupplierCode.Equals(feed.Supplier, StringComparison.OrdinalIgnoreCase));
         if (feed != null && importer != null)
         {
-            var running = _jobRunner.FindLatest("import", importer.SupplierCode);
-            if (running != null && !running.ToDto().IsFinished)
+            var latest = await _jobs.FindLatestAsync("import", importer.SupplierCode);
+            if (Server.Services.Jobs.BulkJobService.IsActive(latest))
             {
-                // Re-attach to the import that's already running instead of starting another.
-                return Ok(new FeedSyncResult { Supplier = feed.Supplier, FeedType = feed.FeedType, JobId = running.Id });
+                // Re-attach to the queued/running import instead of starting another.
+                return Ok(new FeedSyncResult { Supplier = feed.Supplier, FeedType = feed.FeedType, JobId = latest!.Id });
             }
 
             var userId = _currentUserService.UserId;
             if (userId == null) return Unauthorized();
-            var supplierCode = importer.SupplierCode;
 
-            var job = _jobRunner.Start("import", User, userId.Value, async (services, bulkJob) =>
-            {
-                var scopedImporter = services.GetRequiredService<IEnumerable<ISupplierCatalogImporter>>()
-                    .First(i => i.SupplierCode == supplierCode);
-                var progress = new SyncProgress(message => bulkJob.Message = message);
-                var importResult = await scopedImporter.ImportAsync("manual", progress);
-                if (!importResult.IsSuccess) throw new InvalidOperationException(importResult.ErrorMessage);
-            }, tag: supplierCode);
-
-            return Ok(new FeedSyncResult { Supplier = feed.Supplier, FeedType = feed.FeedType, JobId = job.Id });
+            // Runs on Hangfire (Eden imports on the single-worker "eden" queue).
+            var jobId = await _jobs.EnqueueSupplierImportAsync(userId.Value, importer.SupplierCode);
+            return Ok(new FeedSyncResult { Supplier = feed.Supplier, FeedType = feed.FeedType, JobId = jobId });
         }
 
         var result = await _feedProductSyncService.SyncFeedAsync(feedId, "manual-api");
@@ -434,12 +402,4 @@ public class SupplierProductsController : ControllerBase
             _ => string.Empty
         };
     }
-}
-
-/// <summary>Runs progress callbacks inline and in order (unlike Progress&lt;T&gt;, which posts to the thread pool).</summary>
-internal sealed class SyncProgress : IProgress<string>
-{
-    private readonly Action<string> _report;
-    public SyncProgress(Action<string> report) => _report = report;
-    public void Report(string value) => _report(value);
 }

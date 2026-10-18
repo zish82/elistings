@@ -1,9 +1,12 @@
+using Hangfire;
 using Shared;
 
 namespace Server.Services;
 
 public interface IEdenSupplierSyncService
 {
+    /// <summary>Scheduled (Hangfire): one Eden job at a time; one retry an hour later, so failures never hammer the site.</summary>
+    [Queue("eden"), AutomaticRetry(Attempts = 1, DelaysInSeconds = new[] { 3600 })]
     Task RunPublishedSyncAsync();
     Task<SupplierStatusDto> SyncListingAsync(int listingId, string triggeredBy = "manual");
     Task<SupplierStatusDto> CheckSourceAsync(string? sourceUrl, string? supplierSku, string triggeredBy = "manual");

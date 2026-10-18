@@ -84,7 +84,7 @@
 {
     <div class="alert alert-secondary d-flex justify-content-between align-items-center py-2 mb-2">
         <span>Showing all variants of <strong>@groupLabel</strong>. Tick them and use <em>Add all selected to my listings</em>.</span>
-        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearGroup">Show all products</button>
+        <button type="button" class="btn btn-sm btn-primary" @onclick="ClearGroup">&larr; Back to product list</button>
     </div>
 }
 
@@ -170,7 +170,7 @@ else
                 @foreach (var product in products)
                 {
                     var images = string.IsNullOrWhiteSpace(product.ImageUrlsJson) ? Array.Empty<string>() : System.Text.Json.JsonSerializer.Deserialize<string[]>(product.ImageUrlsJson);
-                    <tr>
+                    <tr id="product-@product.Id" class="@(product.Id == highlightProductId ? "table-warning" : "")">
                         <td><input type="checkbox" class="form-check-input" checked="@selectedIds.Contains(product.Id)" @onchange="() => ToggleSelection(product.Id)" /></td>
                         <td>
                             <a href="/products/@product.Id">@product.Title</a>
@@ -267,22 +267,60 @@ else
     private string? groupKey;
     private string groupLabel = "this product";
 
+    // Returning from a group view restores the exact list and scrolls back to the product you clicked.
+    private List<SupplierProductListItemDto>? listBeforeGroup;
+    private int? returnToProductId;
+    private int? highlightProductId;
+    private int? scrollToProductId;
+    private bool scrollToTop;
+
     private async Task ShowGroup(SupplierProductListItemDto product)
     {
+        listBeforeGroup = products.ToList();
+        returnToProductId = product.Id;
+        highlightProductId = null;
         groupKey = product.GroupKey;
         groupLabel = string.IsNullOrWhiteSpace(product.VariantName)
             ? product.Title
             : product.Title.Replace(" - " + product.VariantName, string.Empty);
         selectedIds.Clear();
         await LoadProducts();
+        scrollToTop = true;
     }
 
     private async Task ClearGroup()
     {
         groupKey = null;
         selectedIds.Clear();
-        Navigation.NavigateTo("/products", replace: true);
-        await LoadProducts();
+        if (!string.IsNullOrWhiteSpace(GroupFromUrl)) Navigation.NavigateTo("/products", replace: true);
+
+        if (listBeforeGroup != null)
+        {
+            // Same list as before (no reload), so the position is exactly where you left it.
+            products.Clear();
+            products.AddRange(listBeforeGroup);
+            listBeforeGroup = null;
+            highlightProductId = scrollToProductId = returnToProductId;
+        }
+        else
+        {
+            await LoadProducts(); // opened directly via a group link
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (scrollToTop)
+        {
+            scrollToTop = false;
+            await JS.InvokeVoidAsync("window.scrollTo", 0, 0);
+        }
+        else if (scrollToProductId.HasValue)
+        {
+            var id = scrollToProductId.Value;
+            scrollToProductId = null;
+            await JS.InvokeVoidAsync("eval", $"document.getElementById('product-{id}')?.scrollIntoView({{block:'center'}})");
+        }
     }
     private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrWhiteSpace(category) || !string.IsNullOrEmpty(groupKey)
                                      || minPrice.HasValue || maxPrice.HasValue || inStockOnly || hideAdded;
@@ -440,13 +478,14 @@ else
             var loaded = await ListingService.GetSupplierProductsAsync(new SupplierProductQuery
             {
                 // A group link (e.g. from the Dashboard) doesn't know the supplier; group keys are unique enough.
+                // In a group view only the group applies, so every variant is shown whatever the filters are.
                 Supplier = string.IsNullOrEmpty(groupKey) ? selectedSupplier : null,
-                Search = search,
-                Category = string.IsNullOrWhiteSpace(category) ? null : category,
-                MinPrice = minPrice,
-                MaxPrice = maxPrice,
-                InStockOnly = inStockOnly,
-                HideAdded = hideAdded,
+                Search = string.IsNullOrEmpty(groupKey) ? search : null,
+                Category = string.IsNullOrEmpty(groupKey) && !string.IsNullOrWhiteSpace(category) ? category : null,
+                MinPrice = string.IsNullOrEmpty(groupKey) ? minPrice : null,
+                MaxPrice = string.IsNullOrEmpty(groupKey) ? maxPrice : null,
+                InStockOnly = string.IsNullOrEmpty(groupKey) && inStockOnly,
+                HideAdded = string.IsNullOrEmpty(groupKey) && hideAdded,
                 GroupKey = string.IsNullOrEmpty(groupKey) ? null : groupKey,
                 Sort = sort
             });

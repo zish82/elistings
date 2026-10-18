@@ -22,7 +22,8 @@ marketplace listings, and publishes them to eBay. This guide walks through every
 10. [eBay Accounts (`/ebay-accounts`)](#10-ebay-accounts-ebay-accounts)
 11. [Users (`/users`)](#11-users-users)
 12. [Writing good titles](#12-writing-good-titles)
-13. [Troubleshooting](#13-troubleshooting)
+13. [Background jobs](#13-background-jobs)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -192,7 +193,7 @@ Appears once a category and eBay account are set. Required fields have a red **\
 
 ### eBay Business Policies
 Choose Payment, Fulfillment (shipping) and Return policies. If none appear, a message explains why
-(e.g. the account isn't opted in to business policies – see [Troubleshooting](#13-troubleshooting)).
+(e.g. the account isn't opted in to business policies – see [Troubleshooting](#14-troubleshooting)).
 
 ### Saving
 - **Save as Draft / Save Changes** – saves without publishing.
@@ -293,7 +294,24 @@ Account → Business policies, otherwise listings can't be published.
 
 ---
 
-## 13. Troubleshooting
+## 13. Background jobs
+
+Imports, bulk extract, bulk publish and "fetch details" run in the background (Hangfire), so you can keep
+working or even refresh the page – the progress bar picks up where it was.
+
+- A job first shows **Queued – waiting to start**, then **Running**, then **Completed** or **Failed** with reasons.
+- Jobs that contact **Eden Horticulture** run one at a time, and every request to Eden's website is spaced at
+  least 2 seconds apart, so the app never floods their site.
+- Jobs started from a page are **not retried automatically** – if one fails, fix the cause and start it again.
+  Scheduled Eden jobs retry once, an hour later.
+- Administrators can see every job (queued, running, succeeded, failed, schedules) at **`/hangfire`**
+  (development mode), and trigger scheduled jobs from there.
+- If the server restarts while a job is running, it shows *Interrupted by a server restart*; Hangfire normally
+  resumes it automatically.
+
+---
+
+## 14. Troubleshooting
 
 | Message / problem | What to do |
 |---|---|

@@ -52,8 +52,8 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
 
     public string SupplierCode => Code;
 
-    /// <summary>Daily schedule (Hangfire).</summary>
-    [AutomaticRetry(Attempts = 0)]
+    /// <summary>Daily schedule (Hangfire): Eden queue (one Eden job at a time), one retry an hour later.</summary>
+    [Queue("eden"), AutomaticRetry(Attempts = 1, DelaysInSeconds = new[] { 3600 })]
     public async Task RunScheduledAsync()
     {
         var result = await ImportAsync("scheduler");

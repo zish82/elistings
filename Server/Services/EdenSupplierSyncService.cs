@@ -31,7 +31,7 @@ public class EdenSupplierSyncService : IEdenSupplierSyncService
         _settings = settings.Value;
     }
 
-    [AutomaticRetry(Attempts = 1)]
+    // Hangfire attributes (queue/retry) live on IEdenSupplierSyncService, which the job is registered with.
     public async Task RunPublishedSyncAsync()
     {
         var run = new SupplierSyncRun

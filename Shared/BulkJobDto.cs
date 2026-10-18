@@ -4,7 +4,7 @@ public class BulkJobDto
 {
     public string Id { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;      // "extract" | "publish"
-    public string Status { get; set; } = "Running";       // Running | Completed | Failed
+    public string Status { get; set; } = "Queued";        // Queued | Running | Completed | Failed
     public string? Message { get; set; }
     public int Total { get; set; }
     public int Processed { get; set; }
@@ -15,7 +15,7 @@ public class BulkJobDto
     public DateTime StartedAtUtc { get; set; }
     public DateTime? FinishedAtUtc { get; set; }
 
-    public bool IsFinished => Status != "Running";
+    public bool IsFinished => Status is "Completed" or "Failed";
 }
 
 public class BulkJobStartedDto

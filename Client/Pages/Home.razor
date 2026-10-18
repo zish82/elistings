@@ -130,7 +130,7 @@ else
                 Showing listings for one product group (all its sizes/variants). Tick them and use <em>Bulk Publish to eBay</em>.
                 <a href="/products?group=@Uri.EscapeDataString(groupFilter)" class="ms-2">See all variants in Products</a>
             </span>
-            <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearGroup">Show all listings</button>
+            <button type="button" class="btn btn-sm btn-primary" @onclick="ClearGroup">&larr; Back to all listings</button>
         </div>
     }
 
@@ -208,7 +208,7 @@ else
         <tbody>
             @foreach (var listing in FilteredListings)
             {
-                <tr>
+                <tr id="listing-@listing.Id" class="@(listing.Id == highlightListingId ? "table-warning" : "")">
                     <td>
                         <input type="checkbox" class="form-check-input"
                                checked="@selectedIds.Contains(listing.Id)"
@@ -218,7 +218,7 @@ else
                         <div class="fw-bold">@listing.Title</div>
                         @if (groupFilter == null && GroupCount(listing.SupplierGroupKey) > 1)
                         {
-                            <a href="javascript:void(0)" class="small" @onclick="() => ShowGroup(listing.SupplierGroupKey!)">Group: @GroupCount(listing.SupplierGroupKey) listings</a>
+                            <a href="javascript:void(0)" class="small" @onclick="() => ShowGroup(listing.SupplierGroupKey!, listing.Id)">Group: @GroupCount(listing.SupplierGroupKey) listings</a>
                         }
                     </td>
                     <td>
@@ -310,16 +310,41 @@ else
 
     private int GroupCount(string? key) => key == null ? 0 : listings?.Count(l => l.SupplierGroupKey == key) ?? 0;
 
-    private void ShowGroup(string key)
+    // Back from a group view scrolls to (and highlights) the listing you clicked.
+    private int? returnToListingId;
+    private int? highlightListingId;
+    private int? scrollToListingId;
+    private bool scrollToTop;
+
+    private void ShowGroup(string key, int fromListingId)
     {
         groupFilter = key;
+        returnToListingId = fromListingId;
+        highlightListingId = null;
         selectedIds.Clear();
+        scrollToTop = true;
     }
 
     private void ClearGroup()
     {
         groupFilter = null;
         selectedIds.Clear();
+        highlightListingId = scrollToListingId = returnToListingId;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (scrollToTop)
+        {
+            scrollToTop = false;
+            await JS.InvokeVoidAsync("window.scrollTo", 0, 0);
+        }
+        else if (scrollToListingId.HasValue)
+        {
+            var id = scrollToListingId.Value;
+            scrollToListingId = null;
+            await JS.InvokeVoidAsync("eval", $"document.getElementById('listing-{id}')?.scrollIntoView({{block:'center'}})");
+        }
     }
 
     protected override async Task OnInitializedAsync()

@@ -326,126 +326,27 @@ public class ListingsController : ControllerBase
     }
 
     [HttpPost("bulk-extract")]
-    public ActionResult<BulkJobStartedDto> BulkExtract([FromBody] string categoryUrl, [FromServices] BulkJobRunner jobRunner)
+    public async Task<ActionResult<BulkJobStartedDto>> BulkExtract([FromBody] string categoryUrl, [FromServices] Server.Services.Jobs.BulkJobService jobs)
     {
         if (string.IsNullOrWhiteSpace(categoryUrl)) return BadRequest("Category URL is required");
         if (!Uri.TryCreate(categoryUrl.Trim(), UriKind.Absolute, out _)) return BadRequest("Category URL is not a valid URL.");
 
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
-        var url = categoryUrl.Trim();
 
-        var job = jobRunner.Start("extract", User, userId.Value, async (services, bulkJob) =>
-        {
-            var context = services.GetRequiredService<AppDbContext>();
-            var scraper = services.GetRequiredService<IScraperService>();
-            var skuService = services.GetRequiredService<SkuService>();
-            var settings = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings>>().Value;
-
-            bulkJob.Message = "Finding product links...";
-            var productLinks = await scraper.ExtractProductLinksAsync(url);
-            if (!productLinks.Any())
-            {
-                throw new InvalidOperationException("No product links were found on that page. Check it is a category/collection URL for a supported site (Safelincs or Eden Horticulture).");
-            }
-
-            // Skip products this user already has as listings (re-running a category won't duplicate).
-            var existing = (await context.Listings
-                    .Where(l => l.OwnerUserId == userId.Value && l.SourceUrl != null)
-                    .Select(l => l.SourceUrl!)
-                    .ToListAsync())
-                .Select(NormalizeSourceUrl)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            bulkJob.Total = productLinks.Count;
-            bulkJob.Message = $"Extracting {productLinks.Count} products...";
-
-            string? DefaultPolicy(string type) => context.Policies
-                .FirstOrDefault(p => p.Marketplace.ToLower() == "ebay" && p.PolicyType == type && p.IsDefault)?.PolicyKey;
-            var paymentPolicy = DefaultPolicy("payment") ?? settings.DefaultPaymentPolicyId;
-            var fulfillmentPolicy = DefaultPolicy("fulfillment") ?? settings.DefaultFulfillmentPolicyId;
-            var returnPolicy = DefaultPolicy("return") ?? settings.DefaultReturnPolicyId;
-            var defaultAccountId = context.EbayTokens
-                .Where(t => t.UserId == userId.Value)
-                .OrderByDescending(t => t.IsDefault).ThenBy(t => t.Id)
-                .Select(t => (int?)t.Id)
-                .FirstOrDefault();
-
-            foreach (var link in productLinks)
-            {
-                if (existing.Contains(NormalizeSourceUrl(link)))
-                {
-                    bulkJob.ItemSkipped();
-                    continue;
-                }
-
-                try
-                {
-                    var details = await scraper.ExtractDetailsAsync(link);
-                    if (string.IsNullOrWhiteSpace(details.Title))
-                    {
-                        bulkJob.ItemFailed($"{link}: no title found on page");
-                        continue;
-                    }
-
-                    var newListing = new Listing
-                    {
-                        OwnerUserId = userId.Value,
-                        EbayAccountId = defaultAccountId,
-                        Title = System.Net.WebUtility.HtmlDecode(details.Title).Trim(),
-                        SourceTitle = System.Net.WebUtility.HtmlDecode(details.Title).Trim(),
-                        Description = details.Description ?? string.Empty,
-                        // 0 = "price not set": the editor and publish validation will flag it.
-                        Price = details.PriceIncVat ?? details.Price ?? 0m,
-                        Quantity = 1,
-                        Status = "Draft",
-                        Brand = string.IsNullOrWhiteSpace(details.Brand) ? null : details.Brand,
-                        ImageUrlsJson = JsonSerializer.Serialize(details.ImageUrls ?? new List<string>()),
-                        SourceUrl = link,
-                        PaymentPolicyId = paymentPolicy,
-                        FulfillmentPolicyId = fulfillmentPolicy,
-                        ReturnPolicyId = returnPolicy,
-                        SourceProductCode = details.ProductCode,
-                    };
-                    context.Listings.Add(newListing);
-                    await context.SaveChangesAsync(); // save per item so progress survives a failure
-                    await skuService.EnsureSkuAsync(newListing);
-                    await context.SaveChangesAsync();
-                    existing.Add(NormalizeSourceUrl(link));
-                    bulkJob.ItemSucceeded();
-                }
-                catch (Exception ex)
-                {
-                    context.ChangeTracker.Clear();
-                    bulkJob.ItemFailed($"{link}: {ex.Message}");
-                }
-
-                await Task.Delay(500); // avoid hammering the supplier site
-            }
-
-            bulkJob.Message = $"Created {bulkJob.ToDto().Succeeded} drafts.";
-        });
-
-        return Ok(new BulkJobStartedDto { JobId = job.Id });
+        // Runs on Hangfire (see BackgroundJobs.BulkExtractAsync); the page polls bulk-jobs/{id} for progress.
+        var jobId = await jobs.EnqueueBulkExtractAsync(userId.Value, categoryUrl.Trim());
+        return Ok(new BulkJobStartedDto { JobId = jobId });
     }
 
     [HttpGet("bulk-jobs/{jobId}")]
-    public ActionResult<BulkJobDto> GetBulkJob(string jobId, [FromServices] BulkJobRunner jobRunner)
+    public async Task<ActionResult<BulkJobDto>> GetBulkJob(string jobId, [FromServices] Server.Services.Jobs.BulkJobService jobs)
     {
-        var job = jobRunner.Get(jobId);
-        if (job == null) return NotFound("Job not found (it may have expired or the server restarted).");
-        if (job.OwnerUserId != _currentUserService.UserId && !_currentUserService.CanViewAllListings) return NotFound();
-        return Ok(job.ToDto());
-    }
-
-    private static string NormalizeSourceUrl(string url)
-    {
-        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)) return url.Trim().TrimEnd('/');
-        var path = uri.AbsolutePath;
-        // Shopify: /collections/x/products/y and /products/y are the same product.
-        var productsIdx = path.IndexOf("/products/", StringComparison.OrdinalIgnoreCase);
-        if (productsIdx > 0) path = path.Substring(productsIdx);
-        return (uri.Host.ToLowerInvariant().Replace("www.", "") + path).TrimEnd('/');
+        var job = await jobs.GetAsync(jobId);
+        if (job == null) return NotFound("Job not found.");
+        var owner = await _context.BulkJobs.Where(j => j.Id == jobId).Select(j => j.OwnerUserId).FirstAsync();
+        if (owner != _currentUserService.UserId && !_currentUserService.CanViewAllListings) return NotFound();
+        return Ok(job);
     }
 
     [HttpPost("bulk-delete")]
@@ -566,64 +467,18 @@ public class ListingsController : ControllerBase
     }
 
     [HttpPost("bulk-publish")]
-    public ActionResult<BulkJobStartedDto> BulkPublish([FromBody] List<int> ids, [FromServices] BulkJobRunner jobRunner)
+    public async Task<ActionResult<BulkJobStartedDto>> BulkPublish([FromBody] List<int> ids, [FromServices] Server.Services.Jobs.BulkJobService jobs)
     {
         if (ids == null || !ids.Any()) return BadRequest("No IDs provided");
 
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
-        var canViewAll = _currentUserService.CanViewAllListings;
-        var idList = ids.Distinct().ToList();
 
-        var job = jobRunner.Start("publish", User, userId.Value, async (services, bulkJob) =>
-        {
-            var context = services.GetRequiredService<AppDbContext>();
-            var ebayService = services.GetRequiredService<IEbayService>();
-            var publishSkuService = services.GetRequiredService<SkuService>();
-            var settings = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Server.Configuration.EbaySettings>>().Value;
-
-            bulkJob.Total = idList.Count;
-            bulkJob.Message = $"Publishing {idList.Count} listings...";
-
-            foreach (var id in idList)
-            {
-                var label = $"#{id}";
-                try
-                {
-                    var listing = await context.Listings
-                        .FirstOrDefaultAsync(l => l.Id == id && (canViewAll || l.OwnerUserId == userId.Value));
-                    if (listing == null)
-                    {
-                        bulkJob.ItemFailed($"{label}: not found or access denied");
-                        continue;
-                    }
-                    label = $"#{id} {Truncate(listing.Title, 50)}";
-
-                    var dto = await ListingPublishHelper.PrepareAsync(listing, context, ebayService, settings, publishSkuService);
-                    await context.SaveChangesAsync(); // keep auto-selected category even if eBay rejects
-
-                    var result = await ebayService.CreateListingAsync(dto);
-                    ListingPublishHelper.ApplyPublishResult(listing, result);
-                    await context.SaveChangesAsync();
-                    bulkJob.ItemSucceeded();
-                }
-                catch (Exception ex)
-                {
-                    context.ChangeTracker.Clear();
-                    Console.WriteLine($"Bulk publish failed for {id}: {ex}");
-                    bulkJob.ItemFailed($"{label}: {ex.Message}");
-                }
-            }
-
-            var final = bulkJob.ToDto();
-            bulkJob.Message = $"Published {final.Succeeded}, failed {final.Failed}.";
-        });
-
-        return Ok(new BulkJobStartedDto { JobId = job.Id });
+        // Runs on Hangfire (see BackgroundJobs.BulkPublishAsync) as this user.
+        var jobId = await jobs.EnqueueBulkPublishAsync(userId.Value, ids.Distinct().ToList());
+        return Ok(new BulkJobStartedDto { JobId = jobId });
     }
 
-    private static string Truncate(string? value, int max)
-        => string.IsNullOrEmpty(value) ? string.Empty : (value.Length <= max ? value : value.Substring(0, max) + "...");
 
     private static ListingDto ToListingDto(Listing listing, string? ebayAccountName, string? ownerEmail)
     {

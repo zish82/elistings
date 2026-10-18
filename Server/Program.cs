@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Hangfire;
 using Hangfire.MemoryStorage;
+using Hangfire.Storage.SQLite;
 using Server.Data;
 using System.Net;
 
@@ -15,11 +16,53 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHttpClient();
-builder.Services.AddHangfire(configuration => configuration
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UseMemoryStorage());
-builder.Services.AddHangfireServer();
+
+// Polite access to supplier websites: every HttpClient from the factory goes through the per-host throttle.
+builder.Services.AddSingleton(sp => new Server.Services.HostRequestThrottle(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddTransient<Server.Services.HostThrottlingHandler>();
+builder.Services.ConfigureHttpClientDefaults(http => http.AddHttpMessageHandler<Server.Services.HostThrottlingHandler>());
+
+// Hangfire runs all background work (scheduled + started from pages). Job data is stored in hangfire.db
+// so queues, history and schedules survive restarts. Set "Hangfire:Storage": "Memory" to fall back to in-memory.
+var hangfireStorage = builder.Configuration["Hangfire:Storage"] ?? "SQLite";
+var useSqliteForHangfire = !hangfireStorage.Equals("Memory", StringComparison.OrdinalIgnoreCase);
+// hangfire.db lives next to app.db by default (so it's kept wherever the app's data is kept, e.g. /home/data on Azure).
+var appDbSource = (builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=app.db")
+    .Split(';').Select(p => p.Split('=', 2)).Where(p => p.Length == 2 && p[0].Trim().Equals("Data Source", StringComparison.OrdinalIgnoreCase))
+    .Select(p => p[1].Trim()).FirstOrDefault() ?? "app.db";
+var hangfireDbPath = builder.Configuration["Hangfire:DatabasePath"]
+    ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(appDbSource, builder.Environment.ContentRootPath)) ?? builder.Environment.ContentRootPath, "hangfire.db");
+builder.Services.AddHangfire(configuration =>
+{
+    configuration
+        .UseSimpleAssemblyNameTypeSerializer()
+        .UseRecommendedSerializerSettings();
+    if (useSqliteForHangfire)
+        configuration.UseSQLiteStorage(hangfireDbPath, new SQLiteStorageOptions
+        {
+            // A job is only handed to another worker if it hasn't finished within this time. Must be longer than
+            // our longest job (bulk publish of many listings), otherwise a slow job could run twice at once.
+            InvisibilityTimeout = TimeSpan.FromHours(6),
+            // How quickly an idle worker notices a newly queued job (default 15s feels slow after a click).
+            QueuePollInterval = TimeSpan.FromSeconds(2)
+        });
+    else
+        configuration.UseMemoryStorage();
+});
+// Main worker pool for everything except Eden...
+builder.Services.AddHangfireServer(options =>
+{
+    options.ServerName = $"{Environment.MachineName}:main";
+    options.Queues = new[] { Server.Services.Jobs.BackgroundJobs.DefaultQueue };
+    options.WorkerCount = 4; // plenty for this app, and keeps SQLite write contention low
+});
+// ...and a single worker for the "eden" queue, so only one Eden job (import, sync, scrape) runs at a time.
+builder.Services.AddHangfireServer(options =>
+{
+    options.ServerName = $"{Environment.MachineName}:eden";
+    options.Queues = new[] { Server.Services.Jobs.BackgroundJobs.EdenQueue };
+    options.WorkerCount = 1;
+});
 
 var sqliteConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Data Source=app.db";
@@ -69,7 +112,8 @@ builder.Services.AddAuthorization();
 builder.Services.AddSingleton<Server.Services.IPasswordHasher, Server.Services.PasswordHasher>();
 builder.Services.AddScoped<Server.Services.BackgroundUserContext>();
 builder.Services.AddScoped<Server.Services.ICurrentUserService, Server.Services.CurrentUserService>();
-builder.Services.AddSingleton<Server.Services.BulkJobRunner>();
+builder.Services.AddScoped<Server.Services.Jobs.BulkJobService>();
+builder.Services.AddScoped<Server.Services.Jobs.BackgroundJobs>();
 builder.Services.AddScoped<Server.Services.SupplierCatalogService>();
 // Per-supplier integrations. Onboarding a supplier = add its enricher / stock checker here.
 builder.Services.AddHttpClient<Server.Services.DropShipMallWebsiteClient>();
@@ -675,6 +719,35 @@ using (var scope = app.Services.CreateScope())
         EnsureColumn("SupplierProducts", "TradePriceFetchedAtUtc", "TEXT NULL");
         EnsureColumn("SupplierProducts", "RemovedFromSupplierAtUtc", "TEXT NULL");
 
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""BulkJobs"" (
+                ""Id"" TEXT NOT NULL CONSTRAINT ""PK_BulkJobs"" PRIMARY KEY,
+                ""Type"" TEXT NOT NULL,
+                ""Tag"" TEXT NULL,
+                ""OwnerUserId"" INTEGER NOT NULL,
+                ""Status"" TEXT NOT NULL,
+                ""Message"" TEXT NULL,
+                ""Total"" INTEGER NOT NULL DEFAULT 0,
+                ""Processed"" INTEGER NOT NULL DEFAULT 0,
+                ""Succeeded"" INTEGER NOT NULL DEFAULT 0,
+                ""Skipped"" INTEGER NOT NULL DEFAULT 0,
+                ""Failed"" INTEGER NOT NULL DEFAULT 0,
+                ""ErrorsJson"" TEXT NULL,
+                ""HangfireJobId"" TEXT NULL,
+                ""CreatedAtUtc"" TEXT NOT NULL,
+                ""StartedAtUtc"" TEXT NULL,
+                ""FinishedAtUtc"" TEXT NULL
+            );");
+        db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_BulkJobs_Type_Tag"" ON ""BulkJobs"" (""Type"", ""Tag"");");
+
+        // A job that was running when the server stopped can't still be running now. With persistent Hangfire
+        // storage it will be picked up again (and marked Running again); with in-memory storage queued jobs are lost.
+        var interruptedStatuses = useSqliteForHangfire ? "('Running')" : "('Running','Queued')";
+        db.Database.ExecuteSqlRaw($@"
+            UPDATE ""BulkJobs"" SET ""Status"" = 'Failed', ""FinishedAtUtc"" = CURRENT_TIMESTAMP,
+                   ""Message"" = 'Interrupted by a server restart. Start it again if it doesn''t resume.'
+            WHERE ""Status"" IN {interruptedStatuses};");
+
         // Eden Horticulture catalogue "feed" (Shopify product data), imported by EdenCatalogImportService.
         db.Database.ExecuteSqlRaw(@"
             INSERT OR IGNORE INTO ""SupplierFeeds"" (""Supplier"", ""FeedType"", ""Url"", ""Description"", ""IsRecommended"", ""CreatedAtUtc"")
@@ -717,6 +790,30 @@ using (var scope = app.Services.CreateScope())
     catch (Exception ex)
     {
         Console.WriteLine($"Supplier/delivery migration error: {ex.Message}");
+    }
+}
+
+// Queued job rows whose Hangfire job no longer exists (e.g. hangfire.db was reset) would wait forever.
+using (var scope = app.Services.CreateScope())
+{
+    try
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var monitoring = scope.ServiceProvider.GetRequiredService<JobStorage>().GetMonitoringApi();
+        foreach (var job in db.BulkJobs.Where(j => j.Status == "Queued").ToList())
+        {
+            if (string.IsNullOrEmpty(job.HangfireJobId) || monitoring.JobDetails(job.HangfireJobId) == null)
+            {
+                job.Status = "Failed";
+                job.FinishedAtUtc = DateTime.UtcNow;
+                job.Message = "This job was lost before it started. Start it again.";
+            }
+        }
+        db.SaveChanges();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Job recovery check skipped: {ex.Message}");
     }
 }
 

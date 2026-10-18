@@ -38,14 +38,13 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
         _catalog = catalog;
     }
 
-    [AutomaticRetry(Attempts = 1)]
+    // Hangfire retry policy lives on IFeedProductSyncService (the job is registered via the interface).
     public async Task RunCatalogueImportAsync()
     {
         var result = await ImportCatalogueAsync("scheduler-catalogue");
         LogResult(result);
     }
 
-    [AutomaticRetry(Attempts = 1)]
     public async Task RunStockRefreshAsync()
     {
         var result = await RefreshStockAsync("scheduler-stock");
