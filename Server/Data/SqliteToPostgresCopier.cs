@@ -54,10 +54,10 @@ public static class SqliteToPostgresCopier
         // All or nothing: a failed copy leaves the PostgreSQL database as it was, so it can simply be re-run.
         await using var transaction = await target.Database.BeginTransactionAsync();
 
-        // Starting the app on PostgreSQL seeds reference data (suppliers, delivery options, feeds, policies).
+        // Starting the app on PostgreSQL seeds reference data (suppliers, delivery options, feeds, policies, fee settings).
         // Clear it so the copied rows (with their original ids and any edits made on /suppliers) take its place.
         await target.Database.ExecuteSqlRawAsync(
-            "TRUNCATE \"SupplierDeliveryOptions\", \"SupplierFeeds\", \"Policies\", \"Suppliers\" RESTART IDENTITY;");
+            "TRUNCATE \"SupplierDeliveryOptions\", \"SupplierFeeds\", \"Policies\", \"Suppliers\", \"MarketplaceFeeSettings\" RESTART IDENTITY;");
 
         target.ChangeTracker.AutoDetectChangesEnabled = false;
         try
@@ -91,6 +91,8 @@ public static class SqliteToPostgresCopier
         await CopyAsync(source.SupplierListingSnapshots, s => s.Id, target, "SupplierListingSnapshots");
         await CopyAsync(source.BulkJobs, j => j.Id, target, "BulkJobs", hasIdentity: false);
         await CopyAsync(source.SupplierPriceListItems, i => i.Id, target, "SupplierPriceListItems");
+        await CopyAsync(source.MarketplaceFeeSettings, s => s.Id, target, "MarketplaceFeeSettings");
+        await CopyAsync(source.MarketplaceFeeCategoryRates, r => r.Id, target, "MarketplaceFeeCategoryRates");
         await CopyAsync(source.ProductTags, t => t.Id, target, "ProductTags");
         await CopyAsync(source.SupplierProductTags, t => t.Id, target, "SupplierProductTags");
     }

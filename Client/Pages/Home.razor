@@ -237,6 +237,13 @@ else
                         {
                             <div class="small text-muted">£@listing.Price.ToString("F2") + £@listing.DeliveryCost.Value.ToString("F2") delivery</div>
                         }
+                        @if (listing.EstimatedProfit.HasValue)
+                        {
+                            <div class="small @(listing.BelowMinProfit ? "text-danger fw-semibold" : "text-success")"
+                                 title="Estimated profit per sale after your cost, delivery and eBay fees (£@((listing.EstimatedFees ?? 0m).ToString("F2")))">
+                                Est. profit £@listing.EstimatedProfit.Value.ToString("F2")
+                            </div>
+                        }
                     </td>
                     <td>@(listing.SourcePrice.HasValue ? $"£{listing.SourcePrice.Value:F2}" : "-")</td>
                     <td>@(listing.SourceStockLevel?.ToString() ?? "-")</td>
@@ -524,6 +531,19 @@ else
         
         // Take a copy to avoid concurrent modification issues during iteration if needed
         var idsToProcess = selectedIds.ToList();
+
+        // Warn before publishing listings whose estimated profit is below the minimum (eBay fee settings).
+        var lowProfit = listings?.Where(l => idsToProcess.Contains(l.Id) && l.BelowMinProfit).ToList() ?? new();
+        if (lowProfit.Any())
+        {
+            var names = string.Join("\n", lowProfit.Take(10).Select(l => $"• {l.Title} (est. £{l.EstimatedProfit:F2})"));
+            var more = lowProfit.Count > 10 ? $"\n…and {lowProfit.Count - 10} more" : "";
+            if (!await JS.InvokeAsync<bool>("confirm", $"{lowProfit.Count} selected listing(s) have an estimated profit below your minimum:\n{names}{more}\n\nPublish anyway?"))
+            {
+                isBulkPublishing = false;
+                return;
+            }
+        }
 
         try
         {

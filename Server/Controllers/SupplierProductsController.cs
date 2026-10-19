@@ -147,6 +147,13 @@ public class SupplierProductsController : ControllerBase
             .Select(g => new { ProductId = g.Key, ListingId = g.OrderBy(x => x.Id).Select(x => x.Id).FirstOrDefault() })
             .ToDictionaryAsync(x => x.ProductId, x => x.ListingId);
 
+        // Estimated eBay fees and profit (suggested price + default delivery).
+        var feeSettings = await new MarketplaceFeeService(_context).GetSettingsAsync();
+        var suppliersByCode = (await new SupplierCatalogService(_context).GetAllAsync())
+            .GroupBy(s => s.Code, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var estimates = products.ToDictionary(p => p.Id,
+            p => MarketplaceFeeService.EstimateProduct(p, suppliersByCode.GetValueOrDefault(p.Supplier), feeSettings));
+
         var payload = products.Select(p => new SupplierProductListItemDto
         {
             Id = p.Id,
@@ -167,8 +174,16 @@ public class SupplierProductsController : ControllerBase
             GroupKey = p.GroupKey,
             VariantName = p.VariantName,
             GroupSize = p.GroupKey != null && groupSizes.TryGetValue(p.GroupKey, out var size) ? size : 1,
-            Tags = tagNames[p.Id].OrderBy(n => n).ToList()
+            Tags = tagNames[p.Id].OrderBy(n => n).ToList(),
+            EstimatedProfit = estimates[p.Id]?.Profit,
+            EstimatedFees = estimates[p.Id]?.TotalFees
         }).ToList();
+
+        // The database sorts by a simple profit proxy; put the loaded rows in true estimated-profit order.
+        if (q.Sort == SupplierProductSort.ProfitHighToLow)
+        {
+            payload = payload.OrderByDescending(p => p.EstimatedProfit.HasValue).ThenByDescending(p => p.EstimatedProfit).ToList();
+        }
 
         return Ok(payload);
     }

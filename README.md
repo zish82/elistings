@@ -129,15 +129,16 @@ its supplier category and tags. Promotion tags (Sale, Best Sellers) and brand ta
 
 ### Find products
 The filter bar above the list:
-1. **Sort by** – *Supplier price: high to low* (default), *Approx. profit*, *Stock*, *Title*.
-   You can also click the **Product / Stock / Supplier Price / Approx. Profit** column headers.
+1. **Sort by** – *Supplier price: high to low* (default), *Est. profit*, *Stock*, *Title*.
+   You can also click the **Product / Stock / Supplier Price / Est. Profit** column headers.
 2. **Category**, **Min/Max price**, **In stock only**, **Hide already added**.
 3. **Search** (top) – title or SKU, press **Enter**.
 4. Click **Apply filters** (sort and category apply immediately). **Clear** resets everything.
 5. Up to 500 products are shown at once – narrow the filters to see others.
 
-**Approx. Profit** = suggested price − supplier price. It's a rough guide for spotting valuable items: it does
-**not** deduct VAT, delivery or eBay fees.
+**Est. Profit** = what you'd make per sale at the suggested price with the default delivery: the buyer's total
+minus your cost (inc VAT), delivery and the estimated eBay fees (shown underneath). Red = a loss – raise the
+supplier's margin on *Suppliers & Delivery* or price it up when listing. The fees use the **eBay fees** settings (section 8).
 
 ### Add products to your listings
 - **Add to my listings** on a row, or tick several and click **Add all selected to my listings**.
@@ -257,6 +258,24 @@ One card per supplier. Change values, then click **Save supplier**.
 5. Click **Save** on the row. **×** deletes it.
 
 **Add supplier** (bottom): Code (must match the supplier name used by its feed), Name, website host, SKU prefix.
+
+### eBay fees (top of the page)
+eBay only tells you the fee once an item sells, so the app estimates it from these settings (eBay UK business-seller
+rate card, Feb 2026 – check eBay's fee page and update them when eBay changes its fees):
+
+| Setting | Default |
+|---|---|
+| Final value fee % (of item + postage) | 12.9% (most categories) |
+| Per-order fee | £0.30 up to £10, £0.40 above |
+| Regulatory fee % | 0.35% |
+| VAT-registered | Off: 20% VAT on eBay's fees is added as a cost, no VAT on sales |
+| Minimum profit | £1.00 – you're warned before publishing below this |
+
+**Category rates**: a different final value fee for specific eBay category IDs (the same ID as on the listing).
+
+The estimate appears on **Products** (*Est. Profit*), in the **listing editor** (a breakdown under the price that updates
+as you type) and on the **Dashboard** (under the price; red when below your minimum). Publishing – single or bulk –
+asks for confirmation when the estimated profit is below the minimum.
 
 ---
 

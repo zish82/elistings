@@ -442,6 +442,20 @@ public class ListingService
     public async Task<List<ProductTagDto>> GetSupplierTagsAsync(string supplier)
         => await GetAsync<List<ProductTagDto>>($"api/supplierproducts/tags?supplier={Uri.EscapeDataString(supplier)}") ?? new List<ProductTagDto>();
 
+    // ---- eBay fee settings (fee / profit estimates)
+
+    public async Task<MarketplaceFeeSettingsDto> GetMarketplaceFeesAsync()
+        => await GetAsync<MarketplaceFeeSettingsDto>("api/marketplacefees") ?? new MarketplaceFeeSettingsDto();
+
+    public async Task SaveMarketplaceFeesAsync(MarketplaceFeeSettingsDto settings)
+        => await SendAsync<object>(HttpMethod.Put, "api/marketplacefees", settings);
+
+    public async Task SaveFeeCategoryRateAsync(MarketplaceFeeCategoryRateDto rate)
+        => await SendAsync<object>(HttpMethod.Post, "api/marketplacefees/category-rates", rate);
+
+    public async Task DeleteFeeCategoryRateAsync(int id)
+        => await SendAsync<object>(HttpMethod.Delete, $"api/marketplacefees/category-rates/{id}");
+
     // ---- Suppliers (VAT + delivery options)
 
     public async Task<List<SupplierDto>> GetSuppliersAsync(bool includeInactive = false)

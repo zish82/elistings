@@ -25,8 +25,13 @@ public class SupplierProductListItemDto
     /// <summary>The product's type tags (e.g. "Carbon Filters").</summary>
     public List<string> Tags { get; set; } = new();
 
-    /// <summary>Approximate profit per item: suggested price minus supplier price (before VAT, delivery and fees).</summary>
-    public decimal? ApproxProfit => SuggestedPrice.HasValue && SupplierPrice.HasValue ? SuggestedPrice - SupplierPrice : null;
+    /// <summary>
+    /// Estimated profit per sale at the suggested price with the default delivery: after the supplier cost (inc VAT
+    /// unless VAT-registered), delivery and estimated eBay fees (see /suppliers → eBay fees). Null when unknown.
+    /// </summary>
+    public decimal? EstimatedProfit { get; set; }
+    /// <summary>Estimated eBay fees for that sale (final value + per-order + regulatory, plus VAT on fees when not VAT-registered).</summary>
+    public decimal? EstimatedFees { get; set; }
 }
 
 /// <summary>Filters and sort order for the /products grid (bound from the query string).</summary>

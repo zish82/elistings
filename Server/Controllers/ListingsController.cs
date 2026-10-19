@@ -112,6 +112,21 @@ public class ListingsController : ControllerBase
             })
             .ToListAsync();
 
+        // Estimated eBay fees and profit per sale.
+        var feeSettings = await new MarketplaceFeeService(_context).GetSettingsAsync();
+        var allSuppliers = await new SupplierCatalogService(_context).GetAllAsync();
+        foreach (var dto in listings)
+        {
+            var supplier = dto.SupplierCode != null
+                ? allSuppliers.FirstOrDefault(s => s.Code.Equals(dto.SupplierCode, StringComparison.OrdinalIgnoreCase))
+                : dto.SourceUrl == null ? null : allSuppliers.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s.WebsiteHost)
+                                                                               && dto.SourceUrl.Contains(s.WebsiteHost!, StringComparison.OrdinalIgnoreCase));
+            var estimate = MarketplaceFeeService.EstimateSale(dto.Price, dto.DeliveryCost, dto.IncludeDeliveryInPrice, dto.SourcePrice, dto.CategoryId, supplier, feeSettings);
+            dto.EstimatedProfit = estimate.Profit;
+            dto.EstimatedFees = estimate.TotalFees;
+            dto.BelowMinProfit = estimate.Profit.HasValue && estimate.Profit.Value < feeSettings.MinProfit;
+        }
+
         // Flag listings of disabled suppliers (by linked product, else by the source URL's website).
         var disabled = await _context.Suppliers.AsNoTracking().Where(s => !s.IsActive).Select(s => new { s.Code, s.WebsiteHost }).ToListAsync();
         if (disabled.Count > 0)

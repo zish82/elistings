@@ -529,6 +529,32 @@ public static class LegacySqliteSchema
                 EnsureColumn("Listings", "QuantityZeroedAtUtc", "TEXT NULL");
                 EnsureColumn("SupplierProducts", "CategoryPath", "TEXT NULL");
 
+                // Marketplace fee settings (added Oct 2026).
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""MarketplaceFeeSettings"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_MarketplaceFeeSettings"" PRIMARY KEY AUTOINCREMENT,
+                        ""Marketplace"" TEXT NOT NULL,
+                        ""FinalValueFeePercent"" TEXT NOT NULL,
+                        ""PerOrderFeeSmall"" TEXT NOT NULL,
+                        ""PerOrderFeeLarge"" TEXT NOT NULL,
+                        ""PerOrderFeeThreshold"" TEXT NOT NULL,
+                        ""RegulatoryFeePercent"" TEXT NOT NULL,
+                        ""VatRegistered"" INTEGER NOT NULL DEFAULT 0,
+                        ""VatRatePercent"" TEXT NOT NULL,
+                        ""MinProfit"" TEXT NOT NULL,
+                        ""UpdatedAtUtc"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_MarketplaceFeeSettings_Marketplace"" ON ""MarketplaceFeeSettings"" (""Marketplace"");");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""MarketplaceFeeCategoryRates"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_MarketplaceFeeCategoryRates"" PRIMARY KEY AUTOINCREMENT,
+                        ""Marketplace"" TEXT NOT NULL,
+                        ""CategoryId"" TEXT NOT NULL,
+                        ""CategoryName"" TEXT NULL,
+                        ""FinalValueFeePercent"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_MarketplaceFeeCategoryRates_Marketplace_CategoryId"" ON ""MarketplaceFeeCategoryRates"" (""Marketplace"", ""CategoryId"");");
+
                 // Supplier tags, e.g. Eden "Carbon Filters" (added Oct 2026).
                 db.Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS ""ProductTags"" (

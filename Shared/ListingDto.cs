@@ -54,6 +54,11 @@ public class ListingDto
     public string? SupplierCode { get; set; }
     /// <summary>True when the listing's supplier is disabled (the dashboard hides these by default). Read-only.</summary>
     public bool SupplierDisabled { get; set; }
+    /// <summary>Estimated profit per sale after cost, delivery and eBay fees (null when the source price is unknown). Read-only.</summary>
+    public decimal? EstimatedProfit { get; set; }
+    public decimal? EstimatedFees { get; set; }
+    /// <summary>True when <see cref="EstimatedProfit"/> is below the minimum set in the eBay fee settings. Read-only.</summary>
+    public bool BelowMinProfit { get; set; }
 
     /// <summary>Item price + delivery (when included): what the marketplace listing is priced at.</summary>
     public decimal TotalPrice => PricingMath.ListingTotal(Price, DeliveryCost, IncludeDeliveryInPrice);

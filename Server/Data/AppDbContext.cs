@@ -19,6 +19,8 @@ public class AppDbContext : DbContext
     public DbSet<SupplierDeliveryOption> SupplierDeliveryOptions { get; set; }
     public DbSet<BulkJobRecord> BulkJobs { get; set; }
     public DbSet<SupplierPriceListItem> SupplierPriceListItems { get; set; }
+    public DbSet<MarketplaceFeeSettings> MarketplaceFeeSettings { get; set; }
+    public DbSet<MarketplaceFeeCategoryRate> MarketplaceFeeCategoryRates { get; set; }
     public DbSet<ProductTag> ProductTags { get; set; }
     public DbSet<SupplierProductTag> SupplierProductTags { get; set; }
 
@@ -44,6 +46,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SupplierDeliveryOption>().HasIndex(o => o.SupplierId);
         modelBuilder.Entity<BulkJobRecord>().HasIndex(j => new { j.Type, j.Tag });
         modelBuilder.Entity<SupplierPriceListItem>().HasIndex(i => new { i.Supplier, i.ProductCode });
+        modelBuilder.Entity<MarketplaceFeeSettings>().HasIndex(s => s.Marketplace).IsUnique();
+        modelBuilder.Entity<MarketplaceFeeCategoryRate>().HasIndex(r => new { r.Marketplace, r.CategoryId }).IsUnique();
         modelBuilder.Entity<ProductTag>().HasIndex(t => new { t.Supplier, t.NormalizedName }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => new { t.SupplierProductId, t.ProductTagId }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => t.ProductTagId);
@@ -72,6 +76,32 @@ public class BulkJobRecord
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAtUtc { get; set; }
     public DateTime? FinishedAtUtc { get; set; }
+}
+
+/// <summary>Selling-fee settings per marketplace (one row for "eBay"); see Shared.MarketplaceFeeSettingsDto.</summary>
+public class MarketplaceFeeSettings
+{
+    public int Id { get; set; }
+    public string Marketplace { get; set; } = "eBay";
+    public decimal FinalValueFeePercent { get; set; } = 12.9m;
+    public decimal PerOrderFeeSmall { get; set; } = 0.30m;
+    public decimal PerOrderFeeLarge { get; set; } = 0.40m;
+    public decimal PerOrderFeeThreshold { get; set; } = 10m;
+    public decimal RegulatoryFeePercent { get; set; } = 0.35m;
+    public bool VatRegistered { get; set; }
+    public decimal VatRatePercent { get; set; } = 20m;
+    public decimal MinProfit { get; set; } = 1m;
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>Final value fee % for one marketplace category (overrides the default).</summary>
+public class MarketplaceFeeCategoryRate
+{
+    public int Id { get; set; }
+    public string Marketplace { get; set; } = "eBay";
+    public string CategoryId { get; set; } = string.Empty;
+    public string? CategoryName { get; set; }
+    public decimal FinalValueFeePercent { get; set; }
 }
 
 /// <summary>A supplier's product tag/collection, e.g. Eden "Carbon Filters". Per supplier, because names mean different things.</summary>

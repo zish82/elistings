@@ -192,7 +192,7 @@ else
         <label class="form-label small">Sort by</label>
         <select class="form-select form-select-sm" value="@sort" @onchange="OnSortChanged">
             <option value="@SupplierProductSort.PriceHighToLow">Supplier price: high to low</option>
-            <option value="@SupplierProductSort.ProfitHighToLow">Approx. profit: high to low</option>
+            <option value="@SupplierProductSort.ProfitHighToLow">Est. profit: high to low</option>
             <option value="@SupplierProductSort.PriceLowToHigh">Supplier price: low to high</option>
             <option value="@SupplierProductSort.StockHighToLow">Stock: high to low</option>
             <option value="@SupplierProductSort.Title">Title (A–Z)</option>
@@ -288,7 +288,7 @@ else
                         <th>@Header(sortable, "Stock", SupplierProductSort.StockHighToLow)</th>
                         <th>@Header(sortable, "Supplier Price", SupplierProductSort.PriceHighToLow, SupplierProductSort.PriceLowToHigh)</th>
                         <th>Suggested Price</th>
-                        <th title="Suggested price minus supplier price. Before VAT, delivery and marketplace fees.">@Header(sortable, "Approx. Profit", SupplierProductSort.ProfitHighToLow)</th>
+                        <th title="Estimated profit per sale at the suggested price + default delivery, after your cost (inc VAT unless you're VAT-registered), delivery and estimated eBay fees. Fee settings: Suppliers & Delivery → eBay fees.">@Header(sortable, "Est. Profit", SupplierProductSort.ProfitHighToLow)</th>
                         <th>Status</th>
                         <th class="text-end">Actions</th>
                     </tr>
@@ -350,7 +350,20 @@ else
                                 }
                             </td>
                             <td>@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</td>
-                            <td>@(product.ApproxProfit.HasValue ? $"£{product.ApproxProfit.Value:F2}" : "-")</td>
+                            <td>
+                                @if (product.EstimatedProfit.HasValue)
+                                {
+                                    <span class="@(product.EstimatedProfit.Value < 0 ? "text-danger fw-semibold" : "")">£@product.EstimatedProfit.Value.ToString("F2")</span>
+                                    @if (product.EstimatedFees.HasValue)
+                                    {
+                                        <div class="small text-muted">fees £@product.EstimatedFees.Value.ToString("F2")</div>
+                                    }
+                                }
+                                else
+                                {
+                                    <span>-</span>
+                                }
+                            </td>
                             <td>
                                 @if (product.AlreadyAdded)
                                 {

@@ -202,19 +202,49 @@
                     Delivery is always included in the listing price for now (listed with free postage); charging postage separately isn't implemented yet.
                 </div>
 
-                @if (CostIncVat.HasValue)
+                @if (feeSettings != null)
                 {
-                    var totalCost = CostIncVat.Value + (listing.DeliveryCost ?? 0m);
-                    var margin = ListingTotal - totalCost;
-                    <div class="small text-muted">
-                        Your cost: item £@CostIncVat.Value.ToString("F2") inc VAT
-                        @if (supplierContext?.Supplier is { PricesIncludeVat: false } && listing.SourcePrice.HasValue)
+                    var est = FeeEstimate;
+                    <div class="border rounded p-2 small bg-light">
+                        <div class="fw-semibold mb-1">Estimated profit per sale</div>
+                        <table class="table table-sm table-borderless mb-1" style="max-width: 460px;">
+                            <tbody>
+                                <tr><td>Buyer pays (item + delivery)</td><td class="text-end">£@est.SaleTotal.ToString("F2")</td></tr>
+                                @if (est.SalesVat > 0)
+                                {
+                                    <tr><td>− VAT on the sale</td><td class="text-end">£@est.SalesVat.ToString("F2")</td></tr>
+                                }
+                                <tr>
+                                    <td>− eBay fees
+                                        <span class="text-muted">(@est.FinalValueFeePercent.ToString("0.##")% final value £@est.FinalValueFee.ToString("F2") + order £@est.PerOrderFee.ToString("F2") + regulatory £@est.RegulatoryFee.ToString("F2")@(est.VatOnFees > 0 ? $" + VAT £{est.VatOnFees:F2}" : ""))</span>
+                                    </td>
+                                    <td class="text-end">£@est.TotalFees.ToString("F2")</td>
+                                </tr>
+                                <tr>
+                                    <td>− Item cost @(feeSettings.VatRegistered ? "(ex VAT)" : "(inc VAT)")</td>
+                                    <td class="text-end">@(est.ItemCost.HasValue ? $"£{est.ItemCost.Value:F2}" : "enter Source Price")</td>
+                                </tr>
+                                <tr><td>− Delivery</td><td class="text-end">£@est.DeliveryCost.ToString("F2")</td></tr>
+                                <tr class="border-top">
+                                    <td class="fw-semibold">= Profit</td>
+                                    <td class="text-end fw-bold @(!est.Profit.HasValue ? "" : est.Profit < feeSettings.MinProfit ? "text-danger" : "text-success")">
+                                        @(est.Profit.HasValue ? $"£{est.Profit.Value:F2}" : "-")
+                                        @if (est.MarginPercent.HasValue)
+                                        {
+                                            <span class="fw-normal text-muted">(@est.MarginPercent.Value.ToString("0.#")%)</span>
+                                        }
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        @if (est.Profit.HasValue && est.Profit.Value < feeSettings.MinProfit)
                         {
-                            <span>(£@listing.SourcePrice.Value.ToString("F2") + VAT)</span>
+                            <div class="text-danger">Below your minimum profit of £@feeSettings.MinProfit.ToString("F2").</div>
                         }
-                        + delivery £@((listing.DeliveryCost ?? 0m).ToString("F2"))
-                        = <strong>£@totalCost.ToString("F2")</strong>.
-                        Margin before marketplace fees: <strong class="@(margin < 0 ? "text-danger" : "text-success")">£@margin.ToString("F2")</strong>
+                        <div class="text-muted">
+                            Estimate from your eBay fee settings (<a href="/suppliers">Suppliers &amp; Delivery</a>)@(string.IsNullOrWhiteSpace(listing.CategoryId) ? "; set the eBay category for its exact rate" : "").
+                            eBay works out the real fee when the item sells.
+                        </div>
                     </div>
                 }
             </div>
@@ -520,48 +550,7 @@
     </EditForm>
 </div>
 
-<div class="container mt-3">
-    <div class="d-flex align-items-center mb-2">
-        <button class="btn btn-sm btn-outline-primary me-2" @onclick="PreviewFees" disabled="@isFetchingFees">Preview Fees</button>
-        @if (isFetchingFees)
-        {
-            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-            <div class="small text-muted ms-2">Fetching fee estimate...</div>
-        }
-    </div>
-
-    @if (!string.IsNullOrEmpty(feeError))
-    {
-        <div class="alert alert-danger">@feeError</div>
-    }
-
-    @if (feePayload.HasValue)
-    {
-        <div class="card mb-3">
-            <div class="card-body">
-                <h5 class="card-title">Fee Estimate</h5>
-                <div class="mb-2">Total Fees: <strong>£@feeTotal</strong></div>
-                @if (CostIncVat.HasValue)
-                {
-                    var cost = CostIncVat.Value + (listing.DeliveryCost ?? 0m);
-                    var net = ListingTotal - feeTotal - cost;
-                    <div class="mb-2">Listing total: £@ListingTotal.ToString("F2") · Your cost (item + VAT + delivery): £@cost.ToString("F2")</div>
-                    <div class="mb-2">Estimated Net (Total - Fees - Cost): <strong class="@(net < 0 ? "text-danger" : "")">£@net.ToString("F2")</strong></div>
-                }
-
-                @if (feeBreakdown.Any())
-                {
-                    <ul class="list-unstyled small">
-                        @foreach (var item in feeBreakdown)
-                        {
-                            <li>@item.Label: £@item.Amount</li>
-                        }
-                    </ul>
-                }
-            </div>
-        </div>
-    }
-</div>
+@* eBay's fee API preview was replaced by the fee/profit estimate next to the price (see FeeEstimate). *@
 
 @code {
     [Parameter]
@@ -599,11 +588,6 @@
     private string publishStatusShort = "Processing...";
     private bool isPublishing = false;
 
-    private bool isFetchingFees = false;
-    private string feeError = "";
-    private System.Text.Json.JsonElement? feePayload = null;
-    private decimal feeTotal = 0m;
-    private List<(string Label, decimal Amount)> feeBreakdown = new();
     private SupplierStatusDto? supplierStatus;
     private bool isCheckingSupplier = false;
     private string? supplierStatusError;
@@ -626,6 +610,11 @@
     private decimal? CostIncVat => PricingMath.CostIncVat(listing.SourcePrice, supplierContext?.Supplier);
 
     private decimal? SuggestedItemPrice => PricingMath.SuggestItemPrice(CostIncVat, supplierContext?.Supplier?.DefaultMarginPercent ?? 20m);
+
+    // eBay fee estimate (settings on /suppliers), recalculated as the price/delivery/category change.
+    private MarketplaceFeeSettingsDto? feeSettings;
+    private FeeEstimate FeeEstimate => FeeMath.EstimateSale(listing.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice,
+        listing.SourcePrice, listing.CategoryId, supplierContext?.Supplier, feeSettings ?? new MarketplaceFeeSettingsDto());
 
     private void CopyExtras(ListingDto source)
     {
@@ -739,6 +728,8 @@
         }
 
         await LoadEbayAccounts();
+        try { feeSettings = await ListingService.GetMarketplaceFeesAsync(); }
+        catch (Exception ex) { Console.WriteLine($"Could not load eBay fee settings: {ex.Message}"); }
 
         if (Id.HasValue)
         {
@@ -1337,6 +1328,14 @@
             if (!proceed) return;
         }
 
+        // Warn when the estimated profit is below the minimum set in the eBay fee settings.
+        var estimate = FeeEstimate;
+        if (feeSettings != null && estimate.Profit.HasValue && estimate.Profit.Value < feeSettings.MinProfit
+            && !await JS.InvokeAsync<bool>("confirm", $"Estimated profit is £{estimate.Profit.Value:F2} per sale, below your minimum of £{feeSettings.MinProfit:F2}. Publish anyway?"))
+        {
+            return;
+        }
+
         isPublishing = true;
         publishStatus = "Step 1/2: Saving local changes...";
         publishStatusShort = "Saving...";
@@ -1378,80 +1377,4 @@
         }
     }
 
-    private async Task PreviewFees()
-    {
-        feeError = "";
-        feePayload = null;
-        feeBreakdown.Clear();
-        feeTotal = 0m;
-        isFetchingFees = true;
-        try
-        {
-            var dto = new Shared.ListingDto
-            {
-                EbayAccountId = listing.EbayAccountId,
-                Title = listing.Title,
-                Description = listing.Description,
-                Price = ListingTotal, // marketplace price = item + delivery
-                Quantity = listing.Quantity,
-                CategoryId = listing.CategoryId,
-                FulfillmentPolicyId = listing.FulfillmentPolicyId,
-                PaymentPolicyId = listing.PaymentPolicyId,
-                ReturnPolicyId = listing.ReturnPolicyId,
-                Type = listing.Type,
-                Brand = listing.Brand,
-                Colour = listing.Colour,
-                ImageUrls = listing.ImageUrls
-            };
-
-            var payload = await ListingService.GetFeeEstimateAsync(dto);
-            feePayload = payload;
-
-            // Parse feeSummaries if present
-            if (payload.ValueKind == System.Text.Json.JsonValueKind.Object)
-            {
-                var root = payload;
-                if (root.TryGetProperty("feeSummaries", out var fs) && fs.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var item in fs.EnumerateArray())
-                    {
-                        string label = item.TryGetProperty("feeType", out var ft) ? ft.GetString() ?? "Fee" : "Fee";
-                        decimal amt = 0m;
-                        if (item.TryGetProperty("fee", out var feeNode) && feeNode.ValueKind == System.Text.Json.JsonValueKind.Object)
-                        {
-                            if (feeNode.TryGetProperty("value", out var v))
-                            {
-                                var s = v.GetString() ?? v.GetRawText();
-                                if (decimal.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-                                {
-                                    amt = parsed;
-                                }
-                            }
-                        }
-                        feeBreakdown.Add((label, amt));
-                        feeTotal += amt;
-                    }
-                }
-                else if (root.TryGetProperty("total", out var tot) && tot.ValueKind == System.Text.Json.JsonValueKind.Object)
-                {
-                    if (tot.TryGetProperty("value", out var v))
-                    {
-                        var s = v.GetString() ?? v.GetRawText();
-                        if (decimal.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-                        {
-                            feeTotal = parsed;
-                        }
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            feeError = ex.Message;
-        }
-        finally
-        {
-            isFetchingFees = false;
-        }
-    }
 }

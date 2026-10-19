@@ -14,6 +14,7 @@ public static class SeedData
         EnsureSupplierFeeds(db);
         EnsureDefaultPolicies(db, configuration);
         BackfillListingSupplierCategories(db);
+        EnsureFeeSettings(db);
         RecoverInterruptedJobs(db, hangfireIsPersistent);
         db.SaveChanges();
     }
@@ -90,6 +91,24 @@ public static class SeedData
             feed.CreatedAtUtc = DateTime.UtcNow;
             db.SupplierFeeds.Add(feed);
         }
+    }
+
+    /// <summary>eBay UK business-seller rate card (Feb 2026), not VAT-registered. Edited on /suppliers.</summary>
+    private static void EnsureFeeSettings(AppDbContext db)
+    {
+        if (db.MarketplaceFeeSettings.Any(s => s.Marketplace == "eBay")) return;
+        db.MarketplaceFeeSettings.Add(new MarketplaceFeeSettings
+        {
+            Marketplace = "eBay",
+            FinalValueFeePercent = 12.9m,
+            PerOrderFeeSmall = 0.30m,
+            PerOrderFeeLarge = 0.40m,
+            PerOrderFeeThreshold = 10m,
+            RegulatoryFeePercent = 0.35m,
+            VatRegistered = false,
+            VatRatePercent = 20m,
+            MinProfit = 1m
+        });
     }
 
     /// <summary>Listings created before supplier categories were stored get the category of their supplier product.</summary>
