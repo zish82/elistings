@@ -47,16 +47,7 @@ public static class ListingPublishHelper
             throw new InvalidOperationException("Cannot publish: " + string.Join(", ", problems) + ".");
         }
 
-        // Category: my category's eBay mapping first, else eBay's top suggestion from the title.
-        if (string.IsNullOrWhiteSpace(listing.CategoryId))
-        {
-            var mapped = await new CatalogCategoryService(context).FindChannelCategoryAsync(listing.CatalogCategoryId, SalesChannels.Ebay);
-            if (mapped != null)
-            {
-                listing.CategoryId = mapped.ExternalId;
-                listing.CategoryName = mapped.ExternalName;
-            }
-        }
+        // Category: auto-pick eBay's top suggestion from the title when none is set.
         if (string.IsNullOrWhiteSpace(listing.CategoryId))
         {
             var suggestions = await ebayService.GetCategorySuggestionsAsync(listing.Title, listing.EbayAccountId);

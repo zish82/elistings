@@ -34,17 +34,15 @@ public class SafelincsCatalogImportService : ISupplierCatalogImporter
     private readonly SupplierCatalogService _catalog;
     private readonly SupplierPriceListService _priceList;
     private readonly ProductTagService _tags;
-    private readonly CatalogCategoryService _categories;
 
     public SafelincsCatalogImportService(AppDbContext context, IHttpClientFactory httpClientFactory,
-        SupplierCatalogService catalog, SupplierPriceListService priceList, ProductTagService tags, CatalogCategoryService categories)
+        SupplierCatalogService catalog, SupplierPriceListService priceList, ProductTagService tags)
     {
         _context = context;
         _httpClientFactory = httpClientFactory;
         _catalog = catalog;
         _priceList = priceList;
         _tags = tags;
-        _categories = categories;
     }
 
     public string SupplierCode => Code;
@@ -213,10 +211,9 @@ public class SafelincsCatalogImportService : ISupplierCatalogImporter
         await UpdateLinkedListingsAsync(seen.Concat(existing).Distinct().ToList(), ct);
         await _context.SaveChangesAsync(ct);
 
-        progress?.Report("Saving tags and categories...");
+        progress?.Report("Saving tags...");
         await _tags.SyncAsync(Code, tagsByEntity.ToDictionary(kv => kv.Key.Id, kv => kv.Value),
             seen.Select(p => p.Brand), ct);
-        await _categories.RecomputeAsync(Code, ct);
 
         if (failedPages > 0) notes.Add($"{failedPages} page(s) could not be loaded; they'll be retried on the next import.");
         if (result.Skipped > 0) notes.Add($"{result.Skipped} item(s) skipped (services, discontinued, or no product code).");
@@ -322,7 +319,7 @@ public class SafelincsCatalogImportService : ISupplierCatalogImporter
         entity.Description = page.DescriptionHtml ?? entity.Description;
         entity.Brand = page.Brand ?? entity.Brand;
         entity.CategoryName = page.Category ?? entity.CategoryName;
-        if (page.Breadcrumbs.Count > 0) entity.CategoryPath = string.Join(CatalogCategoryService.PathSeparator, page.Breadcrumbs);
+        if (page.Breadcrumbs.Count > 0) entity.CategoryPath = string.Join(" › ", page.Breadcrumbs);
         entity.Barcode = page.Barcode ?? entity.Barcode;
         entity.ProductUrl = url;
         if (page.ImageUrls.Count > 0)

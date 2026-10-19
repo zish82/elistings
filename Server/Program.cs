@@ -161,7 +161,6 @@ builder.Services.AddScoped<Server.Services.EdenCatalogImportService>();
 builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.EdenCatalogImportService>());
 builder.Services.AddScoped<Server.Services.SupplierPriceListService>();
 builder.Services.AddScoped<Server.Services.ProductTagService>();
-builder.Services.AddScoped<Server.Services.CatalogCategoryService>();
 builder.Services.AddScoped<Server.Services.SafelincsCatalogImportService>();
 builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.SafelincsCatalogImportService>());
 builder.Services.AddHttpClient("safelincs")

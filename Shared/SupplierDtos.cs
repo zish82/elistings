@@ -117,7 +117,7 @@ public class SupplierCategorySummaryDto
 {
     /// <summary>Supplier grouping: the category (null for products without one).</summary>
     public string? Category { get; set; }
-    /// <summary>My-category grouping: the category id (0 = none). Tag grouping: the tag id (0 = no tag).</summary>
+    /// <summary>Tag grouping: the tag id (0 = no tag).</summary>
     public int? Id { get; set; }
     /// <summary>What to show, e.g. the category path or tag name.</summary>
     public string Label { get; set; } = string.Empty;

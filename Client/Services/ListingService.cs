@@ -223,8 +223,6 @@ public class ListingService
         if (q.InStockOnly) Add("inStockOnly", "true");
         if (q.HideAdded) Add("hideAdded", "true");
         Add("groupKey", q.GroupKey);
-        Add("catalogCategoryId", q.CatalogCategoryId?.ToString(inv));
-        if (!q.IncludeSubcategories) Add("includeSubcategories", "false");
         Add("tagId", q.TagId?.ToString(inv));
         Add("sort", q.Sort);
         Add("limit", q.Limit.ToString(inv));
@@ -443,35 +441,6 @@ public class ListingService
 
     public async Task<List<ProductTagDto>> GetSupplierTagsAsync(string supplier)
         => await GetAsync<List<ProductTagDto>>($"api/supplierproducts/tags?supplier={Uri.EscapeDataString(supplier)}") ?? new List<ProductTagDto>();
-
-    // ---- My categories (/categories)
-
-    public async Task<List<CatalogCategoryDto>> GetCatalogCategoriesAsync()
-        => await GetAsync<List<CatalogCategoryDto>>("api/catalogcategories") ?? new List<CatalogCategoryDto>();
-
-    public async Task<CatalogCategoryDto?> CreateCatalogCategoryAsync(SaveCatalogCategoryRequest request)
-        => await SendAsync<CatalogCategoryDto>(HttpMethod.Post, "api/catalogcategories", request);
-
-    public async Task UpdateCatalogCategoryAsync(int id, SaveCatalogCategoryRequest request)
-        => await SendAsync<object>(HttpMethod.Put, $"api/catalogcategories/{id}", request);
-
-    public async Task DeleteCatalogCategoryAsync(int id)
-        => await SendAsync<object>(HttpMethod.Delete, $"api/catalogcategories/{id}");
-
-    public async Task SetChannelCategoryAsync(int id, string channel, ChannelCategoryRequest request)
-        => await SendAsync<object>(HttpMethod.Put, $"api/catalogcategories/{id}/channels/{Uri.EscapeDataString(channel)}", request);
-
-    public async Task<List<SupplierCategorySourceDto>> GetCategorySourcesAsync(string supplier)
-        => await GetAsync<List<SupplierCategorySourceDto>>($"api/catalogcategories/sources?supplier={Uri.EscapeDataString(supplier)}") ?? new List<SupplierCategorySourceDto>();
-
-    public async Task SaveCategoryMappingAsync(SaveCategoryMappingRequest request)
-        => await SendAsync<object>(HttpMethod.Put, "api/catalogcategories/mappings", request);
-
-    public async Task SetTagTypeAsync(int tagId, string type)
-        => await SendAsync<object>(HttpMethod.Put, $"api/catalogcategories/tags/{tagId}/type", type);
-
-    public async Task<CategoryImportResultDto> ImportCategoriesFromSupplierAsync(ImportSupplierCategoriesRequest request)
-        => await SendAsync<CategoryImportResultDto>(HttpMethod.Post, "api/catalogcategories/import-from-supplier", request) ?? new CategoryImportResultDto();
 
     // ---- Suppliers (VAT + delivery options)
 

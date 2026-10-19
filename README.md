@@ -24,7 +24,6 @@ marketplace listings, and publishes them to eBay. This guide walks through every
 12. [Writing good titles](#12-writing-good-titles)
 13. [Background jobs](#13-background-jobs)
 14. [Troubleshooting](#14-troubleshooting)
-15. [My Categories (`/categories`)](#15-my-categories-categories)
 
 ---
 
@@ -123,9 +122,9 @@ products right there; click again (or **Hide**) to collapse it. Several can be o
 closes them. Ticked products stay ticked across categories, so *Add all selected to my listings* works as usual.
 *(No category)* holds products without one. Click **Products** to go back to the full list.
 
-Group by **Supplier categories**, **My categories** (see section 15) or **Tags** (the supplier's own sections,
-e.g. Eden *Carbon Filters*). The list view has **My category** and **Tag** filters too, and each product shows its
-supplier category, my category (green) and tags.
+Group by **Supplier categories** or **Tags** (the supplier's own website sections, e.g. Eden *Carbon Filters*;
+Safelincs breadcrumb levels – saved by each import). The list view has a **Tag** filter too, and each product shows
+its supplier category and tags. Promotion tags (Sale, Best Sellers) and brand tags aren't offered as filters.
 
 ### Find products
 The filter bar above the list:
@@ -356,37 +355,3 @@ working or even refresh the page – the progress bar picks up where it was.
 | Import shows *est.* prices for Eden | The trade price couldn't be confirmed; check the Eden login is configured and re-run the import. |
 | *Could not reach the server* | The server isn't running or the page was opened on the wrong address. |
 | Nothing happens after clicking a button | Refresh the page (Cmd+Shift+R) to load the latest version of the app. |
-
----
-
-## 15. My Categories (`/categories`)
-
-Your own category tree, the same for every supplier and sales channel (eBay now; your NopCommerce shop and
-Amazon later). Three layers:
-
-1. **Supplier categories and tags** – imported automatically (Eden: product type + its website tags; Safelincs:
-   the breadcrumb path, each level also a tag; DropShipMall: its category).
-2. **My categories** – your tree, e.g. *Garden › Hydroponics › Ventilation › Carbon Filters*.
-3. **Channel categories** – each of my categories can have its eBay category (sub-categories inherit it).
-
-### Getting started
-1. Open **Map supplier categories & tags**, pick a supplier and use **Build my categories from this supplier**.
-   It creates categories from the supplier's categories (and its type tags as sub-categories, under the category
-   most of their products are in), and maps them. Choose *Create them inside* to keep each supplier under a
-   parent (e.g. put DropShipMall's 300 categories under *Gifts & Floristry*).
-2. Tidy the tree on **Category tree**: **Rename / move** (choose a new parent), **Delete** (sub-categories move up a
-   level). Add your own categories with **Add a category**.
-3. Back on the mapping tab, map anything still highlighted (yellow = not mapped). Changes re-sort products straight away.
-
-### How a product's category is chosen
-From the mappings of its supplier category and of its **type** tags: the most specific (deepest) mapped category
-wins. Tags have a type – **Type** (what the product is; used), **Brand**, **Promo** (Sale, Best Sellers) or
-**Ignore** – guessed on import, and you can change them. Imports re-sort products every time, so new products land
-in the right place automatically.
-
-### Listings
-- New listings take my category from their product; the editor shows it as **My category** and you can change it
-  (then mapping changes leave that listing alone).
-- When a listing has no eBay category, its my-category eBay mapping is used (on creation and on publishing),
-  before falling back to eBay's suggestion from the title. Use **Suggest** next to a category to ask eBay, then **Save**.
-

@@ -278,17 +278,6 @@
                 </div>
             }
             
-            <label for="myCategory" class="form-label mt-3">My category</label>
-            <select id="myCategory" class="form-select" value="@(listing.CatalogCategoryId?.ToString() ?? "")" @onchange="OnMyCategoryChanged">
-                <option value="">(none)</option>
-                @foreach (var c in catalogCategories)
-                {
-                    <option value="@c.Id">@c.Path</option>
-                }
-            </select>
-            <div class="small text-muted mt-1">
-                @(listing.CatalogCategoryIsManual ? "Chosen by you (mapping changes won't move it)." : "From the supplier product's mapping on My Categories.")
-            </div>
             @if (!string.IsNullOrWhiteSpace(listing.SupplierCategory))
             {
                 <div class="mt-2 small text-muted" title="The supplier's own category, used to group products and listings. Not sent to eBay.">
@@ -586,13 +575,6 @@
     private bool isExtracting = false;
     private string? extractionError;
     private string? extractedCategory;
-    private List<CatalogCategoryDto> catalogCategories = new();
-
-    private void OnMyCategoryChanged(ChangeEventArgs e)
-    {
-        listing.CatalogCategoryId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
-        listing.CatalogCategoryIsManual = listing.CatalogCategoryId.HasValue;
-    }
     private decimal extractedIncVat;
     private decimal extractedExVat;
     private bool isSuggesting = false;
@@ -655,8 +637,6 @@
         listing.Barcode = source.Barcode;
         listing.SourceTitle = source.SourceTitle;
         listing.SupplierCategory = source.SupplierCategory;
-        listing.CatalogCategoryId = source.CatalogCategoryId;
-        listing.CatalogCategoryIsManual = source.CatalogCategoryIsManual;
     }
 
     /// <summary>Loads supplier VAT/delivery settings; on a listing without delivery yet, applies the suggested option.</summary>
@@ -759,8 +739,6 @@
         }
 
         await LoadEbayAccounts();
-        try { catalogCategories = await ListingService.GetCatalogCategoriesAsync(); }
-        catch (Exception ex) { Console.WriteLine($"Could not load my categories: {ex.Message}"); }
 
         if (Id.HasValue)
         {

@@ -107,17 +107,6 @@ public class ProductEnrichmentService
         listing.SourceUrl ??= product.ProductUrl;
         listing.SourceProductCode ??= product.SupplierSku;
         listing.SupplierCategory ??= product.CategoryName;
-        if (!listing.CatalogCategoryIsManual) listing.CatalogCategoryId ??= product.CatalogCategoryId;
-        // eBay category from my category's mapping (set on My Categories), when the listing has none yet.
-        if (string.IsNullOrWhiteSpace(listing.CategoryId) && listing.CatalogCategoryId.HasValue)
-        {
-            var ebay = await new CatalogCategoryService(_context).FindChannelCategoryAsync(listing.CatalogCategoryId, SalesChannels.Ebay);
-            if (ebay != null)
-            {
-                listing.CategoryId = ebay.ExternalId;
-                listing.CategoryName = ebay.ExternalName;
-            }
-        }
         listing.SourcePrice = product.SupplierPrice ?? listing.SourcePrice;
         listing.SourceStockLevel = product.StockLevel ?? listing.SourceStockLevel;
 

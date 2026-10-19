@@ -19,9 +19,6 @@ public class AppDbContext : DbContext
     public DbSet<SupplierDeliveryOption> SupplierDeliveryOptions { get; set; }
     public DbSet<BulkJobRecord> BulkJobs { get; set; }
     public DbSet<SupplierPriceListItem> SupplierPriceListItems { get; set; }
-    public DbSet<CatalogCategory> CatalogCategories { get; set; }
-    public DbSet<ChannelCategoryMapping> ChannelCategoryMappings { get; set; }
-    public DbSet<SupplierCategoryMapping> SupplierCategoryMappings { get; set; }
     public DbSet<ProductTag> ProductTags { get; set; }
     public DbSet<SupplierProductTag> SupplierProductTags { get; set; }
 
@@ -47,13 +44,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SupplierDeliveryOption>().HasIndex(o => o.SupplierId);
         modelBuilder.Entity<BulkJobRecord>().HasIndex(j => new { j.Type, j.Tag });
         modelBuilder.Entity<SupplierPriceListItem>().HasIndex(i => new { i.Supplier, i.ProductCode });
-        modelBuilder.Entity<CatalogCategory>().HasIndex(c => c.ParentId);
-        modelBuilder.Entity<ChannelCategoryMapping>().HasIndex(m => new { m.CatalogCategoryId, m.Channel }).IsUnique();
-        modelBuilder.Entity<SupplierCategoryMapping>().HasIndex(m => new { m.Supplier, m.SourceType, m.SourceValue }).IsUnique();
         modelBuilder.Entity<ProductTag>().HasIndex(t => new { t.Supplier, t.NormalizedName }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => new { t.SupplierProductId, t.ProductTagId }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => t.ProductTagId);
-        modelBuilder.Entity<SupplierProduct>().HasIndex(p => p.CatalogCategoryId);
     }
 }
 
@@ -81,44 +74,6 @@ public class BulkJobRecord
     public DateTime? FinishedAtUtc { get; set; }
 }
 
-/// <summary>
-/// "My categories": the app's own category tree, independent of any supplier. Supplier categories and type tags are
-/// mapped onto it (<see cref="SupplierCategoryMapping"/>), and it is mapped onto each sales channel
-/// (<see cref="ChannelCategoryMapping"/>: eBay now; NopCommerce and Amazon later).
-/// </summary>
-public class CatalogCategory
-{
-    public int Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public int? ParentId { get; set; }
-    public int SortOrder { get; set; }
-    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
-}
-
-/// <summary>A catalog category's category on a sales channel, e.g. eBay category 46782 "Candles".</summary>
-public class ChannelCategoryMapping
-{
-    public int Id { get; set; }
-    public int CatalogCategoryId { get; set; }
-    /// <summary>"eBay", later "NopCommerce", "Amazon" (for Amazon: the product type).</summary>
-    public string Channel { get; set; } = string.Empty;
-    public string ExternalId { get; set; } = string.Empty;
-    public string? ExternalName { get; set; }
-}
-
-/// <summary>
-/// Maps a supplier category (SourceType "category", value = category path) or type tag (SourceType "tag",
-/// value = tag's normalised name) to one of my categories. Set once; every import then sorts products automatically.
-/// </summary>
-public class SupplierCategoryMapping
-{
-    public int Id { get; set; }
-    public string Supplier { get; set; } = string.Empty;
-    public string SourceType { get; set; } = string.Empty;
-    public string SourceValue { get; set; } = string.Empty;
-    public int CatalogCategoryId { get; set; }
-}
-
 /// <summary>A supplier's product tag/collection, e.g. Eden "Carbon Filters". Per supplier, because names mean different things.</summary>
 public class ProductTag
 {
@@ -127,7 +82,7 @@ public class ProductTag
     public string Name { get; set; } = string.Empty;
     /// <summary>Lower case, "&amp;" = "and", punctuation removed: "Pots, Tanks &amp; Trays" = "pots tanks and trays".</summary>
     public string NormalizedName { get; set; } = string.Empty;
-    /// <summary>"type" (what the product is: used for filtering and categories), "brand", "promo" (Sale, Best Sellers) or "ignore".</summary>
+    /// <summary>"type" (what the product is: used for filtering), "brand", "promo" (Sale, Best Sellers) or "ignore".</summary>
     public string Type { get; set; } = ProductTagTypes.Type;
 }
 
@@ -262,10 +217,6 @@ public class Listing
     public string? SupplierCategory { get; set; }
     /// <summary>Set when the eBay quantity was set to 0 because the supplier was disabled; cleared when restored.</summary>
     public DateTime? QuantityZeroedAtUtc { get; set; }
-    /// <summary>My category (from the supplier product's mapping, unless chosen by hand).</summary>
-    public int? CatalogCategoryId { get; set; }
-    /// <summary>True when the user picked <see cref="CatalogCategoryId"/>; mapping changes then leave it alone.</summary>
-    public bool CatalogCategoryIsManual { get; set; }
 }
 
 public class Policy
@@ -384,6 +335,4 @@ public class SupplierProduct
     public decimal? DeliveryCost { get; set; }
     /// <summary>Supplier's full category path, e.g. "Extinguishers &amp; Equipment › Fire Extinguisher ID Signs" (null = just CategoryName).</summary>
     public string? CategoryPath { get; set; }
-    /// <summary>My category, worked out from the supplier category/tag mappings.</summary>
-    public int? CatalogCategoryId { get; set; }
 }

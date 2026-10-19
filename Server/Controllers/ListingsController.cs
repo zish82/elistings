@@ -108,21 +108,9 @@ public class ListingsController : ControllerBase
                 SupplierCode = _context.SupplierProducts.Where(p => p.Id == l.SupplierProductId).Select(p => p.Supplier).FirstOrDefault(),
                 SupplierCategory = l.SupplierCategory,
                 QuantityZeroedAtUtc = l.QuantityZeroedAtUtc,
-                SourceTitle = l.SourceTitle,
-                CatalogCategoryId = l.CatalogCategoryId,
-                CatalogCategoryIsManual = l.CatalogCategoryIsManual
+                SourceTitle = l.SourceTitle
             })
             .ToListAsync();
-
-        // My category paths, e.g. "Garden › Ventilation › Carbon Filters".
-        if (listings.Any(l => l.CatalogCategoryId.HasValue))
-        {
-            var tree = CatalogCategoryService.BuildTree(await _context.CatalogCategories.AsNoTracking().ToListAsync());
-            foreach (var dto in listings.Where(l => l.CatalogCategoryId.HasValue))
-            {
-                dto.CatalogCategoryPath = tree.TryGetValue(dto.CatalogCategoryId!.Value, out var node) ? node.Path : null;
-            }
-        }
 
         // Flag listings of disabled suppliers (by linked product, else by the source URL's website).
         var disabled = await _context.Suppliers.AsNoTracking().Where(s => !s.IsActive).Select(s => new { s.Code, s.WebsiteHost }).ToListAsync();

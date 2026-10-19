@@ -42,17 +42,15 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
     private readonly IEdenSupplierSyncService _eden;
     private readonly SupplierCatalogService _catalog;
     private readonly ProductTagService _tags;
-    private readonly CatalogCategoryService _categories;
 
     public EdenCatalogImportService(AppDbContext context, IHttpClientFactory httpClientFactory, IEdenSupplierSyncService eden,
-        SupplierCatalogService catalog, ProductTagService tags, CatalogCategoryService categories)
+        SupplierCatalogService catalog, ProductTagService tags)
     {
         _context = context;
         _httpClientFactory = httpClientFactory;
         _eden = eden;
         _catalog = catalog;
         _tags = tags;
-        _categories = categories;
     }
 
     public string SupplierCode => Code;
@@ -167,7 +165,7 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
         MarkRemovedProducts(existing, byVariant, notes);
         await _context.SaveChangesAsync(ct);
 
-        // Eden's tags (its website sections, e.g. "Carbon Filters") – for filtering and my categories.
+        // Eden's tags (its website sections, e.g. "Carbon Filters") – for filtering on /products.
         progress?.Report("Saving tags...");
         await _tags.SyncAsync(Code,
             byVariant.GroupBy(kv => kv.Value.Id) // two variants can share one row (matched by SKU)
@@ -195,7 +193,6 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
 
         await UpdateLinkedListingsAsync(byVariant.Values.Concat(existing).Distinct(), ct);
         await _context.SaveChangesAsync(ct);
-        await _categories.RecomputeAsync(Code, ct); // my categories, from the category/tag mappings
 
         result.ErrorMessage = null;
         var summary = $"{catalogue.Count} products / {byVariant.Count} variants: {result.Inserted} new, {result.Updated} updated. " + string.Join(" ", notes);

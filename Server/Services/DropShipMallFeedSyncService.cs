@@ -30,14 +30,12 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
     private readonly AppDbContext _context;
     private readonly DropShipMallSettings _settings;
     private readonly SupplierCatalogService _catalog;
-    private readonly CatalogCategoryService _categories;
 
-    public DropShipMallFeedSyncService(AppDbContext context, IOptions<DropShipMallSettings> settings, SupplierCatalogService catalog, CatalogCategoryService categories)
+    public DropShipMallFeedSyncService(AppDbContext context, IOptions<DropShipMallSettings> settings, SupplierCatalogService catalog)
     {
         _context = context;
         _settings = settings.Value;
         _catalog = catalog;
-        _categories = categories;
     }
 
     // Hangfire retry policy lives on IFeedProductSyncService (the job is registered via the interface).
@@ -307,7 +305,6 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
             }
 
             await _context.SaveChangesAsync();
-            await _categories.RecomputeAsync(Supplier); // my categories, from the category mappings
             Console.WriteLine($"[FeedSync] {triggeredBy} imported feedType={feed.FeedType} rows={result.ProcessedRows}, inserted={result.Inserted}, updated={result.Updated}, skipped={result.Skipped}, discontinued={discontinued}");
             return result;
         }

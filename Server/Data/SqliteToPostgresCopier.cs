@@ -91,9 +91,6 @@ public static class SqliteToPostgresCopier
         await CopyAsync(source.SupplierListingSnapshots, s => s.Id, target, "SupplierListingSnapshots");
         await CopyAsync(source.BulkJobs, j => j.Id, target, "BulkJobs", hasIdentity: false);
         await CopyAsync(source.SupplierPriceListItems, i => i.Id, target, "SupplierPriceListItems");
-        await CopyAsync(source.CatalogCategories, c => c.Id, target, "CatalogCategories");
-        await CopyAsync(source.ChannelCategoryMappings, m => m.Id, target, "ChannelCategoryMappings");
-        await CopyAsync(source.SupplierCategoryMappings, m => m.Id, target, "SupplierCategoryMappings");
         await CopyAsync(source.ProductTags, t => t.Id, target, "ProductTags");
         await CopyAsync(source.SupplierProductTags, t => t.Id, target, "SupplierProductTags");
     }
