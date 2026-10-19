@@ -271,7 +271,16 @@ rate card, Feb 2026 – check eBay's fee page and update them when eBay changes 
 | VAT-registered | Off: 20% VAT on eBay's fees is added as a cost, no VAT on sales |
 | Minimum profit | £1.00 – you're warned before publishing below this |
 
-**Category rates**: a different final value fee for specific eBay category IDs (the same ID as on the listing).
+**Category rates** come preloaded from eBay's UK business-seller fee page (categories, tiers such as *11.9% up to £500,
+then 7.9%*, and the 10p small-order fee in Home, Furniture & DIY). **Load eBay UK rates** reloads eBay's figures (your
+own extra rates are kept); **Edit** / **Add / update rate** to change one when eBay changes its fees.
+
+eBay sets rates on top-level categories, but listings use detailed sub-categories. Click **Download eBay categories**
+once (needs a connected eBay account) so every listing finds its top-level rate (e.g. *Candles* → *Home, Furniture & DIY*).
+
+Each supplier has an **eBay fee category** (card below) used for its products on the Products page and for listings
+without an eBay category: DropShipMall → Home, Furniture & DIY, Eden → Garden & Patio, Safelincs → Business, Office &
+Industrial. Not modelled: the Trainers 7% rule, below-standard surcharges and international fees.
 
 The estimate appears on **Products** (*Est. Profit*), in the **listing editor** (a breakdown under the price that updates
 as you type) and on the **Dashboard** (under the price; red when below your minimum). Publishing – single or bulk –

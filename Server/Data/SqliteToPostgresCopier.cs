@@ -57,7 +57,7 @@ public static class SqliteToPostgresCopier
         // Starting the app on PostgreSQL seeds reference data (suppliers, delivery options, feeds, policies, fee settings).
         // Clear it so the copied rows (with their original ids and any edits made on /suppliers) take its place.
         await target.Database.ExecuteSqlRawAsync(
-            "TRUNCATE \"SupplierDeliveryOptions\", \"SupplierFeeds\", \"Policies\", \"Suppliers\", \"MarketplaceFeeSettings\" RESTART IDENTITY;");
+            "TRUNCATE \"SupplierDeliveryOptions\", \"SupplierFeeds\", \"Policies\", \"Suppliers\", \"MarketplaceFeeSettings\", \"MarketplaceFeeCategoryRates\" RESTART IDENTITY;");
 
         target.ChangeTracker.AutoDetectChangesEnabled = false;
         try
@@ -93,6 +93,7 @@ public static class SqliteToPostgresCopier
         await CopyAsync(source.SupplierPriceListItems, i => i.Id, target, "SupplierPriceListItems");
         await CopyAsync(source.MarketplaceFeeSettings, s => s.Id, target, "MarketplaceFeeSettings");
         await CopyAsync(source.MarketplaceFeeCategoryRates, r => r.Id, target, "MarketplaceFeeCategoryRates");
+        await CopyAsync(source.EbayCategories, c => c.Id, target, "EbayCategories");
         await CopyAsync(source.ProductTags, t => t.Id, target, "ProductTags");
         await CopyAsync(source.SupplierProductTags, t => t.Id, target, "SupplierProductTags");
     }

@@ -149,6 +149,7 @@ public class SuppliersController : ControllerBase
         entity.VatRatePercent = dto.VatRatePercent < 0 ? 0 : dto.VatRatePercent;
         entity.DefaultMarginPercent = dto.DefaultMarginPercent < 0 ? 0 : dto.DefaultMarginPercent;
         entity.IsActive = dto.IsActive;
+        entity.FeeCategoryId = string.IsNullOrWhiteSpace(dto.FeeCategoryId) ? null : dto.FeeCategoryId.Trim();
     }
 
     private static void Apply(SupplierDeliveryOption entity, SupplierDeliveryOptionDto dto)

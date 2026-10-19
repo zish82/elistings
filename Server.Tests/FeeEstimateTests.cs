@@ -176,3 +176,103 @@ public class FeeEstimateTests
         Assert.False(noCost.BelowMinProfit);
     }
 }
+
+/// <summary>eBay UK rate card: tiers, category-tree lookup, small-order fees, loading the rates.</summary>
+public class FeeRateCardTests
+{
+    private static MarketplaceFeeSettingsDto WithRateCard()
+    {
+        var settings = new MarketplaceFeeSettingsDto();
+        settings.CategoryRates.AddRange(EbayUkRateCard.Rates().Select(r => new MarketplaceFeeCategoryRateDto
+        {
+            CategoryId = r.CategoryId, CategoryName = r.CategoryName, FinalValueFeePercent = r.FinalValueFeePercent,
+            Threshold1 = r.Threshold1, Percent2 = r.Percent2, Threshold2 = r.Threshold2, Percent3 = r.Percent3, PerOrderFeeSmall = r.PerOrderFeeSmall
+        }));
+        return settings;
+    }
+
+    [Theory]
+    [InlineData(400.0, 47.60)]    // all at 11.9%
+    [InlineData(600.0, 67.40)]    // 500 × 11.9% + 100 × 7.9%
+    public void HomeFurnitureDiy_IsTiered(decimal total, decimal expectedFvf)
+        => Assert.Equal(expectedFvf, FeeMath.Estimate(total, null, null, null, WithRateCard(), "11700").FinalValueFee);
+
+    [Fact]
+    public void Furniture_HasThreeTiers()
+    {
+        // 500 × 10.9% + 500 × 7.9% + 500 × 3%
+        Assert.Equal(109.00m, FeeMath.Estimate(1500m, null, null, null, WithRateCard(), "3197").FinalValueFee);
+    }
+
+    [Fact]
+    public void SubCategory_UsesTheNearestParentWithARate()
+    {
+        // e.g. Candles (46782) → Home Fragrance (…) → Home Décor (10033) → Home, Furniture & DIY (11700)
+        var parents = new Dictionary<string, string?> { ["46782"] = "1000", ["1000"] = "10033", ["10033"] = "11700", ["11700"] = null };
+        var chain = Server.Services.EbayCategoryService.Chain("46782", parents);
+        Assert.Equal(new[] { "46782", "1000", "10033", "11700" }, chain);
+
+        var e = FeeMath.Estimate(20m, null, null, null, WithRateCard(), chain);
+        Assert.Equal(11.9m, e.FinalValueFeePercent);
+        Assert.StartsWith("Home, Furniture & DIY", e.RateDescription);
+    }
+
+    [Fact]
+    public void SmallOrderFee_IsInheritedFromTheParent()
+    {
+        // Furniture has its own rate but sits under Home, Furniture & DIY, whose small orders pay 10p.
+        var chain = new[] { "3197", "11700" };
+        Assert.Equal(0.10m, FeeMath.Estimate(8m, null, null, null, WithRateCard(), chain).PerOrderFee);
+        Assert.Equal(0.40m, FeeMath.Estimate(12m, null, null, null, WithRateCard(), chain).PerOrderFee);
+        Assert.Equal(0.30m, FeeMath.Estimate(8m, null, null, null, WithRateCard(), "159912").PerOrderFee); // Garden & Patio
+    }
+
+    [Fact]
+    public void Supplier_FeeCategory_IsUsedWhenTheListingHasNoCategory()
+    {
+        var eden = new SupplierDto { PricesIncludeVat = false, VatRatePercent = 20m, FeeCategoryId = "159912" };
+        var e = FeeMath.EstimateSale(20m, null, true, 10m, null, eden, WithRateCard());
+        Assert.Equal(10.9m, e.FinalValueFeePercent);
+    }
+
+    [Fact]
+    public void Chain_StopsOnLoops_AndUnknownCategories()
+    {
+        var parents = new Dictionary<string, string?> { ["a"] = "b", ["b"] = "a" };
+        Assert.Equal(new[] { "a", "b" }, Server.Services.EbayCategoryService.Chain("a", parents));
+        Assert.Equal(new[] { "x" }, Server.Services.EbayCategoryService.Chain("x", parents));
+    }
+
+    [Fact]
+    public async Task LoadRateCard_UpdatesEbayRates_AndKeepsYourOwn()
+    {
+        using var ctx = TestHelpers.NewContext();
+        ctx.MarketplaceFeeCategoryRates.Add(new MarketplaceFeeCategoryRate { Marketplace = "eBay", CategoryId = "159912", CategoryName = "Garden", FinalValueFeePercent = 99m });
+        ctx.MarketplaceFeeCategoryRates.Add(new MarketplaceFeeCategoryRate { Marketplace = "eBay", CategoryId = "123456", CategoryName = "Mine", FinalValueFeePercent = 8m });
+        ctx.SaveChanges();
+        var service = new MarketplaceFeeService(ctx);
+
+        var (added, updated) = await service.LoadUkRateCardAsync();
+
+        Assert.Equal(1, updated);
+        Assert.Equal(EbayUkRateCard.Rates().Count - 1, added);
+        Assert.Equal(10.9m, ctx.MarketplaceFeeCategoryRates.Single(r => r.CategoryId == "159912").FinalValueFeePercent);
+        Assert.Equal(8m, ctx.MarketplaceFeeCategoryRates.Single(r => r.CategoryId == "123456").FinalValueFeePercent);
+    }
+
+    [Fact]
+    public async Task CategoryRate_TiersMustBeComplete()
+    {
+        using var ctx = TestHelpers.NewContext();
+        var error = await new MarketplaceFeeService(ctx).SaveCategoryRateAsync("eBay",
+            new MarketplaceFeeCategoryRateDto { CategoryId = "11700", FinalValueFeePercent = 11.9m, Threshold1 = 500m });
+        Assert.NotNull(error);
+    }
+
+    [Fact]
+    public void RateCard_HasUniqueCategoryIds()
+    {
+        var ids = EbayUkRateCard.Rates().Select(r => r.CategoryId).ToList();
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+    }
+}

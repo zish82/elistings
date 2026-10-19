@@ -22,6 +22,11 @@ public interface IEbayService
     /// Returns an error message per SKU that failed (SKUs not in the result succeeded).
     /// </summary>
     Task<Dictionary<string, string>> UpdateQuantitiesAsync(int? accountId, IReadOnlyList<MarketplaceQuantityUpdate> updates);
+
+    /// <summary>The whole eBay UK category tree (flattened), from the Taxonomy API.</summary>
+    Task<List<EbayCategoryNode>> GetCategoryTreeAsync(int? accountId = null);
 }
+
+public sealed record EbayCategoryNode(string CategoryId, string? ParentCategoryId, string Name, int Level);
 
 public sealed record MarketplaceQuantityUpdate(string Sku, string OfferId, int Quantity);

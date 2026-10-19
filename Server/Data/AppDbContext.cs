@@ -21,6 +21,7 @@ public class AppDbContext : DbContext
     public DbSet<SupplierPriceListItem> SupplierPriceListItems { get; set; }
     public DbSet<MarketplaceFeeSettings> MarketplaceFeeSettings { get; set; }
     public DbSet<MarketplaceFeeCategoryRate> MarketplaceFeeCategoryRates { get; set; }
+    public DbSet<EbayCategory> EbayCategories { get; set; }
     public DbSet<ProductTag> ProductTags { get; set; }
     public DbSet<SupplierProductTag> SupplierProductTags { get; set; }
 
@@ -48,6 +49,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SupplierPriceListItem>().HasIndex(i => new { i.Supplier, i.ProductCode });
         modelBuilder.Entity<MarketplaceFeeSettings>().HasIndex(s => s.Marketplace).IsUnique();
         modelBuilder.Entity<MarketplaceFeeCategoryRate>().HasIndex(r => new { r.Marketplace, r.CategoryId }).IsUnique();
+        modelBuilder.Entity<EbayCategory>().HasIndex(c => c.CategoryId).IsUnique();
         modelBuilder.Entity<ProductTag>().HasIndex(t => new { t.Supplier, t.NormalizedName }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => new { t.SupplierProductId, t.ProductTagId }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => t.ProductTagId);
@@ -101,7 +103,25 @@ public class MarketplaceFeeCategoryRate
     public string Marketplace { get; set; } = "eBay";
     public string CategoryId { get; set; } = string.Empty;
     public string? CategoryName { get; set; }
+    /// <summary>% up to <see cref="Threshold1"/> (or on the whole sale).</summary>
     public decimal FinalValueFeePercent { get; set; }
+    public decimal? Threshold1 { get; set; }
+    public decimal? Percent2 { get; set; }
+    public decimal? Threshold2 { get; set; }
+    public decimal? Percent3 { get; set; }
+    /// <summary>Reduced per-order fee for small orders in this category (e.g. 10p).</summary>
+    public decimal? PerOrderFeeSmall { get; set; }
+}
+
+/// <summary>eBay UK category tree (downloaded from eBay's Taxonomy API), used to find a category's top-level fee rate.</summary>
+public class EbayCategory
+{
+    public int Id { get; set; }
+    public string CategoryId { get; set; } = string.Empty;
+    public string? ParentCategoryId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Level { get; set; }
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>A supplier's product tag/collection, e.g. Eden "Carbon Filters". Per supplier, because names mean different things.</summary>
@@ -172,6 +192,8 @@ public class Supplier
     /// (listings stay on eBay unless their quantity is set to 0 from /supplier-feeds).
     /// </summary>
     public bool IsActive { get; set; } = true;
+    /// <summary>eBay category whose fee rate estimates this supplier's products (e.g. 159912 Garden &amp; Patio).</summary>
+    public string? FeeCategoryId { get; set; }
 }
 
 /// <summary>What the supplier charges us to deliver an order (e.g. Standard £4.99, Express £9.95).</summary>

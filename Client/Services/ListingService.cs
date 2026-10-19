@@ -453,6 +453,16 @@ public class ListingService
     public async Task SaveFeeCategoryRateAsync(MarketplaceFeeCategoryRateDto rate)
         => await SendAsync<object>(HttpMethod.Post, "api/marketplacefees/category-rates", rate);
 
+    public async Task<string> LoadUkFeeRateCardAsync()
+        => (await SendAsync<MessageDto>(HttpMethod.Post, "api/marketplacefees/load-uk-rate-card"))?.Message ?? "Done.";
+
+    public async Task<string> RefreshEbayCategoriesAsync()
+        => (await SendAsync<MessageDto>(HttpMethod.Post, "api/marketplacefees/ebay-categories/refresh"))?.Message ?? "Done.";
+
+    /// <summary>The eBay category and its parents (most specific first), for fee rates.</summary>
+    public async Task<List<string>> GetEbayCategoryChainAsync(string categoryId)
+        => await GetAsync<List<string>>($"api/marketplacefees/ebay-categories/{Uri.EscapeDataString(categoryId)}/chain") ?? new List<string> { categoryId };
+
     public async Task DeleteFeeCategoryRateAsync(int id)
         => await SendAsync<object>(HttpMethod.Delete, $"api/marketplacefees/category-rates/{id}");
 

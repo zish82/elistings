@@ -696,6 +696,59 @@ public class EbayService : IEbayService
         return tokenInfo.AccessToken;
     }
 
+    public async Task<List<EbayCategoryNode>> GetCategoryTreeAsync(int? accountId = null)
+    {
+        var token = await GetOAuthTokenAsync(accountId);
+        var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+
+        // The UK tree id is 3; ask eBay rather than hard-coding it.
+        var treeId = "3";
+        using (var idRequest = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_GB"))
+        {
+            idRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            using var idResponse = await _httpClient.SendAsync(idRequest);
+            if (idResponse.IsSuccessStatusCode)
+            {
+                var idNode = await idResponse.Content.ReadFromJsonAsync<JsonNode>();
+                treeId = idNode?["categoryTreeId"]?.GetValue<string>() ?? treeId;
+            }
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/commerce/taxonomy/v1/category_tree/{Uri.EscapeDataString(treeId)}");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await EbayApiException.FromResponseAsync(response, "Downloading the eBay category tree");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+        var result = new List<EbayCategoryNode>();
+        if (!doc.RootElement.TryGetProperty("rootCategoryNode", out var root)) return result;
+
+        // Iterative walk (the tree is ~7 levels deep but tens of thousands of nodes).
+        var stack = new Stack<(System.Text.Json.JsonElement Node, string? ParentId, int Level)>();
+        stack.Push((root, null, 0));
+        while (stack.Count > 0)
+        {
+            var (node, parentId, level) = stack.Pop();
+            string? id = null;
+            if (node.TryGetProperty("category", out var category))
+            {
+                id = category.TryGetProperty("categoryId", out var cid) ? cid.GetString() : null;
+                var name = category.TryGetProperty("categoryName", out var cn) ? cn.GetString() ?? string.Empty : string.Empty;
+                // The root ("Root", level 0) isn't a real category; its children are the top-level categories.
+                if (id != null && level > 0) result.Add(new EbayCategoryNode(id, parentId, name, level));
+            }
+            if (node.TryGetProperty("childCategoryTreeNodes", out var children) && children.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var child in children.EnumerateArray()) stack.Push((child, level > 0 ? id : null, level + 1));
+            }
+        }
+        return result;
+    }
+
     public async Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title, int? accountId = null)
     {
         if (string.IsNullOrWhiteSpace(title)) return new List<CategorySuggestionDto>();

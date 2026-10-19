@@ -96,6 +96,16 @@ public static class SeedData
     /// <summary>eBay UK business-seller rate card (Feb 2026), not VAT-registered. Edited on /suppliers.</summary>
     private static void EnsureFeeSettings(AppDbContext db)
     {
+        // eBay UK category rates, first time only (later edits/updates are made on /suppliers).
+        if (!db.MarketplaceFeeCategoryRates.Any(r => r.Marketplace == "eBay"))
+        {
+            db.MarketplaceFeeCategoryRates.AddRange(Server.Services.EbayUkRateCard.Rates());
+            foreach (var supplier in db.Suppliers.Where(s => s.FeeCategoryId == null).ToList())
+            {
+                if (Server.Services.EbayUkRateCard.SupplierFeeCategories.TryGetValue(supplier.Code, out var categoryId)) supplier.FeeCategoryId = categoryId;
+            }
+        }
+
         if (db.MarketplaceFeeSettings.Any(s => s.Marketplace == "eBay")) return;
         db.MarketplaceFeeSettings.Add(new MarketplaceFeeSettings
         {

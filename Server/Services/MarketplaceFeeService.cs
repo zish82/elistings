@@ -21,8 +21,14 @@ public class MarketplaceFeeService
                 .Where(r => r.Marketplace == marketplace)
                 .ToListAsync(ct))
             .OrderBy(r => r.CategoryName ?? r.CategoryId, StringComparer.OrdinalIgnoreCase)
-            .Select(r => new MarketplaceFeeCategoryRateDto { Id = r.Id, CategoryId = r.CategoryId, CategoryName = r.CategoryName, FinalValueFeePercent = r.FinalValueFeePercent })
+            .Select(r => new MarketplaceFeeCategoryRateDto
+            {
+                Id = r.Id, CategoryId = r.CategoryId, CategoryName = r.CategoryName, FinalValueFeePercent = r.FinalValueFeePercent,
+                Threshold1 = r.Threshold1, Percent2 = r.Percent2, Threshold2 = r.Threshold2, Percent3 = r.Percent3, PerOrderFeeSmall = r.PerOrderFeeSmall
+            })
             .ToList();
+        dto.EbayCategoryCount = await _context.EbayCategories.CountAsync(ct);
+        dto.EbayCategoriesUpdatedAtUtc = dto.EbayCategoryCount == 0 ? null : await _context.EbayCategories.MaxAsync(c => (DateTime?)c.UpdatedAtUtc, ct);
         return dto;
     }
 
@@ -56,7 +62,12 @@ public class MarketplaceFeeService
     {
         var categoryId = dto.CategoryId?.Trim() ?? string.Empty;
         if (categoryId.Length == 0 || !categoryId.All(char.IsDigit)) return "Enter the eBay category ID (a number, e.g. 46782).";
-        if (dto.FinalValueFeePercent is < 0m or > 50m) return "The final value fee must be between 0% and 50%.";
+        if (dto.FinalValueFeePercent is < 0m or > 50m || dto.Percent2 is < 0m or > 50m || dto.Percent3 is < 0m or > 50m)
+            return "Final value fees must be between 0% and 50%.";
+        if (dto.Threshold1.HasValue != dto.Percent2.HasValue) return "Give both the amount and the % for the second tier (or neither).";
+        if (dto.Threshold2.HasValue != dto.Percent3.HasValue) return "Give both the amount and the % for the third tier (or neither).";
+        if (dto.Threshold2.HasValue && (!dto.Threshold1.HasValue || dto.Threshold2 <= dto.Threshold1)) return "The third tier must start above the second.";
+        if (dto.PerOrderFeeSmall is < 0m) return "The small-order fee can't be negative.";
 
         var row = await _context.MarketplaceFeeCategoryRates.FirstOrDefaultAsync(r => r.Marketplace == marketplace && r.CategoryId == categoryId, ct);
         if (row == null)
@@ -66,8 +77,48 @@ public class MarketplaceFeeService
         }
         row.CategoryName = string.IsNullOrWhiteSpace(dto.CategoryName) ? null : dto.CategoryName.Trim();
         row.FinalValueFeePercent = dto.FinalValueFeePercent;
+        row.Threshold1 = dto.Threshold1;
+        row.Percent2 = dto.Percent2;
+        row.Threshold2 = dto.Threshold2;
+        row.Percent3 = dto.Percent3;
+        row.PerOrderFeeSmall = dto.PerOrderFeeSmall;
         await _context.SaveChangesAsync(ct);
         return null;
+    }
+
+    /// <summary>
+    /// Loads eBay's UK business-seller rates (<see cref="EbayUkRateCard"/>): updates those categories, adds missing ones,
+    /// and keeps rates you added for other categories. Returns how many were added and updated.
+    /// </summary>
+    public async Task<(int Added, int Updated)> LoadUkRateCardAsync(CancellationToken ct = default)
+    {
+        var existing = await _context.MarketplaceFeeCategoryRates.Where(r => r.Marketplace == Ebay).ToListAsync(ct);
+        int added = 0, updated = 0;
+        foreach (var rate in EbayUkRateCard.Rates())
+        {
+            var row = existing.FirstOrDefault(r => r.CategoryId == rate.CategoryId);
+            if (row == null)
+            {
+                _context.MarketplaceFeeCategoryRates.Add(rate);
+                added++;
+                continue;
+            }
+            row.CategoryName = rate.CategoryName;
+            row.FinalValueFeePercent = rate.FinalValueFeePercent;
+            row.Threshold1 = rate.Threshold1;
+            row.Percent2 = rate.Percent2;
+            row.Threshold2 = rate.Threshold2;
+            row.Percent3 = rate.Percent3;
+            row.PerOrderFeeSmall = rate.PerOrderFeeSmall;
+            updated++;
+        }
+        // Known suppliers without a fee category get their typical one (e.g. Eden → Garden & Patio).
+        foreach (var supplier in await _context.Suppliers.Where(s => s.FeeCategoryId == null).ToListAsync(ct))
+        {
+            if (EbayUkRateCard.SupplierFeeCategories.TryGetValue(supplier.Code, out var categoryId)) supplier.FeeCategoryId = categoryId;
+        }
+        await _context.SaveChangesAsync(ct);
+        return (added, updated);
     }
 
     public async Task<bool> DeleteCategoryRateAsync(int id, CancellationToken ct = default)
@@ -82,12 +133,13 @@ public class MarketplaceFeeService
     // ------------------------------------------------------------------ estimates
 
     /// <summary>A listing as it stands: its price + delivery, its supplier cost and its eBay category.</summary>
-    public static FeeEstimate EstimateListing(Listing listing, SupplierDto? supplier, MarketplaceFeeSettingsDto settings)
-        => EstimateSale(listing.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice, listing.SourcePrice, listing.CategoryId, supplier, settings);
+    /// <param name="categoryChain">The listing's eBay category and its parents (<see cref="EbayCategoryService.GetChainAsync"/>).</param>
+    public static FeeEstimate EstimateListing(Listing listing, IReadOnlyList<string>? categoryChain, SupplierDto? supplier, MarketplaceFeeSettingsDto settings)
+        => EstimateSale(listing.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice, listing.SourcePrice, categoryChain, supplier, settings);
 
     public static FeeEstimate EstimateSale(decimal itemPrice, decimal? deliveryCost, bool includeDelivery, decimal? sourcePrice,
-        string? categoryId, SupplierDto? supplier, MarketplaceFeeSettingsDto settings)
-        => FeeMath.EstimateSale(itemPrice, deliveryCost, includeDelivery, sourcePrice, categoryId, supplier, settings);
+        IReadOnlyList<string>? categoryChain, SupplierDto? supplier, MarketplaceFeeSettingsDto settings)
+        => FeeMath.EstimateSale(itemPrice, deliveryCost, includeDelivery, sourcePrice, categoryChain, supplier, settings);
 
     /// <summary>
     /// A supplier product if listed at its suggested price with its default delivery (what "Add to my listings" would create).
@@ -98,7 +150,8 @@ public class MarketplaceFeeService
         if (!product.SuggestedPrice.HasValue) return null;
         var delivery = DefaultDeliveryIncVat(product, supplier);
         var (incVat, exVat) = FeeMath.SupplierCosts(product.SupplierPrice, supplier);
-        return FeeMath.Estimate(product.SuggestedPrice.Value + (delivery ?? 0m), incVat, exVat, delivery, settings);
+        // Products have no eBay category yet: use the supplier's fee category (e.g. Garden & Patio for Eden).
+        return FeeMath.Estimate(product.SuggestedPrice.Value + (delivery ?? 0m), incVat, exVat, delivery, settings, supplier?.FeeCategoryId);
     }
 
     /// <summary>Per-product delivery (ex VAT, e.g. Safelincs) when known, else the supplier's suggested option.</summary>

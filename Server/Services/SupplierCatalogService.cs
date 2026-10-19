@@ -176,6 +176,7 @@ public class SupplierCatalogService
         VatRatePercent = s.VatRatePercent,
         DefaultMarginPercent = s.DefaultMarginPercent,
         IsActive = s.IsActive,
+        FeeCategoryId = s.FeeCategoryId,
         DeliveryOptions = options.Select(ToDto).ToList()
     };
 

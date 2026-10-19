@@ -216,7 +216,8 @@
                                 }
                                 <tr>
                                     <td>− eBay fees
-                                        <span class="text-muted">(@est.FinalValueFeePercent.ToString("0.##")% final value £@est.FinalValueFee.ToString("F2") + order £@est.PerOrderFee.ToString("F2") + regulatory £@est.RegulatoryFee.ToString("F2")@(est.VatOnFees > 0 ? $" + VAT £{est.VatOnFees:F2}" : ""))</span>
+                                        <span class="text-muted">(final value £@est.FinalValueFee.ToString("F2") + order £@est.PerOrderFee.ToString("F2") + regulatory £@est.RegulatoryFee.ToString("F2")@(est.VatOnFees > 0 ? $" + VAT £{est.VatOnFees:F2}" : ""))</span>
+                                        <div class="text-muted">Rate: @(est.RateDescription ?? $"default {est.FinalValueFeePercent:0.##}%")</div>
                                     </td>
                                     <td class="text-end">£@est.TotalFees.ToString("F2")</td>
                                 </tr>
@@ -614,7 +615,27 @@
     // eBay fee estimate (settings on /suppliers), recalculated as the price/delivery/category change.
     private MarketplaceFeeSettingsDto? feeSettings;
     private FeeEstimate FeeEstimate => FeeMath.EstimateSale(listing.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice,
-        listing.SourcePrice, listing.CategoryId, supplierContext?.Supplier, feeSettings ?? new MarketplaceFeeSettingsDto());
+        listing.SourcePrice, CategoryChain, supplierContext?.Supplier, feeSettings ?? new MarketplaceFeeSettingsDto());
+
+    // The eBay category and its parents (fee rates are set on top-level categories); loaded when the category changes.
+    private List<string>? categoryChain;
+    private string? categoryChainFor;
+    private IReadOnlyList<string>? CategoryChain
+        => string.IsNullOrWhiteSpace(listing.CategoryId) ? null
+           : categoryChainFor == listing.CategoryId.Trim() && categoryChain != null ? categoryChain
+           : new List<string> { listing.CategoryId.Trim() };
+
+    private async Task LoadCategoryChain()
+    {
+        var id = listing.CategoryId?.Trim();
+        if (string.IsNullOrEmpty(id) || id == categoryChainFor) return;
+        try
+        {
+            categoryChain = await ListingService.GetEbayCategoryChainAsync(id);
+            categoryChainFor = id;
+        }
+        catch (Exception ex) { Console.WriteLine($"Could not load the eBay category's parents: {ex.Message}"); }
+    }
 
     private void CopyExtras(ListingDto source)
     {
@@ -1238,6 +1259,7 @@
 
     private async Task LoadCategoryAspects()
     {
+        await LoadCategoryChain(); // for the fee estimate
         var categoryId = listing.CategoryId?.Trim();
         if (string.IsNullOrEmpty(categoryId))
         {

@@ -162,6 +162,7 @@ builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.Ge
 builder.Services.AddScoped<Server.Services.SupplierPriceListService>();
 builder.Services.AddScoped<Server.Services.ProductTagService>();
 builder.Services.AddScoped<Server.Services.MarketplaceFeeService>();
+builder.Services.AddScoped<Server.Services.EbayCategoryService>();
 builder.Services.AddScoped<Server.Services.SafelincsCatalogImportService>();
 builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.SafelincsCatalogImportService>());
 builder.Services.AddHttpClient("safelincs")

@@ -26,21 +26,90 @@ public class MarketplaceFeeSettingsDto
     public decimal MinProfit { get; set; } = 1m;
     public DateTime? UpdatedAtUtc { get; set; }
     public List<MarketplaceFeeCategoryRateDto> CategoryRates { get; set; } = new();
+    /// <summary>How many eBay categories are downloaded (0 = not yet; then only exact category-ID rates match).</summary>
+    public int EbayCategoryCount { get; set; }
+    public DateTime? EbayCategoriesUpdatedAtUtc { get; set; }
 
-    /// <summary>The final value fee % for an eBay category (override when set, else the default).</summary>
+    /// <summary>
+    /// The rate for the most specific category in <paramref name="categoryChain"/> (the listing's eBay category first,
+    /// then its parents up to the top level), or null for the default.
+    /// </summary>
+    public MarketplaceFeeCategoryRateDto? FindRate(IReadOnlyList<string>? categoryChain)
+    {
+        if (categoryChain == null) return null;
+        foreach (var id in categoryChain)
+        {
+            var rate = CategoryRates.FirstOrDefault(r => r.CategoryId == id?.Trim());
+            if (rate != null) return rate;
+        }
+        return null;
+    }
+
+    /// <summary>A reduced per-order fee for small orders set on the category or one of its parents (e.g. 10p in Home, Furniture &amp; DIY).</summary>
+    public decimal? FindSmallOrderFee(IReadOnlyList<string>? categoryChain)
+        => categoryChain?
+            .Select(id => CategoryRates.FirstOrDefault(r => r.CategoryId == id?.Trim()))
+            .FirstOrDefault(r => r?.PerOrderFeeSmall != null)?.PerOrderFeeSmall;
+
+    /// <summary>The final value fee % (first tier) for one eBay category ID, or the default.</summary>
     public decimal FinalValueFeePercentFor(string? categoryId)
-        => string.IsNullOrWhiteSpace(categoryId)
-            ? FinalValueFeePercent
-            : CategoryRates.FirstOrDefault(r => r.CategoryId == categoryId.Trim())?.FinalValueFeePercent ?? FinalValueFeePercent;
+        => FindRate(string.IsNullOrWhiteSpace(categoryId) ? null : new[] { categoryId })?.FinalValueFeePercent ?? FinalValueFeePercent;
 }
 
-/// <summary>Final value fee % for one eBay category, e.g. 12.5% for Business, Office &amp; Industrial.</summary>
+/// <summary>
+/// Final value fee for one eBay category (and everything below it unless a sub-category has its own rate),
+/// e.g. Home, Furniture &amp; DIY: 11.9% up to £500, 7.9% above. Tiers are per item on the total sale.
+/// </summary>
 public class MarketplaceFeeCategoryRateDto
 {
     public int Id { get; set; }
     public string CategoryId { get; set; } = string.Empty;
     public string? CategoryName { get; set; }
+    /// <summary>% on the total sale up to <see cref="Threshold1"/> (or all of it when there's no threshold).</summary>
     public decimal FinalValueFeePercent { get; set; }
+    public decimal? Threshold1 { get; set; }
+    /// <summary>% on the portion above <see cref="Threshold1"/> (up to <see cref="Threshold2"/>).</summary>
+    public decimal? Percent2 { get; set; }
+    public decimal? Threshold2 { get; set; }
+    /// <summary>% on the portion above <see cref="Threshold2"/>.</summary>
+    public decimal? Percent3 { get; set; }
+    /// <summary>Per-order fee for small orders in this category, when lower than the standard one.</summary>
+    public decimal? PerOrderFeeSmall { get; set; }
+
+    /// <summary>e.g. "11.9% up to £500, then 7.9%".</summary>
+    public string Describe()
+    {
+        var text = $"{FinalValueFeePercent:0.##}%";
+        if (Threshold1.HasValue && Percent2.HasValue)
+        {
+            text += $" up to £{Threshold1:0.##}, then {Percent2:0.##}%";
+            if (Threshold2.HasValue && Percent3.HasValue) text += $" up to £{Threshold2:0.##}, then {Percent3:0.##}%";
+        }
+        if (PerOrderFeeSmall.HasValue) text += $"; small-order fee £{PerOrderFeeSmall:0.00}";
+        return text;
+    }
+
+    /// <summary>The final value fee on a sale total, applying the tiers.</summary>
+    public decimal FinalValueFeeFor(decimal total)
+    {
+        if (!Threshold1.HasValue || !Percent2.HasValue) return total * FinalValueFeePercent / 100m;
+        var fee = Math.Min(total, Threshold1.Value) * FinalValueFeePercent / 100m;
+        if (total <= Threshold1.Value) return fee;
+
+        if (Threshold2.HasValue && Percent3.HasValue && Threshold2.Value > Threshold1.Value)
+        {
+            fee += (Math.Min(total, Threshold2.Value) - Threshold1.Value) * Percent2.Value / 100m;
+            if (total > Threshold2.Value) fee += (total - Threshold2.Value) * Percent3.Value / 100m;
+            return fee;
+        }
+        return fee + (total - Threshold1.Value) * Percent2.Value / 100m;
+    }
+}
+
+/// <summary>A plain message returned by an action (e.g. "Downloaded 34,512 eBay categories.").</summary>
+public class MessageDto
+{
+    public string Message { get; set; } = string.Empty;
 }
 
 /// <summary>Estimated fees and profit for one sale.</summary>
@@ -48,7 +117,10 @@ public class FeeEstimate
 {
     /// <summary>What the buyer pays (item + delivery).</summary>
     public decimal SaleTotal { get; set; }
+    /// <summary>First-tier rate used (see <see cref="RateDescription"/> for tiers).</summary>
     public decimal FinalValueFeePercent { get; set; }
+    /// <summary>The category rate applied, e.g. "Garden &amp; Patio: 10.9%"; null = the default rate.</summary>
+    public string? RateDescription { get; set; }
     public decimal FinalValueFee { get; set; }
     public decimal PerOrderFee { get; set; }
     public decimal RegulatoryFee { get; set; }
@@ -75,17 +147,25 @@ public static class FeeMath
     /// <param name="deliveryCostIncVat">What the supplier charges you for delivery, inc VAT.</param>
     public static FeeEstimate Estimate(decimal saleTotal, decimal? itemCostIncVat, decimal? itemCostExVat, decimal? deliveryCostIncVat,
         MarketplaceFeeSettingsDto settings, string? categoryId = null)
+        => Estimate(saleTotal, itemCostIncVat, itemCostExVat, deliveryCostIncVat, settings,
+            string.IsNullOrWhiteSpace(categoryId) ? null : (IReadOnlyList<string>)new[] { categoryId });
+
+    /// <param name="categoryChain">The eBay category and its parents (most specific first); the first one with a rate is used.</param>
+    public static FeeEstimate Estimate(decimal saleTotal, decimal? itemCostIncVat, decimal? itemCostExVat, decimal? deliveryCostIncVat,
+        MarketplaceFeeSettingsDto settings, IReadOnlyList<string>? categoryChain)
     {
         var total = Math.Max(0m, saleTotal);
         var vatFactor = 1m + settings.VatRatePercent / 100m;
-        var percent = settings.FinalValueFeePercentFor(categoryId);
+        var rate = settings.FindRate(categoryChain);
+        var smallOrderFee = settings.FindSmallOrderFee(categoryChain) ?? settings.PerOrderFeeSmall;
 
         var estimate = new FeeEstimate
         {
             SaleTotal = total,
-            FinalValueFeePercent = percent,
-            FinalValueFee = Round(total * percent / 100m),
-            PerOrderFee = total <= 0m ? 0m : total <= settings.PerOrderFeeThreshold ? settings.PerOrderFeeSmall : settings.PerOrderFeeLarge,
+            FinalValueFeePercent = rate?.FinalValueFeePercent ?? settings.FinalValueFeePercent,
+            RateDescription = rate == null ? null : $"{rate.CategoryName ?? "#" + rate.CategoryId}: {rate.Describe()}",
+            FinalValueFee = Round(rate?.FinalValueFeeFor(total) ?? total * settings.FinalValueFeePercent / 100m),
+            PerOrderFee = total <= 0m ? 0m : total <= settings.PerOrderFeeThreshold ? smallOrderFee : settings.PerOrderFeeLarge,
             RegulatoryFee = Round(total * settings.RegulatoryFeePercent / 100m)
         };
         var feesExVat = estimate.FinalValueFee + estimate.PerOrderFee + estimate.RegulatoryFee;
@@ -117,12 +197,19 @@ public static class FeeMath
     }
 
     /// <summary>A sale at item price + delivery, costed from the supplier price and the supplier's VAT setting.</summary>
+    /// <param name="categoryChain">The listing's eBay category and its parents; when empty, the supplier's fee category is used.</param>
     public static FeeEstimate EstimateSale(decimal itemPrice, decimal? deliveryCost, bool includeDelivery, decimal? supplierPrice,
-        string? categoryId, SupplierDto? supplier, MarketplaceFeeSettingsDto settings)
+        IReadOnlyList<string>? categoryChain, SupplierDto? supplier, MarketplaceFeeSettingsDto settings)
     {
         var total = PricingMath.ListingTotal(itemPrice, deliveryCost, includeDelivery);
         var (incVat, exVat) = SupplierCosts(supplierPrice, supplier);
-        return Estimate(total, incVat, exVat, deliveryCost, settings, categoryId);
+        // No eBay category, or one without a known rate (e.g. the category tree isn't downloaded): fall back to the
+        // supplier's fee category before the default rate.
+        if (!string.IsNullOrWhiteSpace(supplier?.FeeCategoryId) && settings.FindRate(categoryChain) == null)
+        {
+            categoryChain = (categoryChain ?? Array.Empty<string>()).Append(supplier!.FeeCategoryId!).ToList();
+        }
+        return Estimate(total, incVat, exVat, deliveryCost, settings, categoryChain);
     }
 
     /// <summary>Supplier price with and without VAT, using the supplier's "prices include VAT" setting.</summary>

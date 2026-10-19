@@ -11,6 +11,8 @@ public class SupplierDto
     public decimal VatRatePercent { get; set; } = 20m;
     public decimal DefaultMarginPercent { get; set; } = 20m;
     public bool IsActive { get; set; } = true;
+    /// <summary>eBay category whose fee rate is used for this supplier's products (and listings without an eBay category), e.g. 159912 Garden &amp; Patio.</summary>
+    public string? FeeCategoryId { get; set; }
     public List<SupplierDeliveryOptionDto> DeliveryOptions { get; set; } = new();
     /// <summary>Postage classes found in this supplier's imported products (e.g. "Standard Parcel"). Read-only.</summary>
     public List<string> KnownPostageCategories { get; set; } = new();

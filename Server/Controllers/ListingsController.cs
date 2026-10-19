@@ -58,7 +58,7 @@ public class ListingsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<ListingDto>>> GetListings()
+    public async Task<ActionResult<List<ListingDto>>> GetListings([FromServices] EbayCategoryService? ebayCategories = null)
     {
         var query = _context.Listings.AsQueryable();
         if (!_currentUserService.CanViewAllListings)
@@ -115,13 +115,18 @@ public class ListingsController : ControllerBase
         // Estimated eBay fees and profit per sale.
         var feeSettings = await new MarketplaceFeeService(_context).GetSettingsAsync();
         var allSuppliers = await new SupplierCatalogService(_context).GetAllAsync();
+        // eBay category → parent, to find each listing's fee rate (top-level categories carry the rates).
+        IReadOnlyDictionary<string, string?> parents = listings.Any(l => !string.IsNullOrWhiteSpace(l.CategoryId)) && ebayCategories != null
+            ? await ebayCategories.GetParentsAsync() // cached
+            : new Dictionary<string, string?>();
         foreach (var dto in listings)
         {
             var supplier = dto.SupplierCode != null
                 ? allSuppliers.FirstOrDefault(s => s.Code.Equals(dto.SupplierCode, StringComparison.OrdinalIgnoreCase))
                 : dto.SourceUrl == null ? null : allSuppliers.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s.WebsiteHost)
                                                                                && dto.SourceUrl.Contains(s.WebsiteHost!, StringComparison.OrdinalIgnoreCase));
-            var estimate = MarketplaceFeeService.EstimateSale(dto.Price, dto.DeliveryCost, dto.IncludeDeliveryInPrice, dto.SourcePrice, dto.CategoryId, supplier, feeSettings);
+            var chain = string.IsNullOrWhiteSpace(dto.CategoryId) ? null : EbayCategoryService.Chain(dto.CategoryId.Trim(), parents);
+            var estimate = MarketplaceFeeService.EstimateSale(dto.Price, dto.DeliveryCost, dto.IncludeDeliveryInPrice, dto.SourcePrice, chain, supplier, feeSettings);
             dto.EstimatedProfit = estimate.Profit;
             dto.EstimatedFees = estimate.TotalFees;
             dto.BelowMinProfit = estimate.Profit.HasValue && estimate.Profit.Value < feeSettings.MinProfit;

@@ -551,9 +551,32 @@ public static class LegacySqliteSchema
                         ""Marketplace"" TEXT NOT NULL,
                         ""CategoryId"" TEXT NOT NULL,
                         ""CategoryName"" TEXT NULL,
-                        ""FinalValueFeePercent"" TEXT NOT NULL
+                        ""FinalValueFeePercent"" TEXT NOT NULL,
+                        ""Threshold1"" TEXT NULL,
+                        ""Percent2"" TEXT NULL,
+                        ""Threshold2"" TEXT NULL,
+                        ""Percent3"" TEXT NULL,
+                        ""PerOrderFeeSmall"" TEXT NULL
                     );");
                 db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_MarketplaceFeeCategoryRates_Marketplace_CategoryId"" ON ""MarketplaceFeeCategoryRates"" (""Marketplace"", ""CategoryId"");");
+
+                // Tiered fee rates (databases created before tiers were added), supplier fee category, eBay category tree.
+                EnsureColumn("MarketplaceFeeCategoryRates", "Threshold1", "TEXT NULL");
+                EnsureColumn("MarketplaceFeeCategoryRates", "Percent2", "TEXT NULL");
+                EnsureColumn("MarketplaceFeeCategoryRates", "Threshold2", "TEXT NULL");
+                EnsureColumn("MarketplaceFeeCategoryRates", "Percent3", "TEXT NULL");
+                EnsureColumn("MarketplaceFeeCategoryRates", "PerOrderFeeSmall", "TEXT NULL");
+                EnsureColumn("Suppliers", "FeeCategoryId", "TEXT NULL");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""EbayCategories"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_EbayCategories"" PRIMARY KEY AUTOINCREMENT,
+                        ""CategoryId"" TEXT NOT NULL,
+                        ""ParentCategoryId"" TEXT NULL,
+                        ""Name"" TEXT NOT NULL,
+                        ""Level"" INTEGER NOT NULL DEFAULT 0,
+                        ""UpdatedAtUtc"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_EbayCategories_CategoryId"" ON ""EbayCategories"" (""CategoryId"");");
 
                 // Supplier tags, e.g. Eden "Carbon Filters" (added Oct 2026).
                 db.Database.ExecuteSqlRaw(@"
