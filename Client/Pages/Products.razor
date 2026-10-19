@@ -102,7 +102,12 @@
     else if (!categorySummary.Any())
     {
         <div class="alert alert-warning">
-            @if (grouping == ProductGrouping.SupplierCategory)
+            @if (categoriesInStockOnly)
+            {
+                <span>No in-stock products for @selectedSupplier. </span>
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0" @onclick="ShowAllStock">Show all products</button>
+            }
+            else if (grouping == ProductGrouping.SupplierCategory)
             {
                 <span>No products for @selectedSupplier yet. Run an import first.</span>
             }
@@ -120,6 +125,10 @@
                 <button type="button" class="btn @(grouping == ProductGrouping.Tag ? "btn-secondary" : "btn-outline-secondary")" @onclick="() => SetGrouping(ProductGrouping.Tag)">Tags</button>
             </div>
             <span class="small text-muted">@categorySummary.Count groups for @selectedSupplier. Click one to show or hide its products.</span>
+            <div class="form-check form-check-inline mb-0">
+                <input class="form-check-input" type="checkbox" id="categoriesInStockOnly" checked="@categoriesInStockOnly" @onchange="OnCategoriesInStockChanged" />
+                <label class="form-check-label small" for="categoriesInStockOnly">In stock only</label>
+            </div>
             <button type="button" class="btn btn-sm btn-outline-secondary py-0" @onclick="CollapseAllCategories" disabled="@(!expandedCategories.Any())">Collapse all</button>
         </div>
         <div class="table-responsive">
@@ -393,6 +402,17 @@ else
     private string view = "list";
     private List<SupplierCategorySummaryDto> categorySummary = new();
     private string grouping = ProductGrouping.SupplierCategory;
+    // Categories view: show only in-stock products (counts and expanded lists). Applies immediately.
+    private bool categoriesInStockOnly;
+
+    private Task ShowAllStock() => OnCategoriesInStockChanged(new ChangeEventArgs { Value = false });
+
+    private async Task OnCategoriesInStockChanged(ChangeEventArgs e)
+    {
+        categoriesInStockOnly = e.Value is true;
+        await LoadCategorySummary();
+        foreach (var key in expandedCategories.ToList()) await LoadCategoryProducts(key);
+    }
 
     // Tag filter.
     private List<ProductTagDto> supplierTags = new();
@@ -430,7 +450,7 @@ else
     private async Task LoadCategorySummary()
     {
         isLoadingCategories = true;
-        try { categorySummary = await ListingService.GetSupplierCategorySummaryAsync(selectedSupplier, grouping); }
+        try { categorySummary = await ListingService.GetSupplierCategorySummaryAsync(selectedSupplier, grouping, categoriesInStockOnly); }
         catch (Exception ex)
         {
             statusCss = "alert-danger";
@@ -470,7 +490,7 @@ else
     {
         try
         {
-            var query = new SupplierProductQuery { Supplier = selectedSupplier, Sort = SupplierProductSort.PriceHighToLow };
+            var query = new SupplierProductQuery { Supplier = selectedSupplier, Sort = SupplierProductSort.PriceHighToLow, InStockOnly = categoriesInStockOnly };
             if (grouping == ProductGrouping.SupplierCategory) query.Category = key;
             else query.TagId = int.Parse(key);
             categoryProducts[key] = await ListingService.GetSupplierProductsAsync(query);

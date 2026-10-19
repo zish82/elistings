@@ -435,8 +435,8 @@ public class ListingService
         return await response.Content.ReadFromJsonAsync<PriceListUploadResultDto>() ?? new PriceListUploadResultDto();
     }
 
-    public async Task<List<SupplierCategorySummaryDto>> GetSupplierCategorySummaryAsync(string? supplier, string groupBy = ProductGrouping.SupplierCategory)
-        => await GetAsync<List<SupplierCategorySummaryDto>>($"api/supplierproducts/category-summary?supplier={Uri.EscapeDataString(supplier ?? string.Empty)}&groupBy={Uri.EscapeDataString(groupBy)}")
+    public async Task<List<SupplierCategorySummaryDto>> GetSupplierCategorySummaryAsync(string? supplier, string groupBy = ProductGrouping.SupplierCategory, bool inStockOnly = false)
+        => await GetAsync<List<SupplierCategorySummaryDto>>($"api/supplierproducts/category-summary?supplier={Uri.EscapeDataString(supplier ?? string.Empty)}&groupBy={Uri.EscapeDataString(groupBy)}&inStockOnly={inStockOnly.ToString().ToLowerInvariant()}")
            ?? new List<SupplierCategorySummaryDto>();
 
     public async Task<List<ProductTagDto>> GetSupplierTagsAsync(string supplier)

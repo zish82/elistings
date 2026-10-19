@@ -119,7 +119,8 @@ Imports also run automatically every night. Notes:
 Click **Categories** (above the filters) to see the supplier's own categories with the number of products,
 how many are in stock and how many you've already added. Click a category (or **View products**) to expand its
 products right there; click again (or **Hide**) to collapse it. Several can be open at once, **Collapse all**
-closes them. Ticked products stay ticked across categories, so *Add all selected to my listings* works as usual.
+closes them. **In stock only** (next to it) hides products without stock – the counts and expanded lists then
+show only in-stock products, and categories with none disappear. Ticked products stay ticked across categories, so *Add all selected to my listings* works as usual.
 *(No category)* holds products without one. Click **Products** to go back to the full list.
 
 Group by **Supplier categories** or **Tags** (the supplier's own website sections, e.g. Eden *Carbon Filters*;

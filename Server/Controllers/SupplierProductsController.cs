@@ -203,13 +203,16 @@ public class SupplierProductsController : ControllerBase
 
     /// <summary>Products per supplier category, for the Products page "Categories" view.</summary>
     [HttpGet("category-summary")]
-    public async Task<ActionResult<List<SupplierCategorySummaryDto>>> GetCategorySummary([FromQuery] string? supplier = null, [FromQuery] string? groupBy = null)
+    public async Task<ActionResult<List<SupplierCategorySummaryDto>>> GetCategorySummary([FromQuery] string? supplier = null, [FromQuery] string? groupBy = null,
+        [FromQuery] bool inStockOnly = false)
     {
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
 
         var query = VisibleProducts();
         if (!string.IsNullOrWhiteSpace(supplier)) query = query.Where(p => p.Supplier == supplier);
+        // Same rule as the product list's "In stock only": only groups with stock, counting in-stock products.
+        if (inStockOnly) query = query.Where(p => p.StockLevel > 0);
 
         var uid = userId.Value;
         if (groupBy == ProductGrouping.Tag) return Ok(await SummaryByTagAsync(query, uid));
