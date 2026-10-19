@@ -117,8 +117,10 @@ Imports also run automatically every night. Notes:
 
 ### Categories view
 Click **Categories** (above the filters) to see the supplier's own categories with the number of products,
-how many are in stock and how many you've already added. Click a category to open its products in the list
-(the *Category* filter is set for you; *(No category)* shows products without one). Click **Products** to go back.
+how many are in stock and how many you've already added. Click a category (or **View products**) to expand its
+products right there; click again (or **Hide**) to collapse it. Several can be open at once, **Collapse all**
+closes them. Ticked products stay ticked across categories, so *Add all selected to my listings* works as usual.
+*(No category)* holds products without one. Click **Products** to go back to the full list.
 
 ### Find products
 The filter bar above the list:

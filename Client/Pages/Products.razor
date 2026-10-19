@@ -105,9 +105,12 @@
     }
     else
     {
-        <p class="small text-muted mb-2">@categorySummary.Count categories for @selectedSupplier (the supplier's own categories). Click one to see its products.</p>
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <span class="small text-muted">@categorySummary.Count categories for @selectedSupplier (the supplier's own categories). Click a category to show or hide its products.</span>
+            <button type="button" class="btn btn-sm btn-outline-secondary py-0" @onclick="CollapseAllCategories" disabled="@(!expandedCategories.Any())">Collapse all</button>
+        </div>
         <div class="table-responsive">
-            <table class="table table-sm table-hover align-middle">
+            <table class="table table-sm align-middle">
                 <thead>
                     <tr>
                         <th>Category</th>
@@ -120,13 +123,39 @@
                 <tbody>
                     @foreach (var c in categorySummary)
                     {
-                        <tr style="cursor: pointer;" @onclick="() => OpenCategory(c)">
-                            <td>@(c.Category ?? "(No category)")</td>
+                        var key = CategoryKey(c);
+                        var expanded = expandedCategories.Contains(key);
+                        <tr class="@(expanded ? "table-active" : "")" style="cursor: pointer;" @onclick="() => ToggleCategory(c)">
+                            <td><span class="me-1">@(expanded ? "▾" : "▸")</span>@(c.Category ?? "(No category)")</td>
                             <td class="text-end">@c.Products</td>
                             <td class="text-end">@c.InStock</td>
                             <td class="text-end">@c.AlreadyAdded</td>
-                            <td class="text-end"><span class="btn btn-sm btn-outline-secondary py-0">View products &rarr;</span></td>
+                            <td class="text-end"><span class="btn btn-sm btn-outline-secondary py-0">@(expanded ? "Hide products" : "View products")</span></td>
                         </tr>
+                        @if (expanded)
+                        {
+                            <tr>
+                                <td colspan="5" class="bg-light p-2">
+                                    @if (!categoryProducts.TryGetValue(key, out var items))
+                                    {
+                                        <em class="small">Loading products...</em>
+                                    }
+                                    else if (!items.Any())
+                                    {
+                                        <span class="small text-muted">No products in this category.</span>
+                                    }
+                                    else
+                                    {
+                                        @ProductTable(items, sortable: false)
+                                        @if (items.Count >= SupplierProductQuery.DefaultLimit)
+                                        {
+                                            <div class="small text-muted">First @SupplierProductQuery.DefaultLimit shown (highest price first).</div>
+                                        }
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleCategory(c)">▴ Hide @(c.Category ?? "(No category)")</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
                     }
                 </tbody>
             </table>
@@ -197,103 +226,118 @@ else if (!products.Any())
 }
 else
 {
-    <div class="table-responsive">
-        <table class="table align-middle">
-            <thead>
-                <tr>
-                    <th style="width: 36px;"><input type="checkbox" class="form-check-input" checked="@(products.Any() && products.All(p => selectedIds.Contains(p.Id)))" @onchange="ToggleSelectAll" /></th>
-                    <th>@SortHeader("Product", SupplierProductSort.Title)</th>
-                    <th>Category</th>
-                    <th>Image</th>
-                    <th>SKU</th>
-                    <th>@SortHeader("Stock", SupplierProductSort.StockHighToLow)</th>
-                    <th>@SortHeader("Supplier Price", SupplierProductSort.PriceHighToLow, SupplierProductSort.PriceLowToHigh)</th>
-                    <th>Suggested Price</th>
-                    <th title="Suggested price minus supplier price. Before VAT, delivery and marketplace fees.">@SortHeader("Approx. Profit", SupplierProductSort.ProfitHighToLow)</th>
-                    <th>Status</th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var product in products)
-                {
-                    var images = string.IsNullOrWhiteSpace(product.ImageUrlsJson) ? Array.Empty<string>() : System.Text.Json.JsonSerializer.Deserialize<string[]>(product.ImageUrlsJson);
-                    <tr id="product-@product.Id" class="@(product.Id == highlightProductId ? "table-warning" : "")">
-                        <td><input type="checkbox" class="form-check-input" checked="@selectedIds.Contains(product.Id)" @onchange="() => ToggleSelection(product.Id)" /></td>
-                        <td>
-                            <a href="/products/@product.Id">@product.Title</a>
-                            @if (product.GroupSize > 1 && product.GroupKey != null && groupKey != product.GroupKey)
-                            {
-                                <div><a href="javascript:void(0)" class="small" @onclick="() => ShowGroup(product)">@product.GroupSize sizes / variants</a></div>
-                            }
-                            @if (!string.IsNullOrWhiteSpace(product.ProductUrl))
-                            {
-                                <div><a class="small text-muted" href="@product.ProductUrl" target="_blank">Source</a></div>
-                            }
-                        </td>
-                        <td>@(string.IsNullOrWhiteSpace(product.CategoryName) ? "-" : product.CategoryName)</td>
-                        <td>
-                            @if (images != null && images.Length > 0)
-                            {
-                                <img src="@images[0]" alt="Image" style="max-width: 48px; max-height: 48px; border-radius: 4px; border: 1px solid #ccc;" />
-                            }
-                            else if (!string.IsNullOrWhiteSpace(product.ImageUrl))
-                            {
-                                <img src="@product.ImageUrl" alt="Image" style="max-width: 48px; max-height: 48px; border-radius: 4px; border: 1px solid #ccc;" />
-                            }
-                            else
-                            {
-                                <span>-</span>
-                            }
-                        </td>
-                        <td>@(string.IsNullOrWhiteSpace(product.SupplierSku) ? "-" : product.SupplierSku)</td>
-                        <td>@(product.StockLevel?.ToString() ?? "-")</td>
-                        <td>
-                            @(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")
-                            @if (product.PriceIsEstimate)
-                            {
-                                <span class="badge bg-warning text-dark" title="Trade price not confirmed yet (showing RRP)">est.</span>
-                            }
-                            @if (product.RrpPrice.HasValue && !product.PriceIsEstimate)
-                            {
-                                <div class="small text-muted">RRP £@product.RrpPrice.Value.ToString("F2")</div>
-                            }
-                        </td>
-                        <td>@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</td>
-                        <td>@(product.ApproxProfit.HasValue ? $"£{product.ApproxProfit.Value:F2}" : "-")</td>
-                        <td>
-                            @if (product.AlreadyAdded)
-                            {
-                                <span class="badge bg-info text-dark">Already added</span>
-                            }
-                            else
-                            {
-                                <span class="text-muted">Not added</span>
-                            }
-                        </td>
-                        <td class="text-end">
-                            <div class="btn-group btn-group-sm" role="group">
-                                <button class="btn btn-outline-success" @onclick="() => AddSingle(product.Id, false)" disabled="@isBusy">Add to my listings</button>
-                                @if (product.AlreadyAdded)
-                                {
-                                    <button class="btn btn-outline-secondary" @onclick="() => AddSingle(product.Id, true)" disabled="@isBusy">Add duplicate</button>
-                                }
-                                @if (product.ExistingListingId.HasValue)
-                                {
-                                    <a class="btn btn-outline-primary" href="/edit-listing/@product.ExistingListingId.Value">Open listing</a>
-                                }
-                                <button class="btn btn-outline-danger" @onclick="() => DeleteSingle(product)" disabled="@isBusy">Delete</button>
-                            </div>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    </div>
+    @ProductTable(products, sortable: true)
 }
 }
 
 @code {
+    /// <summary>Clickable sort header in the list view; plain text inside categories (each is sorted by price).</summary>
+    private RenderFragment Header(bool sortable, string label, string primary, string? alternate = null)
+        => sortable ? SortHeader(label, primary, alternate) : PlainHeader(label);
+
+    private RenderFragment PlainHeader(string label) => __builder =>
+    {
+        <span>@label</span>
+    };
+
+    /// <summary>Product grid, used by the list view and inside each expanded category.</summary>
+    private RenderFragment ProductTable(List<SupplierProductListItemDto> items, bool sortable) => __builder =>
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th style="width: 36px;"><input type="checkbox" class="form-check-input" checked="@(items.Any() && items.All(p => selectedIds.Contains(p.Id)))" @onchange="e => ToggleSelectAll(items, e)" /></th>
+                        <th>@Header(sortable, "Product", SupplierProductSort.Title)</th>
+                        <th>Category</th>
+                        <th>Image</th>
+                        <th>SKU</th>
+                        <th>@Header(sortable, "Stock", SupplierProductSort.StockHighToLow)</th>
+                        <th>@Header(sortable, "Supplier Price", SupplierProductSort.PriceHighToLow, SupplierProductSort.PriceLowToHigh)</th>
+                        <th>Suggested Price</th>
+                        <th title="Suggested price minus supplier price. Before VAT, delivery and marketplace fees.">@Header(sortable, "Approx. Profit", SupplierProductSort.ProfitHighToLow)</th>
+                        <th>Status</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var product in items)
+                    {
+                        var images = string.IsNullOrWhiteSpace(product.ImageUrlsJson) ? Array.Empty<string>() : System.Text.Json.JsonSerializer.Deserialize<string[]>(product.ImageUrlsJson);
+                        <tr id="product-@product.Id" class="@(product.Id == highlightProductId ? "table-warning" : "")">
+                            <td><input type="checkbox" class="form-check-input" checked="@selectedIds.Contains(product.Id)" @onchange="() => ToggleSelection(product.Id)" /></td>
+                            <td>
+                                <a href="/products/@product.Id">@product.Title</a>
+                                @if (product.GroupSize > 1 && product.GroupKey != null && groupKey != product.GroupKey)
+                                {
+                                    <div><a href="javascript:void(0)" class="small" @onclick="() => ShowGroup(product)">@product.GroupSize sizes / variants</a></div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(product.ProductUrl))
+                                {
+                                    <div><a class="small text-muted" href="@product.ProductUrl" target="_blank">Source</a></div>
+                                }
+                            </td>
+                            <td>@(string.IsNullOrWhiteSpace(product.CategoryName) ? "-" : product.CategoryName)</td>
+                            <td>
+                                @if (images != null && images.Length > 0)
+                                {
+                                    <img src="@images[0]" alt="Image" style="max-width: 48px; max-height: 48px; border-radius: 4px; border: 1px solid #ccc;" />
+                                }
+                                else if (!string.IsNullOrWhiteSpace(product.ImageUrl))
+                                {
+                                    <img src="@product.ImageUrl" alt="Image" style="max-width: 48px; max-height: 48px; border-radius: 4px; border: 1px solid #ccc;" />
+                                }
+                                else
+                                {
+                                    <span>-</span>
+                                }
+                            </td>
+                            <td>@(string.IsNullOrWhiteSpace(product.SupplierSku) ? "-" : product.SupplierSku)</td>
+                            <td>@(product.StockLevel?.ToString() ?? "-")</td>
+                            <td>
+                                @(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")
+                                @if (product.PriceIsEstimate)
+                                {
+                                    <span class="badge bg-warning text-dark" title="Trade price not confirmed yet (showing RRP)">est.</span>
+                                }
+                                @if (product.RrpPrice.HasValue && !product.PriceIsEstimate)
+                                {
+                                    <div class="small text-muted">RRP £@product.RrpPrice.Value.ToString("F2")</div>
+                                }
+                            </td>
+                            <td>@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</td>
+                            <td>@(product.ApproxProfit.HasValue ? $"£{product.ApproxProfit.Value:F2}" : "-")</td>
+                            <td>
+                                @if (product.AlreadyAdded)
+                                {
+                                    <span class="badge bg-info text-dark">Already added</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Not added</span>
+                                }
+                            </td>
+                            <td class="text-end">
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button class="btn btn-outline-success" @onclick="() => AddSingle(product.Id, false)" disabled="@isBusy">Add to my listings</button>
+                                    @if (product.AlreadyAdded)
+                                    {
+                                        <button class="btn btn-outline-secondary" @onclick="() => AddSingle(product.Id, true)" disabled="@isBusy">Add duplicate</button>
+                                    }
+                                    @if (product.ExistingListingId.HasValue)
+                                    {
+                                        <a class="btn btn-outline-primary" href="/edit-listing/@product.ExistingListingId.Value">Open listing</a>
+                                    }
+                                    <button class="btn btn-outline-danger" @onclick="() => DeleteSingle(product)" disabled="@isBusy">Delete</button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    };
+
     private readonly List<SupplierProductListItemDto> products = new();
     private readonly List<SupplierFeedDto> feeds = new();
     private readonly HashSet<int> selectedIds = new();
@@ -320,6 +364,7 @@ else
     private async Task ShowCategories()
     {
         view = "categories";
+        CollapseAllCategories();
         await LoadCategorySummary();
     }
 
@@ -336,14 +381,59 @@ else
         finally { isLoadingCategories = false; }
     }
 
-    private async Task OpenCategory(SupplierCategorySummaryDto c)
+    // Expanded categories (several can be open at once) and their loaded products.
+    private readonly HashSet<string> expandedCategories = new();
+    private readonly Dictionary<string, List<SupplierProductListItemDto>> categoryProducts = new();
+
+    private static string CategoryKey(SupplierCategorySummaryDto c) => c.Category ?? SupplierProductQuery.Uncategorised;
+
+    private async Task ToggleCategory(SupplierCategorySummaryDto c)
     {
-        category = c.Category ?? SupplierProductQuery.Uncategorised;
-        groupKey = null;
-        selectedIds.Clear();
-        view = "list";
-        await LoadProducts();
-        scrollToTop = true;
+        var key = CategoryKey(c);
+        if (!expandedCategories.Add(key))
+        {
+            expandedCategories.Remove(key);
+            categoryProducts.Remove(key);
+            return;
+        }
+        await LoadCategoryProducts(key);
+    }
+
+    private void CollapseAllCategories()
+    {
+        expandedCategories.Clear();
+        categoryProducts.Clear();
+    }
+
+    private async Task LoadCategoryProducts(string key)
+    {
+        try
+        {
+            categoryProducts[key] = await ListingService.GetSupplierProductsAsync(new SupplierProductQuery
+            {
+                Supplier = selectedSupplier,
+                Category = key,
+                Sort = SupplierProductSort.PriceHighToLow
+            });
+        }
+        catch (Exception ex)
+        {
+            expandedCategories.Remove(key);
+            statusCss = "alert-danger";
+            statusMessage = $"Could not load products: {ex.Message}";
+        }
+    }
+
+    /// <summary>After adding/deleting: refresh whichever view is showing.</summary>
+    private async Task ReloadCurrentView()
+    {
+        if (view != "categories")
+        {
+            await LoadProducts();
+            return;
+        }
+        await LoadCategorySummary();
+        foreach (var key in expandedCategories.ToList()) await LoadCategoryProducts(key);
     }
 
     // Group view: all variants of one supplier product (also reachable as /products?group=...).
@@ -361,6 +451,7 @@ else
 
     private async Task ShowGroup(SupplierProductListItemDto product)
     {
+        view = "list"; // a group link inside an expanded category opens the list view
         listBeforeGroup = products.ToList();
         returnToProductId = product.Id;
         highlightProductId = null;
@@ -440,7 +531,7 @@ else
         await LoadCategories();
         await LoadProducts();
         await LoadImportStatus();
-        if (view == "categories") await LoadCategorySummary();
+        if (view == "categories") await ReloadCurrentView();
         statusMessage = job.Status == "Failed" ? $"Import failed: {job.Message}" : $"Import finished. {job.Message}";
         StateHasChanged();
     }
@@ -554,6 +645,7 @@ else
         await LoadCategories();
         await LoadImportStatus();
         await LoadProducts();
+        CollapseAllCategories();
         if (view == "categories") await LoadCategorySummary();
     }
 
@@ -599,19 +691,13 @@ else
         else selectedIds.Add(id);
     }
 
-    private void ToggleSelectAll(ChangeEventArgs e)
+    private void ToggleSelectAll(List<SupplierProductListItemDto> items, ChangeEventArgs e)
     {
         var isChecked = (bool)(e.Value ?? false);
-        if (isChecked)
+        foreach (var product in items)
         {
-            foreach (var product in products)
-            {
-                selectedIds.Add(product.Id);
-            }
-        }
-        else
-        {
-            selectedIds.Clear();
+            if (isChecked) selectedIds.Add(product.Id);
+            else selectedIds.Remove(product.Id);
         }
     }
 
@@ -625,7 +711,7 @@ else
             statusCss = "alert-success";
             statusMessage = $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
             enrichJobId = result.EnrichmentJobId;
-            await LoadProducts();
+            await ReloadCurrentView();
         }
         catch (Exception ex)
         {
@@ -651,7 +737,7 @@ else
             statusMessage = $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
             enrichJobId = result.EnrichmentJobId;
             selectedIds.Clear();
-            await LoadProducts();
+            await ReloadCurrentView();
         }
         catch (Exception ex)
         {
@@ -723,7 +809,7 @@ else
             selectedIds.Remove(product.Id);
             statusCss = "alert-success";
             statusMessage = "Product deleted.";
-            await LoadProducts();
+            await ReloadCurrentView();
         }
         catch (Exception ex)
         {
@@ -750,7 +836,7 @@ else
             selectedIds.Clear();
             statusCss = "alert-success";
             statusMessage = $"Deleted {deleted} product(s).";
-            await LoadProducts();
+            await ReloadCurrentView();
         }
         catch (Exception ex)
         {
