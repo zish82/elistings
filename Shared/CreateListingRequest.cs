@@ -41,4 +41,7 @@ public class CreateListingRequest
     public string? SourceTitle { get; set; }
     /// <summary>The supplier's own category (e.g. from the product page breadcrumb).</summary>
     public string? SupplierCategory { get; set; }
+    /// <summary>My category; set <see cref="CatalogCategoryIsManual"/> when the user picked it.</summary>
+    public int? CatalogCategoryId { get; set; }
+    public bool CatalogCategoryIsManual { get; set; }
 }

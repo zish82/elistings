@@ -54,6 +54,11 @@ public class ListingDto
     public string? SupplierCode { get; set; }
     /// <summary>True when the listing's supplier is disabled (the dashboard hides these by default). Read-only.</summary>
     public bool SupplierDisabled { get; set; }
+    /// <summary>My category (see My Categories).</summary>
+    public int? CatalogCategoryId { get; set; }
+    public bool CatalogCategoryIsManual { get; set; }
+    /// <summary>Read-only, e.g. "Garden › Ventilation › Carbon Filters".</summary>
+    public string? CatalogCategoryPath { get; set; }
 
     /// <summary>Item price + delivery (when included): what the marketplace listing is priced at.</summary>
     public decimal TotalPrice => PricingMath.ListingTotal(Price, DeliveryCost, IncludeDeliveryInPrice);

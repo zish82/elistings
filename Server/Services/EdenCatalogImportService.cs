@@ -41,13 +41,18 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IEdenSupplierSyncService _eden;
     private readonly SupplierCatalogService _catalog;
+    private readonly ProductTagService _tags;
+    private readonly CatalogCategoryService _categories;
 
-    public EdenCatalogImportService(AppDbContext context, IHttpClientFactory httpClientFactory, IEdenSupplierSyncService eden, SupplierCatalogService catalog)
+    public EdenCatalogImportService(AppDbContext context, IHttpClientFactory httpClientFactory, IEdenSupplierSyncService eden,
+        SupplierCatalogService catalog, ProductTagService tags, CatalogCategoryService categories)
     {
         _context = context;
         _httpClientFactory = httpClientFactory;
         _eden = eden;
         _catalog = catalog;
+        _tags = tags;
+        _categories = categories;
     }
 
     public string SupplierCode => Code;
@@ -119,6 +124,7 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
             .GroupBy(p => p.SupplierSku!, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.OrderBy(p => p.Id).First(), StringComparer.OrdinalIgnoreCase);
 
         var byVariant = new Dictionary<long, SupplierProduct>();
+        var tagsByVariant = new Dictionary<long, List<string>>();
         foreach (var product in catalogue)
         {
             foreach (var variant in product.Variants)
@@ -155,10 +161,18 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
                 }
                 entity.SuggestedPrice = Suggest(entity.SupplierPrice, supplier);
                 byVariant[variant.Id] = entity;
+                tagsByVariant[variant.Id] = product.Tags;
             }
         }
         MarkRemovedProducts(existing, byVariant, notes);
         await _context.SaveChangesAsync(ct);
+
+        // Eden's tags (its website sections, e.g. "Carbon Filters") – for filtering and my categories.
+        progress?.Report("Saving tags...");
+        await _tags.SyncAsync(Code,
+            byVariant.GroupBy(kv => kv.Value.Id) // two variants can share one row (matched by SKU)
+                .ToDictionary(g => g.Key, g => g.SelectMany(kv => tagsByVariant[kv.Key]).Distinct(StringComparer.OrdinalIgnoreCase).ToList()),
+            catalogue.Select(p => p.Vendor), ct);
 
         // ---- 2 + 3. Logged-in trade prices and stock
         IEdenTradeSession? session = null;
@@ -181,6 +195,7 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
 
         await UpdateLinkedListingsAsync(byVariant.Values.Concat(existing).Distinct(), ct);
         await _context.SaveChangesAsync(ct);
+        await _categories.RecomputeAsync(Code, ct); // my categories, from the category/tag mappings
 
         result.ErrorMessage = null;
         var summary = $"{catalogue.Count} products / {byVariant.Count} variants: {result.Inserted} new, {result.Updated} updated. " + string.Join(" ", notes);
@@ -458,6 +473,8 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
         public string? ProductType { get; init; }
         public List<string> ImageUrls { get; init; } = new();
         public List<ShopifyVariant> Variants { get; init; } = new();
+        /// <summary>Shopify tags (an array in products.json; older stores send one comma-separated string).</summary>
+        public List<string> Tags { get; init; } = new();
 
         public static List<ShopifyProduct> ParseList(string json)
         {
@@ -523,11 +540,25 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
                     BodyHtml = Str(p, "body_html"),
                     Vendor = Str(p, "vendor"),
                     ProductType = Str(p, "product_type"),
+                    Tags = ReadTags(p),
                     ImageUrls = imageUrls,
                     Variants = variants
                 });
             }
             return list;
+        }
+
+        private static List<string> ReadTags(JsonElement p)
+        {
+            if (!p.TryGetProperty("tags", out var tags)) return new List<string>();
+            IEnumerable<string?> values = tags.ValueKind switch
+            {
+                JsonValueKind.Array => tags.EnumerateArray().Where(t => t.ValueKind == JsonValueKind.String).Select(t => t.GetString()),
+                JsonValueKind.String => (tags.GetString() ?? string.Empty).Split(','),
+                _ => Array.Empty<string?>()
+            };
+            return values.Select(t => t?.Trim()).Where(t => !string.IsNullOrEmpty(t)).Select(t => t!)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         private static string? Str(JsonElement e, string name)

@@ -22,6 +22,11 @@ public class SupplierProductListItemDto
     public string? VariantName { get; set; }
     /// <summary>How many visible products share <see cref="GroupKey"/> (1 when not part of a group).</summary>
     public int GroupSize { get; set; } = 1;
+    public int? CatalogCategoryId { get; set; }
+    /// <summary>My category path, e.g. "Garden › Ventilation › Carbon Filters".</summary>
+    public string? CatalogCategoryPath { get; set; }
+    /// <summary>The product's type tags (e.g. "Carbon Filters").</summary>
+    public List<string> Tags { get; set; } = new();
 
     /// <summary>Approximate profit per item: suggested price minus supplier price (before VAT, delivery and fees).</summary>
     public decimal? ApproxProfit => SuggestedPrice.HasValue && SupplierPrice.HasValue ? SuggestedPrice - SupplierPrice : null;
@@ -44,6 +49,12 @@ public class SupplierProductQuery
     public bool HideAdded { get; set; }
     /// <summary>Only products of this group (all variants of one supplier product).</summary>
     public string? GroupKey { get; set; }
+    /// <summary>My category (0 = products without one).</summary>
+    public int? CatalogCategoryId { get; set; }
+    /// <summary>With <see cref="CatalogCategoryId"/>: also products in its sub-categories (default).</summary>
+    public bool IncludeSubcategories { get; set; } = true;
+    /// <summary>Products with this tag (0 = products without any type tag).</summary>
+    public int? TagId { get; set; }
     /// <summary>One of <see cref="SupplierProductSort"/>.</summary>
     public string? Sort { get; set; }
     public int Limit { get; set; } = DefaultLimit;

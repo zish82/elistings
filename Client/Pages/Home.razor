@@ -271,6 +271,10 @@ else
                         {
                             <div class="small"><span class="text-muted">Supplier:</span> @listing.SupplierCategory</div>
                         }
+                        @if (!string.IsNullOrWhiteSpace(listing.CatalogCategoryPath))
+                        {
+                            <div class="small text-success" title="My category">@listing.CatalogCategoryPath</div>
+                        }
                     </td>
                     <td>
                         <span class="badge @(listing.Status == "Published" ? "bg-success" : "bg-warning text-dark")">

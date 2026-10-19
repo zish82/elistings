@@ -101,12 +101,26 @@
     }
     else if (!categorySummary.Any())
     {
-        <div class="alert alert-warning">No products for @selectedSupplier yet. Run an import first.</div>
+        <div class="alert alert-warning">
+            @if (grouping == ProductGrouping.SupplierCategory)
+            {
+                <span>No products for @selectedSupplier yet. Run an import first.</span>
+            }
+            else
+            {
+                <span>Nothing to show yet. Re-run the @selectedSupplier import (tags are saved by imports), and set up <a href="/categories">My Categories</a>.</span>
+            }
+        </div>
     }
     else
     {
         <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
-            <span class="small text-muted">@categorySummary.Count categories for @selectedSupplier (the supplier's own categories). Click a category to show or hide its products.</span>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Group by">
+                <button type="button" class="btn @(grouping == ProductGrouping.SupplierCategory ? "btn-secondary" : "btn-outline-secondary")" @onclick="() => SetGrouping(ProductGrouping.SupplierCategory)">Supplier categories</button>
+                <button type="button" class="btn @(grouping == ProductGrouping.MyCategory ? "btn-secondary" : "btn-outline-secondary")" @onclick="() => SetGrouping(ProductGrouping.MyCategory)">My categories</button>
+                <button type="button" class="btn @(grouping == ProductGrouping.Tag ? "btn-secondary" : "btn-outline-secondary")" @onclick="() => SetGrouping(ProductGrouping.Tag)">Tags</button>
+            </div>
+            <span class="small text-muted">@categorySummary.Count groups for @selectedSupplier. Click one to show or hide its products.</span>
             <button type="button" class="btn btn-sm btn-outline-secondary py-0" @onclick="CollapseAllCategories" disabled="@(!expandedCategories.Any())">Collapse all</button>
         </div>
         <div class="table-responsive">
@@ -126,7 +140,7 @@
                         var key = CategoryKey(c);
                         var expanded = expandedCategories.Contains(key);
                         <tr class="@(expanded ? "table-active" : "")" style="cursor: pointer;" @onclick="() => ToggleCategory(c)">
-                            <td><span class="me-1">@(expanded ? "▾" : "▸")</span>@(c.Category ?? "(No category)")</td>
+                            <td><span class="me-1">@(expanded ? "▾" : "▸")</span>@c.Label</td>
                             <td class="text-end">@c.Products</td>
                             <td class="text-end">@c.InStock</td>
                             <td class="text-end">@c.AlreadyAdded</td>
@@ -151,7 +165,7 @@
                                         {
                                             <div class="small text-muted">First @SupplierProductQuery.DefaultLimit shown (highest price first).</div>
                                         }
-                                        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleCategory(c)">▴ Hide @(c.Category ?? "(No category)")</button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleCategory(c)">▴ Hide @c.Label</button>
                                     }
                                 </td>
                             </tr>
@@ -185,6 +199,28 @@ else
                 <option value="@c">@c</option>
             }
             <option value="@SupplierProductQuery.Uncategorised">(No category)</option>
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label small">My category</label>
+        <select class="form-select form-select-sm" value="@(myCategoryId?.ToString() ?? "")" @onchange="OnMyCategoryChanged">
+            <option value="">All</option>
+            @foreach (var c in catalogCategories)
+            {
+                <option value="@c.Id">@c.Path</option>
+            }
+            <option value="0">(Not in my categories)</option>
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label small">Tag</label>
+        <select class="form-select form-select-sm" value="@(tagId?.ToString() ?? "")" @onchange="OnTagChanged">
+            <option value="">All tags</option>
+            @foreach (var t in supplierTags)
+            {
+                <option value="@t.Id">@t.Name (@t.ProductCount)</option>
+            }
+            <option value="0">(No tag)</option>
         </select>
     </div>
     <div class="col-md-2">
@@ -277,7 +313,22 @@ else
                                     <div><a class="small text-muted" href="@product.ProductUrl" target="_blank">Source</a></div>
                                 }
                             </td>
-                            <td>@(string.IsNullOrWhiteSpace(product.CategoryName) ? "-" : product.CategoryName)</td>
+                            <td>
+                                @(string.IsNullOrWhiteSpace(product.CategoryName) ? "-" : product.CategoryName)
+                                @if (!string.IsNullOrWhiteSpace(product.CatalogCategoryPath))
+                                {
+                                    <div class="small text-success" title="My category">@product.CatalogCategoryPath</div>
+                                }
+                                @if (product.Tags.Any())
+                                {
+                                    <div>
+                                        @foreach (var tag in product.Tags)
+                                        {
+                                            <span class="badge bg-light text-dark border me-1">@tag</span>
+                                        }
+                                    </div>
+                                }
+                            </td>
                             <td>
                                 @if (images != null && images.Length > 0)
                                 {
@@ -357,6 +408,40 @@ else
     // "list" = product grid, "categories" = products per supplier category.
     private string view = "list";
     private List<SupplierCategorySummaryDto> categorySummary = new();
+    private string grouping = ProductGrouping.SupplierCategory;
+
+    // My category / tag filters.
+    private List<CatalogCategoryDto> catalogCategories = new();
+    private List<ProductTagDto> supplierTags = new();
+    private int? myCategoryId;
+    private int? tagId;
+
+    private async Task LoadFilterLists()
+    {
+        try { catalogCategories = await ListingService.GetCatalogCategoriesAsync(); }
+        catch (Exception ex) { Console.WriteLine($"Could not load my categories: {ex.Message}"); catalogCategories = new(); }
+        try { supplierTags = await ListingService.GetSupplierTagsAsync(selectedSupplier); }
+        catch (Exception ex) { Console.WriteLine($"Could not load tags: {ex.Message}"); supplierTags = new(); }
+    }
+
+    private async Task OnMyCategoryChanged(ChangeEventArgs e)
+    {
+        myCategoryId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        await LoadProducts();
+    }
+
+    private async Task OnTagChanged(ChangeEventArgs e)
+    {
+        tagId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        await LoadProducts();
+    }
+
+    private async Task SetGrouping(string value)
+    {
+        grouping = value;
+        CollapseAllCategories();
+        await LoadCategorySummary();
+    }
     private bool isLoadingCategories;
 
     private void ShowList() => view = "list";
@@ -371,7 +456,7 @@ else
     private async Task LoadCategorySummary()
     {
         isLoadingCategories = true;
-        try { categorySummary = await ListingService.GetSupplierCategorySummaryAsync(selectedSupplier); }
+        try { categorySummary = await ListingService.GetSupplierCategorySummaryAsync(selectedSupplier, grouping); }
         catch (Exception ex)
         {
             statusCss = "alert-danger";
@@ -385,7 +470,9 @@ else
     private readonly HashSet<string> expandedCategories = new();
     private readonly Dictionary<string, List<SupplierProductListItemDto>> categoryProducts = new();
 
-    private static string CategoryKey(SupplierCategorySummaryDto c) => c.Category ?? SupplierProductQuery.Uncategorised;
+    /// <summary>Supplier grouping: the category name; my category / tag grouping: the id.</summary>
+    private string CategoryKey(SupplierCategorySummaryDto c)
+        => grouping == ProductGrouping.SupplierCategory ? c.Category ?? SupplierProductQuery.Uncategorised : (c.Id ?? 0).ToString();
 
     private async Task ToggleCategory(SupplierCategorySummaryDto c)
     {
@@ -409,12 +496,11 @@ else
     {
         try
         {
-            categoryProducts[key] = await ListingService.GetSupplierProductsAsync(new SupplierProductQuery
-            {
-                Supplier = selectedSupplier,
-                Category = key,
-                Sort = SupplierProductSort.PriceHighToLow
-            });
+            var query = new SupplierProductQuery { Supplier = selectedSupplier, Sort = SupplierProductSort.PriceHighToLow };
+            if (grouping == ProductGrouping.SupplierCategory) query.Category = key;
+            else if (grouping == ProductGrouping.MyCategory) { query.CatalogCategoryId = int.Parse(key); query.IncludeSubcategories = false; }
+            else query.TagId = int.Parse(key);
+            categoryProducts[key] = await ListingService.GetSupplierProductsAsync(query);
         }
         catch (Exception ex)
         {
@@ -499,6 +585,7 @@ else
         }
     }
     private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrWhiteSpace(category) || !string.IsNullOrEmpty(groupKey)
+                                     || myCategoryId.HasValue || tagId.HasValue
                                      || minPrice.HasValue || maxPrice.HasValue || inStockOnly || hideAdded;
     private bool isLoading;
     private bool isBusy;
@@ -529,6 +616,7 @@ else
         importRunning = false;
         statusCss = job.Status == "Failed" ? "alert-danger" : "alert-success";
         await LoadCategories();
+        await LoadFilterLists();
         await LoadProducts();
         await LoadImportStatus();
         if (view == "categories") await ReloadCurrentView();
@@ -552,6 +640,7 @@ else
         if (!string.IsNullOrWhiteSpace(SupplierFromUrl)) selectedSupplier = SupplierFromUrl;
         if (!string.IsNullOrWhiteSpace(GroupFromUrl)) groupKey = GroupFromUrl;
         await LoadCategories();
+        await LoadFilterLists();
         await LoadImportStatus();
         await LoadProducts();
         if (!string.IsNullOrEmpty(groupKey) && products.Any())
@@ -603,6 +692,8 @@ else
     {
         search = string.Empty;
         category = string.Empty;
+        myCategoryId = null;
+        tagId = null;
         minPrice = null;
         maxPrice = null;
         inStockOnly = false;
@@ -642,7 +733,9 @@ else
         importJobId = null;
         importRunning = false;
         groupKey = null;
+        tagId = null; // tags belong to a supplier
         await LoadCategories();
+        await LoadFilterLists();
         await LoadImportStatus();
         await LoadProducts();
         CollapseAllCategories();
@@ -667,6 +760,8 @@ else
                 InStockOnly = string.IsNullOrEmpty(groupKey) && inStockOnly,
                 HideAdded = string.IsNullOrEmpty(groupKey) && hideAdded,
                 GroupKey = string.IsNullOrEmpty(groupKey) ? null : groupKey,
+                CatalogCategoryId = string.IsNullOrEmpty(groupKey) ? myCategoryId : null,
+                TagId = string.IsNullOrEmpty(groupKey) ? tagId : null,
                 Sort = sort
             });
             products.Clear();

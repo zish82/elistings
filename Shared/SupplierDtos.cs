@@ -115,8 +115,12 @@ public class SupplierOverviewDto
 /// <summary>One row of the Products page "Categories" view.</summary>
 public class SupplierCategorySummaryDto
 {
-    /// <summary>Null for products without a category.</summary>
+    /// <summary>Supplier grouping: the category (null for products without one).</summary>
     public string? Category { get; set; }
+    /// <summary>My-category grouping: the category id (0 = none). Tag grouping: the tag id (0 = no tag).</summary>
+    public int? Id { get; set; }
+    /// <summary>What to show, e.g. the category path or tag name.</summary>
+    public string Label { get; set; } = string.Empty;
     public int Products { get; set; }
     public int InStock { get; set; }
     public int AlreadyAdded { get; set; }

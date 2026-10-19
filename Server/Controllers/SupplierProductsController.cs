@@ -74,6 +74,29 @@ public class SupplierProductsController : ControllerBase
             query = query.Where(p => p.GroupKey == q.GroupKey);
         }
 
+        if (q.CatalogCategoryId == 0)
+        {
+            query = query.Where(p => p.CatalogCategoryId == null);
+        }
+        else if (q.CatalogCategoryId.HasValue)
+        {
+            var ids = q.IncludeSubcategories
+                ? (await new CatalogCategoryService(_context).WithDescendantsAsync(q.CatalogCategoryId.Value)).ToList()
+                : new List<int> { q.CatalogCategoryId.Value };
+            query = query.Where(p => p.CatalogCategoryId != null && ids.Contains(p.CatalogCategoryId.Value));
+        }
+
+        if (q.TagId == 0)
+        {
+            var typeTags = _context.ProductTags.Where(t => t.Type == ProductTagTypes.Type).Select(t => t.Id);
+            query = query.Where(p => !_context.SupplierProductTags.Any(l => l.SupplierProductId == p.Id && typeTags.Contains(l.ProductTagId)));
+        }
+        else if (q.TagId.HasValue)
+        {
+            var tagId = q.TagId.Value;
+            query = query.Where(p => _context.SupplierProductTags.Any(l => l.SupplierProductId == p.Id && l.ProductTagId == tagId));
+        }
+
         // SQLite stores decimals as TEXT and EF can't compare/sort them there, so cast to double (REAL) in SQL.
         if (q.MinPrice.HasValue)
         {
@@ -122,6 +145,17 @@ public class SupplierProductsController : ControllerBase
                 .ToDictionaryAsync(x => x.Key, x => x.Count);
 
         var productIds = products.Select(p => p.Id).ToList();
+
+        // My category paths and type tags for the rows shown.
+        var tree = products.Any(p => p.CatalogCategoryId.HasValue)
+            ? CatalogCategoryService.BuildTree(await _context.CatalogCategories.AsNoTracking().ToListAsync())
+            : new Dictionary<int, CatalogCategoryService.TreeNode>();
+        var tagNames = (await (from l in _context.SupplierProductTags
+                               join t in _context.ProductTags on l.ProductTagId equals t.Id
+                               where productIds.Contains(l.SupplierProductId) && t.Type == ProductTagTypes.Type
+                               select new { l.SupplierProductId, t.Name }).ToListAsync())
+            .ToLookup(x => x.SupplierProductId, x => x.Name);
+
         var existingMap = await _context.Listings
             .Where(l => l.OwnerUserId == userId.Value && l.SupplierProductId.HasValue && productIds.Contains(l.SupplierProductId.Value))
             .GroupBy(l => l.SupplierProductId!.Value)
@@ -147,7 +181,10 @@ public class SupplierProductsController : ControllerBase
             PriceIsEstimate = p.PriceIsEstimate,
             GroupKey = p.GroupKey,
             VariantName = p.VariantName,
-            GroupSize = p.GroupKey != null && groupSizes.TryGetValue(p.GroupKey, out var size) ? size : 1
+            GroupSize = p.GroupKey != null && groupSizes.TryGetValue(p.GroupKey, out var size) ? size : 1,
+            CatalogCategoryId = p.CatalogCategoryId,
+            CatalogCategoryPath = p.CatalogCategoryId.HasValue && tree.TryGetValue(p.CatalogCategoryId.Value, out var node) ? node.Path : null,
+            Tags = tagNames[p.Id].OrderBy(n => n).ToList()
         }).ToList();
 
         return Ok(payload);
@@ -183,7 +220,7 @@ public class SupplierProductsController : ControllerBase
 
     /// <summary>Products per supplier category, for the Products page "Categories" view.</summary>
     [HttpGet("category-summary")]
-    public async Task<ActionResult<List<SupplierCategorySummaryDto>>> GetCategorySummary([FromQuery] string? supplier = null)
+    public async Task<ActionResult<List<SupplierCategorySummaryDto>>> GetCategorySummary([FromQuery] string? supplier = null, [FromQuery] string? groupBy = null)
     {
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
@@ -192,6 +229,9 @@ public class SupplierProductsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(supplier)) query = query.Where(p => p.Supplier == supplier);
 
         var uid = userId.Value;
+        if (groupBy == ProductGrouping.MyCategory) return Ok(await SummaryByMyCategoryAsync(query, uid));
+        if (groupBy == ProductGrouping.Tag) return Ok(await SummaryByTagAsync(query, uid));
+
         var rows = await query
             .GroupBy(p => p.CategoryName ?? "")
             .Select(g => new { Category = g.Key, Products = g.Count(), InStock = g.Count(p => p.StockLevel > 0) })
@@ -208,6 +248,7 @@ public class SupplierProductsController : ControllerBase
             .Select(g => new SupplierCategorySummaryDto
             {
                 Category = g.Key,
+                Label = g.Key ?? "(No category)",
                 Products = g.Sum(r => r.Products),
                 InStock = g.Sum(r => r.InStock),
                 AlreadyAdded = g.Sum(r => added.GetValueOrDefault(r.Category))
@@ -215,6 +256,88 @@ public class SupplierProductsController : ControllerBase
             .OrderBy(r => r.Category == null)
             .ThenBy(r => r.Category)
             .ToList());
+    }
+
+    private async Task<List<SupplierCategorySummaryDto>> SummaryByMyCategoryAsync(IQueryable<SupplierProduct> query, int uid)
+    {
+        var rows = await query
+            .GroupBy(p => p.CatalogCategoryId ?? 0)
+            .Select(g => new { Id = g.Key, Products = g.Count(), InStock = g.Count(p => p.StockLevel > 0) })
+            .ToListAsync();
+        var added = await query
+            .Where(p => _context.Listings.Any(l => l.OwnerUserId == uid && l.SupplierProductId == p.Id))
+            .GroupBy(p => p.CatalogCategoryId ?? 0)
+            .Select(g => new { Id = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Id, x => x.Count);
+        var tree = CatalogCategoryService.BuildTree(await _context.CatalogCategories.AsNoTracking().ToListAsync());
+
+        return rows
+            .Select(r => new SupplierCategorySummaryDto
+            {
+                Id = r.Id,
+                Label = r.Id != 0 && tree.TryGetValue(r.Id, out var node) ? node.Path : "(Not in my categories yet)",
+                Category = r.Id != 0 && tree.TryGetValue(r.Id, out var n2) ? n2.Path : null,
+                Products = r.Products,
+                InStock = r.InStock,
+                AlreadyAdded = added.GetValueOrDefault(r.Id)
+            })
+            .OrderBy(r => r.Id == 0).ThenBy(r => r.Label, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task<List<SupplierCategorySummaryDto>> SummaryByTagAsync(IQueryable<SupplierProduct> query, int uid)
+    {
+        var typeTags = _context.ProductTags.Where(t => t.Type == ProductTagTypes.Type);
+        var rows = await (from l in _context.SupplierProductTags
+                          join t in typeTags on l.ProductTagId equals t.Id
+                          join p in query on l.SupplierProductId equals p.Id
+                          group p by new { t.Id, t.Name } into g
+                          select new { g.Key.Id, g.Key.Name, Products = g.Count(), InStock = g.Count(p => p.StockLevel > 0) })
+            .ToListAsync();
+        var added = await (from l in _context.SupplierProductTags
+                           join t in typeTags on l.ProductTagId equals t.Id
+                           join p in query on l.SupplierProductId equals p.Id
+                           where _context.Listings.Any(x => x.OwnerUserId == uid && x.SupplierProductId == p.Id)
+                           group p by t.Id into g
+                           select new { Id = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Id, x => x.Count);
+
+        var untagged = query.Where(p => !_context.SupplierProductTags.Any(l => l.SupplierProductId == p.Id && typeTags.Any(t => t.Id == l.ProductTagId)));
+        var untaggedCount = await untagged.CountAsync();
+
+        var result = rows
+            .Select(r => new SupplierCategorySummaryDto
+            {
+                Id = r.Id, Label = r.Name, Category = r.Name, Products = r.Products, InStock = r.InStock, AlreadyAdded = added.GetValueOrDefault(r.Id)
+            })
+            .OrderBy(r => r.Label, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (untaggedCount > 0)
+        {
+            result.Add(new SupplierCategorySummaryDto
+            {
+                Id = 0, Label = "(No tag)", Products = untaggedCount,
+                InStock = await untagged.CountAsync(p => p.StockLevel > 0),
+                AlreadyAdded = await untagged.CountAsync(p => _context.Listings.Any(l => l.OwnerUserId == uid && l.SupplierProductId == p.Id))
+            });
+        }
+        return result;
+    }
+
+    /// <summary>Type tags of a supplier (for the tag filter), with product counts.</summary>
+    [HttpGet("tags")]
+    public async Task<ActionResult<List<ProductTagDto>>> GetTags([FromQuery] string? supplier)
+    {
+        if (string.IsNullOrWhiteSpace(supplier)) return Ok(new List<ProductTagDto>());
+        var visible = VisibleProducts().Where(p => p.Supplier == supplier);
+        var rows = await (from l in _context.SupplierProductTags
+                          join t in _context.ProductTags on l.ProductTagId equals t.Id
+                          join p in visible on l.SupplierProductId equals p.Id
+                          where t.Supplier == supplier && t.Type == ProductTagTypes.Type
+                          group l by new { t.Id, t.Name, t.Type } into g
+                          select new ProductTagDto { Id = g.Key.Id, Name = g.Key.Name, Type = g.Key.Type, ProductCount = g.Count() })
+            .ToListAsync();
+        return Ok(rows.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList());
     }
 
     /// <summary>Distinct categories for the category filter.</summary>
@@ -430,7 +553,8 @@ public class SupplierProductsController : ControllerBase
             SourcePrice = product.SupplierPrice,
             SourceStockLevel = product.StockLevel,
             SourceProductCode = product.SupplierSku,
-            SupplierCategory = product.CategoryName
+            SupplierCategory = product.CategoryName,
+            CatalogCategoryId = product.CatalogCategoryId
         };
     }
 

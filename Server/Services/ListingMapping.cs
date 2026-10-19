@@ -51,6 +51,8 @@ public static class ListingMapping
         }
         // Supplier category comes from the supplier; keep the stored one when the request doesn't send it.
         if (!string.IsNullOrWhiteSpace(request.SupplierCategory)) listing.SupplierCategory = request.SupplierCategory.Trim();
+        listing.CatalogCategoryId = request.CatalogCategoryId;
+        listing.CatalogCategoryIsManual = request.CatalogCategoryIsManual && request.CatalogCategoryId.HasValue;
     }
 
     /// <summary>Copies the delivery / marketplace / specifics fields onto a DTO.</summary>
@@ -65,6 +67,8 @@ public static class ListingMapping
         dto.SourceTitle = listing.SourceTitle;
         dto.SupplierCategory = listing.SupplierCategory;
         dto.QuantityZeroedAtUtc = listing.QuantityZeroedAtUtc;
+        dto.CatalogCategoryId = listing.CatalogCategoryId;
+        dto.CatalogCategoryIsManual = listing.CatalogCategoryIsManual;
         return dto;
     }
 }

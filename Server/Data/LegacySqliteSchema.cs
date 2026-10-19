@@ -527,6 +527,57 @@ public static class LegacySqliteSchema
                 EnsureColumn("SupplierProducts", "DeliveryCost", "TEXT NULL");
                 EnsureColumn("Listings", "SupplierCategory", "TEXT NULL");
                 EnsureColumn("Listings", "QuantityZeroedAtUtc", "TEXT NULL");
+                EnsureColumn("Listings", "CatalogCategoryId", "INTEGER NULL");
+                EnsureColumn("Listings", "CatalogCategoryIsManual", "INTEGER NOT NULL DEFAULT 0");
+                EnsureColumn("SupplierProducts", "CategoryPath", "TEXT NULL");
+                EnsureColumn("SupplierProducts", "CatalogCategoryId", "INTEGER NULL");
+                db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_SupplierProducts_CatalogCategoryId"" ON ""SupplierProducts"" (""CatalogCategoryId"");");
+
+                // My categories, channel/supplier mappings and supplier tags (added Oct 2026).
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""CatalogCategories"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_CatalogCategories"" PRIMARY KEY AUTOINCREMENT,
+                        ""Name"" TEXT NOT NULL,
+                        ""ParentId"" INTEGER NULL,
+                        ""SortOrder"" INTEGER NOT NULL DEFAULT 0,
+                        ""CreatedAtUtc"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_CatalogCategories_ParentId"" ON ""CatalogCategories"" (""ParentId"");");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""ChannelCategoryMappings"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_ChannelCategoryMappings"" PRIMARY KEY AUTOINCREMENT,
+                        ""CatalogCategoryId"" INTEGER NOT NULL,
+                        ""Channel"" TEXT NOT NULL,
+                        ""ExternalId"" TEXT NOT NULL,
+                        ""ExternalName"" TEXT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_ChannelCategoryMappings_CatalogCategoryId_Channel"" ON ""ChannelCategoryMappings"" (""CatalogCategoryId"", ""Channel"");");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""SupplierCategoryMappings"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_SupplierCategoryMappings"" PRIMARY KEY AUTOINCREMENT,
+                        ""Supplier"" TEXT NOT NULL,
+                        ""SourceType"" TEXT NOT NULL,
+                        ""SourceValue"" TEXT NOT NULL,
+                        ""CatalogCategoryId"" INTEGER NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SupplierCategoryMappings_Supplier_SourceType_SourceValue"" ON ""SupplierCategoryMappings"" (""Supplier"", ""SourceType"", ""SourceValue"");");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""ProductTags"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_ProductTags"" PRIMARY KEY AUTOINCREMENT,
+                        ""Supplier"" TEXT NOT NULL,
+                        ""Name"" TEXT NOT NULL,
+                        ""NormalizedName"" TEXT NOT NULL,
+                        ""Type"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_ProductTags_Supplier_NormalizedName"" ON ""ProductTags"" (""Supplier"", ""NormalizedName"");");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""SupplierProductTags"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_SupplierProductTags"" PRIMARY KEY AUTOINCREMENT,
+                        ""SupplierProductId"" INTEGER NOT NULL,
+                        ""ProductTagId"" INTEGER NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SupplierProductTags_SupplierProductId_ProductTagId"" ON ""SupplierProductTags"" (""SupplierProductId"", ""ProductTagId"");");
+                db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_SupplierProductTags_ProductTagId"" ON ""SupplierProductTags"" (""ProductTagId"");");
 
                 db.Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS ""SupplierPriceListItems"" (
