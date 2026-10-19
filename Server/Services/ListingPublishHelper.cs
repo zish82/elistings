@@ -39,6 +39,9 @@ public static class ListingPublishHelper
         if (string.IsNullOrWhiteSpace(listing.FulfillmentPolicyId)) problems.Add("no shipping policy");
         if (string.IsNullOrWhiteSpace(listing.ReturnPolicyId)) problems.Add("no return policy");
 
+        var disabledSupplier = await new SupplierCatalogService(context).FindDisabledSupplierNameAsync(listing);
+        if (disabledSupplier != null) problems.Add($"supplier {disabledSupplier} is disabled (enable it on Supplier Feeds first)");
+
         if (problems.Any())
         {
             throw new InvalidOperationException("Cannot publish: " + string.Join(", ", problems) + ".");
@@ -95,6 +98,7 @@ public static class ListingPublishHelper
         listing.EbayItemId = result.ListingId;
         listing.Sku = result.Sku;
         listing.EbayOfferId = result.OfferId;
+        listing.QuantityZeroedAtUtc = null; // publishing sends the listing's own quantity again
     }
 
     private static string? DefaultPolicy(AppDbContext context, string type)

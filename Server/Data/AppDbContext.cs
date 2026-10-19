@@ -18,6 +18,7 @@ public class AppDbContext : DbContext
     public DbSet<Supplier> Suppliers { get; set; }
     public DbSet<SupplierDeliveryOption> SupplierDeliveryOptions { get; set; }
     public DbSet<BulkJobRecord> BulkJobs { get; set; }
+    public DbSet<SupplierPriceListItem> SupplierPriceListItems { get; set; }
 
     /// <summary>
     /// Indexes (used when EF creates the schema, i.e. PostgreSQL and new databases; existing SQLite databases
@@ -40,6 +41,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Supplier>().HasIndex(s => s.Code).IsUnique();
         modelBuilder.Entity<SupplierDeliveryOption>().HasIndex(o => o.SupplierId);
         modelBuilder.Entity<BulkJobRecord>().HasIndex(j => new { j.Type, j.Tag });
+        modelBuilder.Entity<SupplierPriceListItem>().HasIndex(i => new { i.Supplier, i.ProductCode });
     }
 }
 
@@ -68,6 +70,24 @@ public class BulkJobRecord
 }
 
 /// <summary>
+/// One row of a supplier's trade price list (e.g. the Safelincs Excel file uploaded on /supplier-feeds).
+/// Uploading a new list replaces the supplier's rows. Matched to products by <see cref="SupplierProduct.SupplierSku"/>.
+/// </summary>
+public class SupplierPriceListItem
+{
+    public int Id { get; set; }
+    public string Supplier { get; set; } = string.Empty;
+    public string ProductCode { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? Category { get; set; }
+    /// <summary>Trade price, ex VAT.</summary>
+    public decimal Price { get; set; }
+    /// <summary>Supplier's delivery charge for this product, ex VAT (when the list has one).</summary>
+    public decimal? DeliveryCost { get; set; }
+    public DateTime UploadedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
 /// A product source (DropShipMall, Eden Horticulture, Safelincs, ...). <see cref="Code"/> matches
 /// <see cref="SupplierProduct.Supplier"/>; <see cref="WebsiteHost"/> matches listings created from a URL.
 /// </summary>
@@ -84,6 +104,10 @@ public class Supplier
     public decimal VatRatePercent { get; set; } = 20m;
     /// <summary>Default markup applied to cost (inc VAT) when suggesting an item price.</summary>
     public decimal DefaultMarginPercent { get; set; } = 20m;
+    /// <summary>
+    /// Enabled. A disabled supplier is not imported or synced, and its products and listings are hidden in the app
+    /// (listings stay on eBay unless their quantity is set to 0 from /supplier-feeds).
+    /// </summary>
     public bool IsActive { get; set; } = true;
 }
 
@@ -156,6 +180,10 @@ public class Listing
     public string? Barcode { get; set; }
     /// <summary>The supplier's original title, kept for tracing after the listing title is optimised.</summary>
     public string? SourceTitle { get; set; }
+    /// <summary>The supplier's own category (e.g. "Fire Extinguisher ID Signs"). The eBay category is CategoryId/CategoryName.</summary>
+    public string? SupplierCategory { get; set; }
+    /// <summary>Set when the eBay quantity was set to 0 because the supplier was disabled; cleared when restored.</summary>
+    public DateTime? QuantityZeroedAtUtc { get; set; }
 }
 
 public class Policy
@@ -270,4 +298,6 @@ public class SupplierProduct
     /// cleared if it comes back. Separate from IsActive, which is the user's own delete.
     /// </summary>
     public DateTime? RemovedFromSupplierAtUtc { get; set; }
+    /// <summary>Supplier's delivery charge for this product, ex VAT, when it is per product (Safelincs price list / product page).</summary>
+    public decimal? DeliveryCost { get; set; }
 }

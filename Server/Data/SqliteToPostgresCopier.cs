@@ -39,7 +39,11 @@ public static class SqliteToPostgresCopier
 
         Console.WriteLine("Creating the PostgreSQL schema (if needed)...");
         if (target.Database.GetMigrations().Any()) await target.Database.MigrateAsync();
-        else await target.Database.EnsureCreatedAsync();
+        else
+        {
+            await target.Database.EnsureCreatedAsync();
+            PostgresSchemaUpgrades.Apply(target);
+        }
 
         if (!force && (await target.Users.AnyAsync() || await target.Listings.AnyAsync() || await target.SupplierProducts.AnyAsync()))
         {
@@ -47,13 +51,34 @@ public static class SqliteToPostgresCopier
             return 1;
         }
 
+        // All or nothing: a failed copy leaves the PostgreSQL database as it was, so it can simply be re-run.
+        await using var transaction = await target.Database.BeginTransactionAsync();
+
         // Starting the app on PostgreSQL seeds reference data (suppliers, delivery options, feeds, policies).
         // Clear it so the copied rows (with their original ids and any edits made on /suppliers) take its place.
         await target.Database.ExecuteSqlRawAsync(
             "TRUNCATE \"SupplierDeliveryOptions\", \"SupplierFeeds\", \"Policies\", \"Suppliers\" RESTART IDENTITY;");
 
         target.ChangeTracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            await CopyAllAsync(source, target);
+            await transaction.CommitAsync();
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("no such", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine();
+            Console.WriteLine($"The SQLite file is missing newer tables/columns ({ex.Message}). Start the app once on SQLite " +
+                              "with this version (it upgrades the file), stop it, then run the copy again. Nothing was copied.");
+            return 1;
+        }
 
+        Console.WriteLine("Done. Start the app normally; it now uses PostgreSQL.");
+        return 0;
+    }
+
+    private static async Task CopyAllAsync(AppDbContext source, AppDbContext target)
+    {
         await CopyAsync(source.Users, u => u.Id, target, "Users");
         await CopyAsync(source.EbayTokens, t => t.Id, target, "EbayTokens");
         await CopyAsync(source.Policies, p => p.Id, target, "Policies");
@@ -65,9 +90,7 @@ public static class SqliteToPostgresCopier
         await CopyAsync(source.SupplierSyncRuns, r => r.Id, target, "SupplierSyncRuns");
         await CopyAsync(source.SupplierListingSnapshots, s => s.Id, target, "SupplierListingSnapshots");
         await CopyAsync(source.BulkJobs, j => j.Id, target, "BulkJobs", hasIdentity: false);
-
-        Console.WriteLine("Done. Start the app normally; it now uses PostgreSQL.");
-        return 0;
+        await CopyAsync(source.SupplierPriceListItems, i => i.Id, target, "SupplierPriceListItems");
     }
 
     private static async Task CopyAsync<T, TKey>(DbSet<T> sourceSet, System.Linq.Expressions.Expression<Func<T, TKey>> key,

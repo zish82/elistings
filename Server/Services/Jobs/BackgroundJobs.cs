@@ -18,6 +18,8 @@ namespace Server.Services.Jobs;
 public class BackgroundJobs
 {
     public const string EdenQueue = "eden";
+    /// <summary>Safelincs imports take hours (one page at a time), so they get their own single worker.</summary>
+    public const string SafelincsQueue = "safelincs";
     public const string DefaultQueue = "default";
 
     private readonly IServiceProvider _services;
@@ -54,6 +56,14 @@ public class BackgroundJobs
     [Queue(EdenQueue), AutomaticRetry(Attempts = 0)]
     public Task ImportEdenCatalogueAsync(string jobId, int userId)
         => RunAsync(jobId, userId, progress => ImportCoreAsync(progress, EdenCatalogImportService.Code));
+
+    [Queue(SafelincsQueue), AutomaticRetry(Attempts = 0)]
+    public Task ImportSafelincsCatalogueAsync(string jobId, int userId)
+        => RunAsync(jobId, userId, progress => ImportCoreAsync(progress, SafelincsCatalogImportService.Code));
+
+    [Queue(DefaultQueue), AutomaticRetry(Attempts = 0)]
+    public Task SetSupplierMarketplaceQuantityAsync(string jobId, int userId, string supplierCode, bool restore)
+        => RunAsync(jobId, userId, progress => SetSupplierQuantityCoreAsync(progress, supplierCode, restore));
 
     [Queue(DefaultQueue), AutomaticRetry(Attempts = 0)]
     public Task ImportSupplierCatalogueAsync(string jobId, int userId, string supplierCode)
@@ -168,6 +178,7 @@ public class BackgroundJobs
                     FulfillmentPolicyId = fulfillmentPolicy,
                     ReturnPolicyId = returnPolicy,
                     SourceProductCode = details.ProductCode,
+                    SupplierCategory = string.IsNullOrWhiteSpace(details.Category) ? null : details.Category,
                 };
                 _context.Listings.Add(listing);
                 await _context.SaveChangesAsync(); // save per item so progress survives a failure
@@ -279,6 +290,58 @@ public class BackgroundJobs
         var result = await importer.ImportAsync("manual", reporter);
         if (!result.IsSuccess) throw new InvalidOperationException(result.ErrorMessage);
         return last;
+    }
+
+    // ------------------------------------------------------------------ supplier disabled: eBay quantity 0 / restore
+
+    private async Task<string?> SetSupplierQuantityCoreAsync(JobProgress progress, string supplierCode, bool restore)
+    {
+        var ebay = Get<IEbayService>();
+        var supplier = await _context.Suppliers.AsNoTracking().FirstOrDefaultAsync(s => s.Code == supplierCode)
+                       ?? throw new InvalidOperationException($"Supplier '{supplierCode}' not found.");
+
+        var query = SupplierCatalogService.ListingsOf(_context.Listings, _context, supplier.Code, supplier.WebsiteHost)
+            .Where(l => l.Status == "Published" && l.Sku != null && l.EbayOfferId != null);
+        query = restore ? query.Where(l => l.QuantityZeroedAtUtc != null) : query.Where(l => l.QuantityZeroedAtUtc == null);
+        var listings = await query.OrderBy(l => l.Id).ToListAsync();
+
+        progress.Total = listings.Count;
+        progress.Message = restore
+            ? $"Restoring eBay quantity for {listings.Count} {supplier.Name} listings..."
+            : $"Setting eBay quantity to 0 for {listings.Count} {supplier.Name} listings...";
+
+        foreach (var account in listings.GroupBy(l => l.EbayAccountId))
+        {
+            foreach (var batch in account.Chunk(25))
+            {
+                var updates = batch.Select(l => new MarketplaceQuantityUpdate(l.Sku!, l.EbayOfferId!, restore ? Math.Max(1, l.Quantity) : 0)).ToList();
+                Dictionary<string, string> failures;
+                try
+                {
+                    failures = await ebay.UpdateQuantitiesAsync(account.Key, updates);
+                }
+                catch (Exception ex)
+                {
+                    failures = batch.ToDictionary(l => l.Sku!, _ => ex.Message, StringComparer.OrdinalIgnoreCase);
+                }
+
+                foreach (var listing in batch)
+                {
+                    if (failures.TryGetValue(listing.Sku!, out var error))
+                    {
+                        progress.ItemFailed($"#{listing.Id} {Truncate(listing.Title, 50)}: {error}");
+                        continue;
+                    }
+                    listing.QuantityZeroedAtUtc = restore ? null : DateTime.UtcNow;
+                    progress.ItemSucceeded();
+                }
+                await _context.SaveChangesAsync();
+            }
+        }
+
+        return restore
+            ? $"eBay quantity restored for {progress.Succeeded} listing(s), {progress.Failed} failed."
+            : $"eBay quantity set to 0 for {progress.Succeeded} listing(s), {progress.Failed} failed.";
     }
 
     private static string Truncate(string? value, int max)

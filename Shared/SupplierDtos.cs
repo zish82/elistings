@@ -77,3 +77,47 @@ public static class PricingMath
     public static decimal ListingTotal(decimal itemPrice, decimal? deliveryCost, bool includeDelivery)
         => itemPrice + (includeDelivery ? (deliveryCost ?? 0m) : 0m);
 }
+
+/// <summary>Result of uploading a supplier trade price list.</summary>
+public class PriceListUploadResultDto
+{
+    public int Rows { get; set; }
+    public int ProductsUpdated { get; set; }
+    public List<string> Notes { get; set; } = new();
+}
+
+public class PriceListStatusDto
+{
+    public string Supplier { get; set; } = string.Empty;
+    public int Rows { get; set; }
+    public DateTime? UploadedAtUtc { get; set; }
+    /// <summary>Imported products whose SKU is in the price list.</summary>
+    public int MatchedProducts { get; set; }
+}
+
+/// <summary>Supplier overview for /supplier-feeds: enabled flag, counts and price list.</summary>
+public class SupplierOverviewDto
+{
+    public int Id { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+    public int Products { get; set; }
+    public int Listings { get; set; }
+    public int PublishedListings { get; set; }
+    /// <summary>Published listings whose eBay quantity was set to 0 when the supplier was disabled.</summary>
+    public int ZeroedListings { get; set; }
+    /// <summary>True when the supplier takes an uploaded trade price list (e.g. Safelincs).</summary>
+    public bool UsesPriceList { get; set; }
+    public PriceListStatusDto? PriceList { get; set; }
+}
+
+/// <summary>One row of the Products page "Categories" view.</summary>
+public class SupplierCategorySummaryDto
+{
+    /// <summary>Null for products without a category.</summary>
+    public string? Category { get; set; }
+    public int Products { get; set; }
+    public int InStock { get; set; }
+    public int AlreadyAdded { get; set; }
+}

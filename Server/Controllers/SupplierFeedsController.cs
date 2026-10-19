@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Server.Data;
+using Server.Services;
+using Server.Services.Jobs;
 using Shared;
 
 namespace Server.Controllers;
@@ -12,15 +14,23 @@ namespace Server.Controllers;
 public class SupplierFeedsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
 
-    public SupplierFeedsController(AppDbContext context)
+    public SupplierFeedsController(AppDbContext context, ICurrentUserService currentUserService)
     {
         _context = context;
+        _currentUserService = currentUserService;
     }
+
+    private bool CanEdit => _currentUserService.CanManageUsers || _currentUserService.CanViewAllListings;
+
+    /// <summary>Suppliers that take an uploaded trade price list (no trade prices on their website).</summary>
+    private static readonly string[] PriceListSuppliers = { SafelincsCatalogImportService.Code };
 
     [HttpGet]
     public async Task<ActionResult<List<SupplierFeedDto>>> GetAll()
     {
+        var disabled = await _context.Suppliers.Where(s => !s.IsActive).Select(s => s.Code.ToLower()).ToListAsync();
         var feeds = await _context.SupplierFeeds
             .OrderBy(f => f.Supplier)
             .ThenByDescending(f => f.IsRecommended)
@@ -38,7 +48,102 @@ public class SupplierFeedsController : ControllerBase
             })
             .ToListAsync();
 
+        foreach (var feed in feeds) feed.SupplierEnabled = !disabled.Contains(feed.Supplier.ToLower());
         return Ok(feeds);
+    }
+
+    // ------------------------------------------------------------------ suppliers: enable/disable, price list
+
+    [HttpGet("suppliers")]
+    public async Task<ActionResult<List<SupplierOverviewDto>>> GetSuppliers([FromServices] SupplierPriceListService priceLists)
+    {
+        var suppliers = await _context.Suppliers.AsNoTracking().OrderBy(s => s.Name).ToListAsync();
+        var result = new List<SupplierOverviewDto>();
+        foreach (var s in suppliers)
+        {
+            var listings = SupplierCatalogService.ListingsOf(_context.Listings, _context, s.Code, s.WebsiteHost);
+            var usesPriceList = PriceListSuppliers.Contains(s.Code, StringComparer.OrdinalIgnoreCase);
+            result.Add(new SupplierOverviewDto
+            {
+                Id = s.Id,
+                Code = s.Code,
+                Name = s.Name,
+                IsActive = s.IsActive,
+                Products = await _context.SupplierProducts.CountAsync(p => p.Supplier == s.Code && p.IsActive && p.RemovedFromSupplierAtUtc == null),
+                Listings = await listings.CountAsync(l => l.Status != "Deleted"),
+                PublishedListings = await listings.CountAsync(l => l.Status == "Published"),
+                ZeroedListings = await listings.CountAsync(l => l.Status == "Published" && l.QuantityZeroedAtUtc != null),
+                UsesPriceList = usesPriceList,
+                PriceList = usesPriceList ? await priceLists.GetStatusAsync(s.Code) : null
+            });
+        }
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Enables/disables a supplier. Disabled: no imports or syncs, its products and listings are hidden in the app.
+    /// eBay listings are not touched (use marketplace-quantity for that).
+    /// </summary>
+    [HttpPut("suppliers/{code}/enabled")]
+    public async Task<IActionResult> SetEnabled(string code, [FromBody] bool enabled)
+    {
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
+        var supplier = await _context.Suppliers.FirstOrDefaultAsync(s => s.Code == code);
+        if (supplier == null) return NotFound();
+        supplier.IsActive = enabled;
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    /// <summary>Sets the eBay quantity of the supplier's published listings to 0, or restores it (background job).</summary>
+    [HttpPost("suppliers/{code}/marketplace-quantity")]
+    public async Task<ActionResult<BulkJobStartedDto>> SetMarketplaceQuantity(string code, [FromQuery] bool restore, [FromServices] BulkJobService jobs)
+    {
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+        var supplier = await _context.Suppliers.FirstOrDefaultAsync(s => s.Code == code);
+        if (supplier == null) return NotFound();
+        if (restore && !supplier.IsActive) return BadRequest($"Enable {supplier.Name} before restoring its eBay quantities.");
+
+        var latest = await jobs.FindLatestAsync("supplier-quantity", supplier.Code);
+        if (BulkJobService.IsActive(latest)) return Ok(new BulkJobStartedDto { JobId = latest!.Id });
+
+        return Ok(new BulkJobStartedDto { JobId = await jobs.EnqueueSupplierQuantityAsync(userId.Value, supplier.Code, restore) });
+    }
+
+    /// <summary>Uploads the supplier's trade price list (.xlsx/.csv), replacing the previous one, and re-prices its products.</summary>
+    [HttpPost("suppliers/{code}/price-list")]
+    [RequestSizeLimit(20_000_000)]
+    public async Task<ActionResult<PriceListUploadResultDto>> UploadPriceList(string code, IFormFile file, [FromServices] SupplierPriceListService priceLists)
+    {
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
+        var supplier = await _context.Suppliers.FirstOrDefaultAsync(s => s.Code == code);
+        if (supplier == null) return NotFound();
+        if (file == null || file.Length == 0) return BadRequest("Choose the price list file to upload.");
+
+        List<PriceListRow> rows;
+        List<string> warnings;
+        try
+        {
+            await using var stream = new MemoryStream();
+            await file.CopyToAsync(stream);
+            stream.Position = 0;
+            (rows, warnings) = SupplierPriceListParser.Parse(stream, file.FileName);
+        }
+        catch (Exception ex) // any unreadable/corrupt file (ClosedXML/OpenXML throw several exception types)
+        {
+            return BadRequest($"Could not read the price list: {ex.Message}");
+        }
+
+        if (rows.Count == 0)
+        {
+            return BadRequest("No prices found in the file. " + string.Join(" ", warnings));
+        }
+
+        var result = await priceLists.ReplaceAsync(supplier.Code, rows);
+        result.Notes.InsertRange(0, warnings);
+        return Ok(result);
     }
 
     [HttpPost]

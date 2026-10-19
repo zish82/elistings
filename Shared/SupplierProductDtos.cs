@@ -31,6 +31,8 @@ public class SupplierProductListItemDto
 public class SupplierProductQuery
 {
     public const int DefaultLimit = 500;
+    /// <summary><see cref="Category"/> value that selects products without a category.</summary>
+    public const string Uncategorised = "__uncategorised__";
     public const int MaxLimit = 2000;
 
     public string? Supplier { get; set; }

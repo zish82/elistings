@@ -120,6 +120,16 @@ else
         </div>
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="small text-muted">Showing @FilteredListings.Count of @listings.Count listing(s)</div>
+            @if (DisabledSupplierCount > 0)
+            {
+                <div class="form-check small">
+                    <input class="form-check-input" type="checkbox" id="showDisabledSuppliers" @bind="showDisabledSuppliers" />
+                    <label class="form-check-label" for="showDisabledSuppliers"
+                           title="Suppliers can be disabled on Supplier Feeds. Their listings are hidden here but stay on eBay.">
+                        Show @DisabledSupplierCount listing(s) from disabled suppliers
+                    </label>
+                </div>
+            }
         </div>
     </div>
 
@@ -199,7 +209,7 @@ else
                     <th>Owner</th>
                 }
                 <th>eBay Account</th>
-                <th>Category</th>
+                <th title="eBay category, with the supplier's own category below">Category</th>
                 <th>Status</th>
                 <th>eBay Item ID</th>
                 <th class="text-end">Actions</th>
@@ -255,13 +265,25 @@ else
                         }
                         else
                         {
-                            <span class="text-muted small">Not set</span>
+                            <span class="text-muted small">eBay: not set</span>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(listing.SupplierCategory))
+                        {
+                            <div class="small"><span class="text-muted">Supplier:</span> @listing.SupplierCategory</div>
                         }
                     </td>
                     <td>
                         <span class="badge @(listing.Status == "Published" ? "bg-success" : "bg-warning text-dark")">
                             @listing.Status
                         </span>
+                        @if (listing.QuantityZeroedAtUtc.HasValue)
+                        {
+                            <div><span class="badge bg-secondary" title="eBay quantity set to 0 on @listing.QuantityZeroedAtUtc.Value.ToLocalTime().ToString("g") because the supplier was disabled">eBay qty 0</span></div>
+                        }
+                        @if (listing.SupplierDisabled)
+                        {
+                            <div><span class="badge bg-light text-dark border">Supplier disabled</span></div>
+                        }
                     </td>
                     <td><span class="font-monospace small">@listing.EbayItemId</span></td>
                     <td class="text-end">
@@ -302,8 +324,13 @@ else
                         ? !listing.EbayAccountId.HasValue
                         : listing.EbayAccountId == selectedEbayAccountFilterId.Value))
             .Where(listing => groupFilter == null || listing.SupplierGroupKey == groupFilter)
+            .Where(listing => showDisabledSuppliers || !listing.SupplierDisabled)
             .ToList()
         ?? new List<ListingDto>();
+
+    // Listings from disabled suppliers are hidden unless ticked.
+    private bool showDisabledSuppliers;
+    private int DisabledSupplierCount => listings?.Count(l => l.SupplierDisabled) ?? 0;
 
     // Group filter: listings made from variants of the same supplier product, so they can be published together.
     private string? groupFilter;

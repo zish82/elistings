@@ -86,6 +86,11 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
     {
         var result = new FeedSyncResult { Supplier = Code, FeedType = "Shopify Catalogue" };
         var notes = new List<string>();
+        if (await _catalog.IsDisabledAsync(Code))
+        {
+            result.ErrorMessage = "Eden Horticulture is disabled on Supplier Feeds, so it was not imported.";
+            return result;
+        }
 
         // ---- 1. Public catalogue
         progress?.Report("Downloading Eden catalogue...");
@@ -410,6 +415,7 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
             if (!map.TryGetValue(listing.SupplierProductId!.Value, out var product)) continue;
             if (!product.PriceIsEstimate) listing.SourcePrice = product.SupplierPrice;
             if (product.StockLevel.HasValue) listing.SourceStockLevel = product.StockLevel;
+            listing.SupplierCategory ??= product.CategoryName;
         }
     }
 

@@ -104,10 +104,27 @@ public class ListingsController : ControllerBase
                 DeliveryCost = l.DeliveryCost,
                 IncludeDeliveryInPrice = l.IncludeDeliveryInPrice,
                 Barcode = l.Barcode,
-                SupplierGroupKey = _context.SupplierProducts.Where(p => p.Id == l.SupplierProductId).Select(p => p.GroupKey).FirstOrDefault()
+                SupplierGroupKey = _context.SupplierProducts.Where(p => p.Id == l.SupplierProductId).Select(p => p.GroupKey).FirstOrDefault(),
+                SupplierCode = _context.SupplierProducts.Where(p => p.Id == l.SupplierProductId).Select(p => p.Supplier).FirstOrDefault(),
+                SupplierCategory = l.SupplierCategory,
+                QuantityZeroedAtUtc = l.QuantityZeroedAtUtc,
+                SourceTitle = l.SourceTitle
             })
             .ToListAsync();
-            
+
+        // Flag listings of disabled suppliers (by linked product, else by the source URL's website).
+        var disabled = await _context.Suppliers.AsNoTracking().Where(s => !s.IsActive).Select(s => new { s.Code, s.WebsiteHost }).ToListAsync();
+        if (disabled.Count > 0)
+        {
+            foreach (var dto in listings)
+            {
+                dto.SupplierDisabled = dto.SupplierCode != null
+                    ? disabled.Any(s => s.Code.Equals(dto.SupplierCode, StringComparison.OrdinalIgnoreCase))
+                    : dto.SourceUrl != null && disabled.Any(s => !string.IsNullOrWhiteSpace(s.WebsiteHost)
+                                                                && dto.SourceUrl.Contains(s.WebsiteHost!, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
         return Ok(listings);
     }
 

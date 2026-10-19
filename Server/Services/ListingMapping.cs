@@ -49,6 +49,8 @@ public static class ListingMapping
         {
             listing.SourceTitle = request.SourceTitle.Trim();
         }
+        // Supplier category comes from the supplier; keep the stored one when the request doesn't send it.
+        if (!string.IsNullOrWhiteSpace(request.SupplierCategory)) listing.SupplierCategory = request.SupplierCategory.Trim();
     }
 
     /// <summary>Copies the delivery / marketplace / specifics fields onto a DTO.</summary>
@@ -61,6 +63,8 @@ public static class ListingMapping
         dto.ItemSpecifics = ReadSpecifics(listing.ItemSpecificsJson);
         dto.Barcode = listing.Barcode;
         dto.SourceTitle = listing.SourceTitle;
+        dto.SupplierCategory = listing.SupplierCategory;
+        dto.QuantityZeroedAtUtc = listing.QuantityZeroedAtUtc;
         return dto;
     }
 }

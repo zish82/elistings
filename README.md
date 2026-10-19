@@ -107,7 +107,18 @@ Imports also run automatically every night. Notes:
 - **Eden** – each size/variant is its own row (e.g. "Root Riot - 100 Bag"). Trade prices and exact stock come
   from your logged-in Eden account. A yellow **est.** badge means the trade price couldn't be confirmed yet
   (RRP shown instead). Products Eden removes from their website are hidden automatically.
+- **Safelincs** – built from Safelincs' website (every product page, one at a time, so a full import takes a few
+  hours and runs overnight). Each variant in a page's dropdown is its own row. Trade prices and per-product
+  delivery come from the **trade price list** you upload on *Supplier Feeds*; until then the website price
+  (ex VAT) is used and marked **est.** "Available to Order" items have no stock figure (shown as *-*);
+  discontinued items are hidden.
 - Products you **delete** here stay deleted, even after re-importing.
+- Products of a **disabled** supplier (see *Supplier Feeds*) are hidden, and the supplier isn't in the list.
+
+### Categories view
+Click **Categories** (above the filters) to see the supplier's own categories with the number of products,
+how many are in stock and how many you've already added. Click a category to open its products in the list
+(the *Category* filter is set for you; *(No category)* shows products without one). Click **Products** to go back.
 
 ### Find products
 The filter bar above the list:
@@ -244,6 +255,20 @@ One card per supplier. Change values, then click **Save supplier**.
 
 ## 9. Supplier Feeds (`/supplier-feeds`)
 
+### Suppliers: enable / disable
+The **Suppliers** table at the top (Admin/Manager) shows each supplier's products, listings and listings on eBay.
+- Switch a supplier **off** to stop its imports and syncs and hide its products and listings in the app
+  (the Dashboard has a *Show listings from disabled suppliers* tick box). Its listings can't be published while it's off.
+- Its eBay listings are **not** changed. To stop sales, click **Set eBay quantity to 0** (runs in the background).
+  If *out-of-stock control* is off in your eBay account, eBay may end listings at quantity 0.
+- Switch it back **on** and click **Restore eBay quantity** to put those listings back to their own quantity.
+
+### Trade price list (Safelincs)
+Choose the Excel (.xlsx) or CSV price list in the *Trade price list* column. It needs a **Product Code** and a
+**Price (ex VAT)** column (a **Delivery** column is used too). Uploading replaces the previous list and
+re-prices imported products straight away; the nightly import uses it as well.
+
+### Feeds
 Feed URLs used by the importers (mainly DropShipMall).
 
 1. Fill in **Supplier**, **Feed Type**, **URL**, optional **Description**.

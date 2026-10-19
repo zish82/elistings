@@ -88,6 +88,53 @@
     </div>
 }
 
+<div class="btn-group mb-2" role="group" aria-label="View">
+    <button type="button" class="btn btn-sm @(view == "list" ? "btn-primary" : "btn-outline-primary")" @onclick="ShowList">Products</button>
+    <button type="button" class="btn btn-sm @(view == "categories" ? "btn-primary" : "btn-outline-primary")" @onclick="ShowCategories">Categories</button>
+</div>
+
+@if (view == "categories")
+{
+    @if (isLoadingCategories)
+    {
+        <p><em>Loading categories...</em></p>
+    }
+    else if (!categorySummary.Any())
+    {
+        <div class="alert alert-warning">No products for @selectedSupplier yet. Run an import first.</div>
+    }
+    else
+    {
+        <p class="small text-muted mb-2">@categorySummary.Count categories for @selectedSupplier (the supplier's own categories). Click one to see its products.</p>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th class="text-end">Products</th>
+                        <th class="text-end">In stock</th>
+                        <th class="text-end">Already added</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in categorySummary)
+                    {
+                        <tr style="cursor: pointer;" @onclick="() => OpenCategory(c)">
+                            <td>@(c.Category ?? "(No category)")</td>
+                            <td class="text-end">@c.Products</td>
+                            <td class="text-end">@c.InStock</td>
+                            <td class="text-end">@c.AlreadyAdded</td>
+                            <td class="text-end"><span class="btn btn-sm btn-outline-secondary py-0">View products &rarr;</span></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+else
+{
 @* Filters and sorting sit directly above the product list. *@
 <div class="row g-2 mb-2 align-items-end p-2 border rounded bg-light">
     <div class="col-md-3">
@@ -108,6 +155,7 @@
             {
                 <option value="@c">@c</option>
             }
+            <option value="@SupplierProductQuery.Uncategorised">(No category)</option>
         </select>
     </div>
     <div class="col-md-2">
@@ -243,6 +291,7 @@ else
         </table>
     </div>
 }
+}
 
 @code {
     private readonly List<SupplierProductListItemDto> products = new();
@@ -260,6 +309,42 @@ else
     private bool inStockOnly;
     private bool hideAdded;
     private List<string> categories = new();
+
+    // "list" = product grid, "categories" = products per supplier category.
+    private string view = "list";
+    private List<SupplierCategorySummaryDto> categorySummary = new();
+    private bool isLoadingCategories;
+
+    private void ShowList() => view = "list";
+
+    private async Task ShowCategories()
+    {
+        view = "categories";
+        await LoadCategorySummary();
+    }
+
+    private async Task LoadCategorySummary()
+    {
+        isLoadingCategories = true;
+        try { categorySummary = await ListingService.GetSupplierCategorySummaryAsync(selectedSupplier); }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not load categories: {ex.Message}";
+            categorySummary = new();
+        }
+        finally { isLoadingCategories = false; }
+    }
+
+    private async Task OpenCategory(SupplierCategorySummaryDto c)
+    {
+        category = c.Category ?? SupplierProductQuery.Uncategorised;
+        groupKey = null;
+        selectedIds.Clear();
+        view = "list";
+        await LoadProducts();
+        scrollToTop = true;
+    }
 
     // Group view: all variants of one supplier product (also reachable as /products?group=...).
     [SupplyParameterFromQuery(Name = "group")] public string? GroupFromUrl { get; set; }
@@ -355,6 +440,7 @@ else
         await LoadCategories();
         await LoadProducts();
         await LoadImportStatus();
+        if (view == "categories") await LoadCategorySummary();
         statusMessage = job.Status == "Failed" ? $"Import failed: {job.Message}" : $"Import finished. {job.Message}";
         StateHasChanged();
     }
@@ -441,7 +527,8 @@ else
         {
             feeds.Clear();
             feeds.AddRange(await ListingService.GetSupplierFeedsAsync());
-            suppliers = feeds.Select(feed => feed.Supplier)
+            // Disabled suppliers (Supplier Feeds page) are hidden here.
+            suppliers = feeds.Where(feed => feed.SupplierEnabled).Select(feed => feed.Supplier)
                 .Where(supplier => !string.IsNullOrWhiteSpace(supplier))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(supplier => supplier)
@@ -467,6 +554,7 @@ else
         await LoadCategories();
         await LoadImportStatus();
         await LoadProducts();
+        if (view == "categories") await LoadCategorySummary();
     }
 
     private async Task LoadProducts()

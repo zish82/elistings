@@ -423,6 +423,73 @@ public class EbayService : IEbayService
         return product;
     }
 
+    public async Task<Dictionary<string, string>> UpdateQuantitiesAsync(int? accountId, IReadOnlyList<MarketplaceQuantityUpdate> updates)
+    {
+        var failures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (updates.Count == 0) return failures;
+        if (updates.Count > 25) throw new ArgumentException("eBay accepts at most 25 quantity updates per call.", nameof(updates));
+
+        var token = await GetOAuthTokenAsync(accountId);
+        var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            requests = updates.Select(u => new
+            {
+                sku = u.Sku,
+                shipToLocationAvailability = new { quantity = Math.Max(0, u.Quantity) },
+                offers = new[] { new { offerId = u.OfferId, availableQuantity = Math.Max(0, u.Quantity) } }
+            })
+        });
+
+        // Setting a quantity is idempotent, so transient eBay errors are retried.
+        using var response = await SendWithRetryAsync(() =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/sell/inventory/v1/bulk_update_price_quantity");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            request.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+            request.Content.Headers.Add("Content-Language", "en-GB");
+            return request;
+        }, "quantity update");
+
+        if (!response.IsSuccessStatusCode && (int)response.StatusCode != 207)
+        {
+            var error = await EbayApiException.FromResponseAsync(response, "Updating eBay quantities");
+            foreach (var u in updates) failures[u.Sku] = error.Message;
+            return failures;
+        }
+
+        // 200/207: one entry per inventory item and per offer; any entry with an error status fails that SKU.
+        var body = await response.Content.ReadAsStringAsync();
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("responses", out var responses) && responses.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var entry in responses.EnumerateArray())
+                {
+                    var status = entry.TryGetProperty("statusCode", out var sc) && sc.TryGetInt32(out var code) ? code : 200;
+                    if (status < 400) continue;
+                    var sku = entry.TryGetProperty("sku", out var s) ? s.GetString() : null;
+                    if (sku == null)
+                    {
+                        var offerId = entry.TryGetProperty("offerId", out var o) ? o.GetString() : null;
+                        sku = updates.FirstOrDefault(u => u.OfferId == offerId)?.Sku;
+                    }
+                    if (sku == null) continue;
+                    var message = entry.TryGetProperty("errors", out var errs) && errs.ValueKind == System.Text.Json.JsonValueKind.Array && errs.GetArrayLength() > 0
+                        ? (errs[0].TryGetProperty("message", out var m) ? m.GetString() : null)
+                        : null;
+                    failures[sku] = $"eBay returned {status}{(message == null ? "" : ": " + message)}";
+                }
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // 200 without a readable body: treat as success
+        }
+        return failures;
+    }
+
     public async Task<List<EbayPolicyDto>> GetPaymentPoliciesAsync(int? accountId = null)
         => await FetchPoliciesAsync("payment", "paymentPolicies", accountId);
 

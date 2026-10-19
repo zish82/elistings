@@ -405,6 +405,39 @@ public class ListingService
         return await SendAsync<BulkDeleteResult>(HttpMethod.Post, "api/listings/bulk-delete", ids) ?? new BulkDeleteResult();
     }
 
+    // ---- Supplier enable/disable, eBay quantity, trade price lists (/supplier-feeds)
+
+    public async Task<List<SupplierOverviewDto>> GetSupplierOverviewAsync()
+        => await GetAsync<List<SupplierOverviewDto>>("api/supplierfeeds/suppliers") ?? new List<SupplierOverviewDto>();
+
+    public async Task SetSupplierEnabledAsync(string code, bool enabled)
+        => await SendAsync<object>(HttpMethod.Put, $"api/supplierfeeds/suppliers/{Uri.EscapeDataString(code)}/enabled", enabled);
+
+    /// <summary>Starts the background job that sets eBay quantity to 0 (or restores it) for the supplier's listings.</summary>
+    public async Task<string> SetSupplierMarketplaceQuantityAsync(string code, bool restore)
+    {
+        var result = await SendAsync<BulkJobStartedDto>(HttpMethod.Post,
+            $"api/supplierfeeds/suppliers/{Uri.EscapeDataString(code)}/marketplace-quantity?restore={restore.ToString().ToLowerInvariant()}");
+        return result?.JobId ?? throw new Exception("Server did not return a job id.");
+    }
+
+    public async Task<PriceListUploadResultDto> UploadPriceListAsync(string code, Stream file, string fileName)
+    {
+        using var content = new MultipartFormDataContent();
+        var fileContent = new StreamContent(file);
+        content.Add(fileContent, "file", fileName);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"api/supplierfeeds/suppliers/{Uri.EscapeDataString(code)}/price-list") { Content = content };
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
+        if (!response.IsSuccessStatusCode) throw new Exception(await ExtractErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<PriceListUploadResultDto>() ?? new PriceListUploadResultDto();
+    }
+
+    public async Task<List<SupplierCategorySummaryDto>> GetSupplierCategorySummaryAsync(string? supplier)
+        => await GetAsync<List<SupplierCategorySummaryDto>>($"api/supplierproducts/category-summary?supplier={Uri.EscapeDataString(supplier ?? string.Empty)}")
+           ?? new List<SupplierCategorySummaryDto>();
+
     // ---- Suppliers (VAT + delivery options)
 
     public async Task<List<SupplierDto>> GetSuppliersAsync(bool includeInactive = false)

@@ -47,7 +47,7 @@ public class SupplierProductsController : ControllerBase
         if (userId == null) return Unauthorized();
 
         // Hidden: deleted by the user (IsActive) or no longer sold by the supplier.
-        var query = _context.SupplierProducts.AsQueryable().Where(p => p.IsActive && p.RemovedFromSupplierAtUtc == null);
+        var query = VisibleProducts();
         if (!string.IsNullOrWhiteSpace(q.Supplier))
         {
             query = query.Where(p => p.Supplier == q.Supplier);
@@ -60,7 +60,11 @@ public class SupplierProductsController : ControllerBase
             query = query.Where(p => p.Title.ToLower().Contains(term) || (p.SupplierSku ?? string.Empty).ToLower().Contains(term));
         }
 
-        if (!string.IsNullOrWhiteSpace(q.Category))
+        if (q.Category == SupplierProductQuery.Uncategorised)
+        {
+            query = query.Where(p => p.CategoryName == null || p.CategoryName == "");
+        }
+        else if (!string.IsNullOrWhiteSpace(q.Category))
         {
             query = query.Where(p => p.CategoryName == q.Category);
         }
@@ -168,11 +172,56 @@ public class SupplierProductsController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Products shown on /products: not deleted by the user, still sold by the supplier, and from an enabled supplier.
+    /// </summary>
+    private IQueryable<SupplierProduct> VisibleProducts()
+    {
+        var disabled = _context.Suppliers.Where(s => !s.IsActive).Select(s => s.Code);
+        return _context.SupplierProducts.Where(p => p.IsActive && p.RemovedFromSupplierAtUtc == null && !disabled.Contains(p.Supplier));
+    }
+
+    /// <summary>Products per supplier category, for the Products page "Categories" view.</summary>
+    [HttpGet("category-summary")]
+    public async Task<ActionResult<List<SupplierCategorySummaryDto>>> GetCategorySummary([FromQuery] string? supplier = null)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var query = VisibleProducts();
+        if (!string.IsNullOrWhiteSpace(supplier)) query = query.Where(p => p.Supplier == supplier);
+
+        var uid = userId.Value;
+        var rows = await query
+            .GroupBy(p => p.CategoryName ?? "")
+            .Select(g => new { Category = g.Key, Products = g.Count(), InStock = g.Count(p => p.StockLevel > 0) })
+            .ToListAsync();
+        var added = await query
+            .Where(p => _context.Listings.Any(l => l.OwnerUserId == uid && l.SupplierProductId == p.Id))
+            .GroupBy(p => p.CategoryName ?? "")
+            .Select(g => new { Category = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Category, x => x.Count);
+
+        // "" and null are both "no category"; merge them and list it last.
+        return Ok(rows
+            .GroupBy(r => string.IsNullOrWhiteSpace(r.Category) ? null : r.Category)
+            .Select(g => new SupplierCategorySummaryDto
+            {
+                Category = g.Key,
+                Products = g.Sum(r => r.Products),
+                InStock = g.Sum(r => r.InStock),
+                AlreadyAdded = g.Sum(r => added.GetValueOrDefault(r.Category))
+            })
+            .OrderBy(r => r.Category == null)
+            .ThenBy(r => r.Category)
+            .ToList());
+    }
+
     /// <summary>Distinct categories for the category filter.</summary>
     [HttpGet("categories")]
     public async Task<ActionResult<List<string>>> GetCategories([FromQuery] string? supplier = null)
     {
-        var query = _context.SupplierProducts.Where(p => p.IsActive && p.CategoryName != null && p.CategoryName != "");
+        var query = VisibleProducts().Where(p => p.CategoryName != null && p.CategoryName != "");
         if (!string.IsNullOrWhiteSpace(supplier)) query = query.Where(p => p.Supplier == supplier);
         return Ok(await query.Select(p => p.CategoryName!).Distinct().OrderBy(c => c).ToListAsync());
     }
@@ -224,8 +273,8 @@ public class SupplierProductsController : ControllerBase
         var allowDuplicates = request?.AllowDuplicates == true;
         if (!productIds.Any()) return BadRequest("No products selected.");
 
-        var products = await _context.SupplierProducts
-            .Where(p => productIds.Contains(p.Id) && p.IsActive)
+        var products = await VisibleProducts()
+            .Where(p => productIds.Contains(p.Id))
             .ToListAsync();
 
         var existing = await _context.Listings
@@ -302,6 +351,10 @@ public class SupplierProductsController : ControllerBase
     {
         // Suppliers with their own importer (e.g. Eden) run in the background; progress via bulk-jobs.
         var feed = await _context.SupplierFeeds.FirstOrDefaultAsync(f => f.Id == feedId);
+        if (feed != null && await _context.Suppliers.AnyAsync(s => s.Code == feed.Supplier && !s.IsActive))
+        {
+            return BadRequest(new FeedSyncResult { Supplier = feed.Supplier, FeedType = feed.FeedType, ErrorMessage = $"{feed.Supplier} is disabled. Enable it on Supplier Feeds to import." });
+        }
         var importer = feed == null ? null : importers.FirstOrDefault(i => i.SupplierCode.Equals(feed.Supplier, StringComparison.OrdinalIgnoreCase));
         if (feed != null && importer != null)
         {
@@ -376,7 +429,8 @@ public class SupplierProductsController : ControllerBase
             SourceUrl = product.ProductUrl,
             SourcePrice = product.SupplierPrice,
             SourceStockLevel = product.StockLevel,
-            SourceProductCode = product.SupplierSku
+            SourceProductCode = product.SupplierSku,
+            SupplierCategory = product.CategoryName
         };
     }
 

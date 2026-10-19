@@ -39,4 +39,6 @@ public class CreateListingRequest
     public string? Barcode { get; set; }
     /// <summary>Original supplier title. Only stored when the listing doesn't have one yet.</summary>
     public string? SourceTitle { get; set; }
+    /// <summary>The supplier's own category (e.g. from the product page breadcrumb).</summary>
+    public string? SupplierCategory { get; set; }
 }

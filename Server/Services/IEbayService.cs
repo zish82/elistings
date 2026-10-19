@@ -16,4 +16,12 @@ public interface IEbayService
     /// <summary>Item specifics eBay defines for a category (required first). Cached; throws <see cref="EbayApiException"/> on failure.</summary>
     Task<List<CategoryAspectDto>> GetCategoryAspectsAsync(string categoryId, int? accountId = null);
     Task<System.Text.Json.Nodes.JsonNode?> GetFeeEstimateAsync(Shared.ListingDto listing);
+
+    /// <summary>
+    /// Sets the available quantity of published listings (inventory item + offer), up to 25 per call.
+    /// Returns an error message per SKU that failed (SKUs not in the result succeeded).
+    /// </summary>
+    Task<Dictionary<string, string>> UpdateQuantitiesAsync(int? accountId, IReadOnlyList<MarketplaceQuantityUpdate> updates);
 }
+
+public sealed record MarketplaceQuantityUpdate(string Sku, string OfferId, int Quantity);

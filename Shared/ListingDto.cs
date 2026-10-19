@@ -46,6 +46,14 @@ public class ListingDto
     public string? SourceTitle { get; set; }
     /// <summary>Group of the linked supplier product (variants of the same product share it). Read-only.</summary>
     public string? SupplierGroupKey { get; set; }
+    /// <summary>The supplier's own category (the eBay category is <see cref="CategoryName"/>).</summary>
+    public string? SupplierCategory { get; set; }
+    /// <summary>When the eBay quantity was set to 0 because the supplier was disabled. Read-only.</summary>
+    public DateTime? QuantityZeroedAtUtc { get; set; }
+    /// <summary>Supplier code of the linked product (null for listings created from a URL). Read-only.</summary>
+    public string? SupplierCode { get; set; }
+    /// <summary>True when the listing's supplier is disabled (the dashboard hides these by default). Read-only.</summary>
+    public bool SupplierDisabled { get; set; }
 
     /// <summary>Item price + delivery (when included): what the marketplace listing is priced at.</summary>
     public decimal TotalPrice => PricingMath.ListingTotal(Price, DeliveryCost, IncludeDeliveryInPrice);

@@ -119,7 +119,12 @@ public class SafelincsProductScraper : ProductScraperBase
 
         details.ProductCode = string.IsNullOrWhiteSpace(productCode) ? null : productCode.Trim();
 
-        details.Category = doc.DocumentNode.SelectSingleNode("//*[@id='breadcrumb']")?.InnerText.Replace("\n", " ").Trim()
+        // Breadcrumb names (Home > Products > Extinguishers & Equipment > Fire Extinguisher ID Signs): the last is the category.
+        var crumbNames = doc.DocumentNode.SelectNodes("//ul[contains(concat(' ', normalize-space(@class), ' '), ' breadcrumb ')]//meta[@itemprop='name']")
+            ?.Select(m => System.Net.WebUtility.HtmlDecode(m.GetAttributeValue("content", "")).Trim())
+            .Where(n => n.Length > 0 && !n.Equals("Home", StringComparison.OrdinalIgnoreCase) && !n.Equals("Products", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        details.Category = crumbNames is { Count: > 0 } ? crumbNames[^1] : doc.DocumentNode.SelectSingleNode("//*[@id='breadcrumb']")?.InnerText.Replace("\n", " ").Trim()
                            ?? doc.DocumentNode.SelectSingleNode("//meta[@property='product:category']")?.GetAttributeValue("content", "")
                            ?? doc.DocumentNode.SelectSingleNode("//meta[@name='keywords']")?.GetAttributeValue("content", "")?.Split(',').FirstOrDefault()?.Trim()
                            ?? doc.DocumentNode.SelectSingleNode("//nav[contains(@class, 'breadcrumb')]")?.InnerText.Replace("\n", " ").Trim()

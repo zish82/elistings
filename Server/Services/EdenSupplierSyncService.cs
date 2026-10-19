@@ -52,6 +52,10 @@ public class EdenSupplierSyncService : IEdenSupplierSyncService
                             || l.SourceUrl!.ToLower().Contains("safelincs.co.uk")))
             .ToListAsync();
 
+        // Disabled suppliers aren't synced.
+        var disabledHosts = await _context.Suppliers.Where(s => !s.IsActive && s.WebsiteHost != null).Select(s => s.WebsiteHost!.ToLower()).ToListAsync();
+        listings = listings.Where(l => !disabledHosts.Any(h => l.SourceUrl!.Contains(h, StringComparison.OrdinalIgnoreCase))).ToList();
+
         run.ProcessedCount = listings.Count;
 
         foreach (var listing in listings)

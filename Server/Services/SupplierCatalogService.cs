@@ -70,6 +70,62 @@ public class SupplierCatalogService
         return null;
     }
 
+    // ------------------------------------------------------------------ enabled / disabled suppliers
+
+    /// <summary>Codes and website hosts of disabled suppliers (IsActive = false).</summary>
+    public async Task<List<(string Code, string? Host)>> GetDisabledAsync()
+        => (await _context.Suppliers.AsNoTracking().Where(s => !s.IsActive).Select(s => new { s.Code, s.WebsiteHost }).ToListAsync())
+            .Select(s => (s.Code, string.IsNullOrWhiteSpace(s.WebsiteHost) ? null : s.WebsiteHost!.ToLowerInvariant()))
+            .ToList();
+
+    public async Task<bool> IsDisabledAsync(string supplierCode)
+        => await _context.Suppliers.AnyAsync(s => s.Code == supplierCode && !s.IsActive);
+
+    /// <summary>
+    /// Listings that come from a supplier: linked to one of its products, or (created from a URL) on its website.
+    /// </summary>
+    public static IQueryable<Listing> ListingsOf(IQueryable<Listing> listings, AppDbContext context, string supplierCode, string? host)
+    {
+        var h = string.IsNullOrWhiteSpace(host) ? null : host.ToLowerInvariant();
+        return listings.Where(l =>
+            context.SupplierProducts.Any(p => p.Id == l.SupplierProductId && p.Supplier == supplierCode)
+            || (h != null && l.SupplierProductId == null && l.SourceUrl != null && l.SourceUrl.ToLower().Contains(h)));
+    }
+
+    /// <summary>Removes listings of the given (disabled) suppliers from a query.</summary>
+    public static IQueryable<Listing> ExcludeSuppliers(IQueryable<Listing> listings, AppDbContext context, IEnumerable<(string Code, string? Host)> suppliers)
+    {
+        foreach (var (code, host) in suppliers)
+        {
+            var h = host;
+            listings = listings.Where(l =>
+                !(context.SupplierProducts.Any(p => p.Id == l.SupplierProductId && p.Supplier == code)
+                  || (h != null && l.SupplierProductId == null && l.SourceUrl != null && l.SourceUrl.ToLower().Contains(h))));
+        }
+        return listings;
+    }
+
+    /// <summary>The disabled supplier a listing belongs to, or null when its supplier is enabled / unknown.</summary>
+    public async Task<string?> FindDisabledSupplierNameAsync(Listing listing)
+    {
+        var disabled = await _context.Suppliers.AsNoTracking().Where(s => !s.IsActive).ToListAsync();
+        if (disabled.Count == 0) return null;
+
+        if (listing.SupplierProductId.HasValue)
+        {
+            var code = await _context.SupplierProducts.Where(p => p.Id == listing.SupplierProductId.Value).Select(p => p.Supplier).FirstOrDefaultAsync();
+            var match = disabled.FirstOrDefault(s => s.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
+            if (match != null || code != null) return match?.Name;
+        }
+
+        if (!string.IsNullOrWhiteSpace(listing.SourceUrl))
+        {
+            var url = listing.SourceUrl.ToLowerInvariant();
+            return disabled.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s.WebsiteHost) && url.Contains(s.WebsiteHost!.ToLowerInvariant()))?.Name;
+        }
+        return null;
+    }
+
     public async Task<ListingSupplierContextDto> GetContextForListingAsync(Listing listing)
     {
         SupplierProduct? product = null;

@@ -278,10 +278,10 @@
                 </div>
             }
             
-            @if (!string.IsNullOrEmpty(extractedCategory))
+            @if (!string.IsNullOrWhiteSpace(listing.SupplierCategory))
             {
-                <div class="mt-2 small text-success">
-                    <strong>Extracted Keyword:</strong> @extractedCategory
+                <div class="mt-2 small text-muted" title="The supplier's own category, used to group products and listings. Not sent to eBay.">
+                    <strong>Supplier category:</strong> @listing.SupplierCategory
                 </div>
             }
         </div>
@@ -636,6 +636,7 @@
         listing.ItemSpecifics = source.ItemSpecifics ?? new Dictionary<string, string>();
         listing.Barcode = source.Barcode;
         listing.SourceTitle = source.SourceTitle;
+        listing.SupplierCategory = source.SupplierCategory;
     }
 
     /// <summary>Loads supplier VAT/delivery settings; on a listing without delivery yet, applies the suggested option.</summary>
@@ -1124,7 +1125,11 @@
                 if (!Id.HasValue) listing.SourceTitle = details.Title; // original supplier title, for tracking
             }
             if (!string.IsNullOrEmpty(details.Description)) listing.Description = details.Description;
-            if (!string.IsNullOrEmpty(details.Category)) extractedCategory = details.Category;
+            if (!string.IsNullOrEmpty(details.Category))
+            {
+                extractedCategory = details.Category;
+                if (string.IsNullOrWhiteSpace(listing.SupplierCategory)) listing.SupplierCategory = details.Category.Trim();
+            }
             if (!string.IsNullOrEmpty(details.Brand)) listing.Brand = details.Brand;
             
             if (details.PriceIncVat.HasValue) 

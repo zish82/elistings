@@ -524,6 +524,22 @@ public static class LegacySqliteSchema
                 EnsureColumn("SupplierProducts", "PriceIsEstimate", "INTEGER NOT NULL DEFAULT 0");
                 EnsureColumn("SupplierProducts", "TradePriceFetchedAtUtc", "TEXT NULL");
                 EnsureColumn("SupplierProducts", "RemovedFromSupplierAtUtc", "TEXT NULL");
+                EnsureColumn("SupplierProducts", "DeliveryCost", "TEXT NULL");
+                EnsureColumn("Listings", "SupplierCategory", "TEXT NULL");
+                EnsureColumn("Listings", "QuantityZeroedAtUtc", "TEXT NULL");
+
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""SupplierPriceListItems"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_SupplierPriceListItems"" PRIMARY KEY AUTOINCREMENT,
+                        ""Supplier"" TEXT NOT NULL,
+                        ""ProductCode"" TEXT NOT NULL,
+                        ""Description"" TEXT NULL,
+                        ""Category"" TEXT NULL,
+                        ""Price"" TEXT NOT NULL,
+                        ""DeliveryCost"" TEXT NULL,
+                        ""UploadedAtUtc"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_SupplierPriceListItems_Supplier_ProductCode"" ON ""SupplierPriceListItems"" (""Supplier"", ""ProductCode"");");
 
                 db.Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS ""BulkJobs"" (

@@ -43,7 +43,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 var useMemoryForHangfire = (builder.Configuration["Hangfire:Storage"] ?? string.Empty).Equals("Memory", StringComparison.OrdinalIgnoreCase);
 // A job is only handed to another worker if it hasn't finished within this time. Must be longer than our
 // longest job (bulk publish of many listings), otherwise a slow job could run twice at once.
-var hangfireInvisibilityTimeout = TimeSpan.FromHours(6);
+// The Safelincs import (one page every few seconds) is the longest, typically 2–3 hours.
+var hangfireInvisibilityTimeout = TimeSpan.FromHours(10);
 // How quickly an idle worker notices a newly queued job (default 15s feels slow after a click).
 var hangfireQueuePollInterval = TimeSpan.FromSeconds(2);
 builder.Services.AddHangfire(configuration =>
@@ -92,6 +93,13 @@ builder.Services.AddHangfireServer(options =>
 {
     options.ServerName = $"{Environment.MachineName}:eden";
     options.Queues = new[] { Server.Services.Jobs.BackgroundJobs.EdenQueue };
+    options.WorkerCount = 1;
+});
+// ...and one for Safelincs (its imports take hours, so they don't hold up Eden or page jobs).
+builder.Services.AddHangfireServer(options =>
+{
+    options.ServerName = $"{Environment.MachineName}:safelincs";
+    options.Queues = new[] { Server.Services.Jobs.BackgroundJobs.SafelincsQueue };
     options.WorkerCount = 1;
 });
 
@@ -151,6 +159,14 @@ builder.Services.AddScoped<Server.Services.SupplierStockService>();
 builder.Services.AddScoped<Server.Services.SkuService>();
 builder.Services.AddScoped<Server.Services.EdenCatalogImportService>();
 builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.EdenCatalogImportService>());
+builder.Services.AddScoped<Server.Services.SupplierPriceListService>();
+builder.Services.AddScoped<Server.Services.SafelincsCatalogImportService>();
+builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.SafelincsCatalogImportService>());
+builder.Services.AddHttpClient("safelincs")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+    });
 
 builder.Services.AddHttpClient<Server.Services.IEbayService, Server.Services.EbayService>();
 builder.Services.AddHttpClient<Server.Services.IMarketplaceImageService, Server.Services.EbayImageService>();
@@ -295,6 +311,16 @@ using (var hangfireScope = app.Services.CreateScope())
         "eden-catalogue-import",
         svc => svc.RunScheduledAsync(),
         "30 2 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.Utc
+        });
+
+    // Safelincs: a full website pass (a few hours at one page every few seconds), overnight.
+    recurringJobs.AddOrUpdate<Server.Services.SafelincsCatalogImportService>(
+        "safelincs-catalogue-import",
+        svc => svc.RunScheduledAsync(),
+        "30 3 * * *",
         new RecurringJobOptions
         {
             TimeZone = TimeZoneInfo.Utc

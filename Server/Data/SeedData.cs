@@ -13,6 +13,7 @@ public static class SeedData
         EnsureDropShipMallDeliveryOptions(db);
         EnsureSupplierFeeds(db);
         EnsureDefaultPolicies(db, configuration);
+        BackfillListingSupplierCategories(db);
         RecoverInterruptedJobs(db, hangfireIsPersistent);
         db.SaveChanges();
     }
@@ -78,6 +79,8 @@ public static class SeedData
                 Description = "Stock-only feed with direct URL access. Best for frequent stock sync automation.", IsRecommended = true },
             new SupplierFeed { Supplier = "EdenHorticulture", FeedType = "Shopify Catalogue", Url = "https://edenhorticulture.co.uk/products.json",
                 Description = "Public catalogue + logged-in trade prices and stock. Runs in the background.", IsRecommended = true },
+            new SupplierFeed { Supplier = "Safelincs", FeedType = "Website Catalogue", Url = "https://www.safelincs.co.uk/sitemap.xml",
+                Description = "Product pages from the sitemap (details, stock) + your uploaded trade price list. Runs in the background (a few hours).", IsRecommended = true },
         };
 
         var existing = db.SupplierFeeds.Select(f => new { f.Supplier, f.FeedType, f.Url }).ToList();
@@ -86,6 +89,24 @@ public static class SeedData
             if (existing.Any(e => e.Supplier == feed.Supplier && e.FeedType == feed.FeedType && e.Url == feed.Url)) continue;
             feed.CreatedAtUtc = DateTime.UtcNow;
             db.SupplierFeeds.Add(feed);
+        }
+    }
+
+    /// <summary>Listings created before supplier categories were stored get the category of their supplier product.</summary>
+    private static void BackfillListingSupplierCategories(AppDbContext db)
+    {
+        var listings = db.Listings.Where(l => l.SupplierCategory == null && l.SupplierProductId != null).ToList();
+        if (listings.Count == 0) return;
+
+        var productIds = listings.Select(l => l.SupplierProductId!.Value).Distinct().ToList();
+        var categories = db.SupplierProducts
+            .Where(p => productIds.Contains(p.Id) && p.CategoryName != null && p.CategoryName != "")
+            .Select(p => new { p.Id, p.CategoryName })
+            .ToDictionary(p => p.Id, p => p.CategoryName);
+
+        foreach (var listing in listings)
+        {
+            if (categories.TryGetValue(listing.SupplierProductId!.Value, out var category)) listing.SupplierCategory = category;
         }
     }
 

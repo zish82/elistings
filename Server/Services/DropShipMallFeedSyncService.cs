@@ -53,6 +53,7 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
 
     public async Task<FeedSyncResult> ImportCatalogueAsync(string triggeredBy = "manual")
     {
+        if (await _catalog.IsDisabledAsync(Supplier)) return Disabled("Catalogue Import");
         var feeds = await GetCatalogueFeedCandidatesAsync();
         if (!feeds.Any())
         {
@@ -82,14 +83,19 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
 
     public async Task<FeedSyncResult> RefreshStockAsync(string triggeredBy = "manual")
     {
+        if (await _catalog.IsDisabledAsync(Supplier)) return Disabled("Stock Feed");
         var feed = await FindFeedAsync("Stock Feed");
         return feed == null
             ? new FeedSyncResult { Supplier = Supplier, FeedType = "Stock Feed", ErrorMessage = "Stock Feed not configured for DropShipMall." }
             : await RefreshStockAsync(triggeredBy, feed);
     }
 
+    private FeedSyncResult Disabled(string feedType)
+        => new() { Supplier = Supplier, FeedType = feedType, ErrorMessage = $"{Supplier} is disabled on Supplier Feeds, so it was not synced." };
+
     public async Task<FeedSyncResult> SyncFeedAsync(int feedId, string triggeredBy = "manual")
     {
+        if (await _catalog.IsDisabledAsync(Supplier)) return Disabled("Feed");
         var feed = await _context.SupplierFeeds.FirstOrDefaultAsync(f => f.Id == feedId);
         if (feed == null) return new FeedSyncResult { ErrorMessage = "Supplier feed was not found." };
         if (!feed.Supplier.Equals(Supplier, StringComparison.OrdinalIgnoreCase))

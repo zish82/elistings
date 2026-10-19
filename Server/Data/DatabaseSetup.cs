@@ -32,8 +32,15 @@ public static class DatabaseSetup
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             if (db.Database.IsNpgsql())
             {
-                if (db.Database.GetMigrations().Any()) db.Database.Migrate();
-                else db.Database.EnsureCreated();
+                if (db.Database.GetMigrations().Any())
+                {
+                    db.Database.Migrate();
+                }
+                else
+                {
+                    db.Database.EnsureCreated();          // empty database: full schema from the model
+                    PostgresSchemaUpgrades.Apply(db);     // existing database: columns added since it was created
+                }
             }
             else if (db.Database.IsSqlite())
             {

@@ -10,6 +10,8 @@ public class SupplierFeedDto
     public bool HasCookieHeader { get; set; }
     public bool IsRecommended { get; set; }
     public DateTime CreatedAtUtc { get; set; }
+    /// <summary>False when the feed's supplier is disabled on /supplier-feeds.</summary>
+    public bool SupplierEnabled { get; set; } = true;
 }
 
 public class CreateSupplierFeedRequest

@@ -70,6 +70,8 @@ public class ScraperService : IScraperService
             details = Merge(details, genericDetails);
         }
 
+        // One clean supplier category ("Home > Signs > Fire Signs" → "Fire Signs").
+        details.Category = CategoryText.Clean(details.Category) ?? string.Empty;
         return details;
     }
 

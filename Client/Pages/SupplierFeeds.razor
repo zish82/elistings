@@ -8,7 +8,110 @@
 <PageTitle>Supplier Feeds</PageTitle>
 
 <h1>Supplier Feeds</h1>
-<p class="text-muted">Add and manage supplier catalogue and stock feed URLs.</p>
+<p class="text-muted">Turn suppliers on or off, upload trade price lists, and manage catalogue and stock feed URLs.</p>
+
+@if (!string.IsNullOrWhiteSpace(supplierMessage))
+{
+    <div class="alert @supplierCss">@supplierMessage</div>
+}
+
+@if (!string.IsNullOrEmpty(quantityJobId))
+{
+    <div class="mb-3">
+        <BulkJobProgress JobId="@quantityJobId" Title="Updating eBay quantities" OnFinished="OnQuantityJobFinished" />
+    </div>
+}
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Suppliers</h5>
+        <p class="small text-muted mb-2">
+            A <strong>disabled</strong> supplier is not imported or synced, and its products and listings are hidden in the app.
+            Its eBay listings stay live unless you set their quantity to 0.
+        </p>
+        @if (overview == null)
+        {
+            <p><em>Loading suppliers...</em></p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Supplier</th>
+                            <th>Enabled</th>
+                            <th class="text-end">Products</th>
+                            <th class="text-end">Listings</th>
+                            <th class="text-end">On eBay</th>
+                            <th>eBay quantity</th>
+                            <th>Trade price list</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var s in overview)
+                        {
+                            <tr>
+                                <td>@s.Name</td>
+                                <td>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="enabled-@s.Id" checked="@s.IsActive"
+                                               disabled="@supplierBusy" @onchange="e => ToggleSupplier(s, (bool)(e.Value ?? false))" />
+                                        <label class="form-check-label small" for="enabled-@s.Id">@(s.IsActive ? "Enabled" : "Disabled")</label>
+                                    </div>
+                                </td>
+                                <td class="text-end">@s.Products</td>
+                                <td class="text-end">@s.Listings</td>
+                                <td class="text-end">@s.PublishedListings</td>
+                                <td>
+                                    @if (!s.IsActive && s.PublishedListings > s.ZeroedListings)
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger" disabled="@supplierBusy" @onclick="() => SetQuantity(s, restore: false)">
+                                            Set eBay quantity to 0 (@(s.PublishedListings - s.ZeroedListings))
+                                        </button>
+                                    }
+                                    @if (s.ZeroedListings > 0)
+                                    {
+                                        <span class="badge bg-secondary me-1">@s.ZeroedListings at 0</span>
+                                        @if (s.IsActive)
+                                        {
+                                            <button class="btn btn-sm btn-outline-success" disabled="@supplierBusy" @onclick="() => SetQuantity(s, restore: true)">Restore eBay quantity</button>
+                                        }
+                                    }
+                                    @if (s.PublishedListings == 0)
+                                    {
+                                        <span class="text-muted small">No published listings</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (s.UsesPriceList)
+                                    {
+                                        <div class="small">
+                                            @if (s.PriceList is { Rows: > 0 } pl)
+                                            {
+                                                <span>@pl.Rows prices, uploaded @pl.UploadedAtUtc?.ToLocalTime().ToString("d MMM yyyy HH:mm"); @pl.MatchedProducts matched to products.</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-warning">Not uploaded – website prices are used as estimates.</span>
+                                            }
+                                        </div>
+                                        <InputFile class="form-control form-control-sm mt-1" accept=".xlsx,.csv" disabled="@supplierBusy" OnChange="e => UploadPriceList(s, e)" />
+                                        <div class="small text-muted">Excel (.xlsx) or CSV with <em>Product Code</em> and <em>Price (ex VAT)</em> columns; replaces the previous list.</div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small">Not needed (trade prices come from the supplier's feed/portal)</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
 
 <div class="alert alert-info">
     <strong>DropShipMall recommendation:</strong> use the <strong>Stock Feed</strong> for frequent stock sync checks,
@@ -95,7 +198,13 @@ else
                 @foreach (var feed in feeds)
                 {
                     <tr>
-                        <td>@feed.Supplier</td>
+                        <td>
+                            @feed.Supplier
+                            @if (!feed.SupplierEnabled)
+                            {
+                                <span class="badge bg-light text-dark border ms-1">Disabled</span>
+                            }
+                        </td>
                         <td>@feed.FeedType</td>
                         <td><a href="@feed.Url" target="_blank">@feed.Url</a></td>
                         <td>@(string.IsNullOrWhiteSpace(feed.Description) ? "-" : feed.Description)</td>
@@ -153,6 +262,115 @@ else
         }
 
         await LoadFeeds();
+        await LoadOverview();
+    }
+
+    // ---- suppliers: enable/disable, eBay quantity, price list
+    private List<SupplierOverviewDto>? overview;
+    private bool supplierBusy;
+    private string? supplierMessage;
+    private string supplierCss = "alert-info";
+    private string? quantityJobId;
+
+    private async Task LoadOverview()
+    {
+        try { overview = await ListingService.GetSupplierOverviewAsync(); }
+        catch (Exception ex)
+        {
+            overview = new();
+            supplierCss = "alert-danger";
+            supplierMessage = $"Could not load suppliers: {ex.Message}";
+        }
+    }
+
+    private async Task ToggleSupplier(SupplierOverviewDto s, bool enabled)
+    {
+        if (!enabled)
+        {
+            var ok = await JS.InvokeAsync<bool>("confirm",
+                $"Disable {s.Name}? Imports and syncs stop and its products/listings are hidden in the app. Its eBay listings stay live (you can set their quantity to 0 next).");
+            if (!ok)
+            {
+                // Re-render the switch as it was (same data wouldn't change the DOM, so clear first).
+                overview = null;
+                StateHasChanged();
+                await LoadOverview();
+                return;
+            }
+        }
+
+        supplierBusy = true;
+        supplierMessage = null;
+        try
+        {
+            await ListingService.SetSupplierEnabledAsync(s.Code, enabled);
+            supplierCss = "alert-success";
+            supplierMessage = enabled
+                ? $"{s.Name} enabled. Imports and syncs run again{(s.ZeroedListings > 0 ? "; use Restore eBay quantity to put its listings back in stock" : "")}."
+                : $"{s.Name} disabled.";
+            await LoadOverview();
+            await LoadFeeds();
+        }
+        catch (Exception ex)
+        {
+            supplierCss = "alert-danger";
+            supplierMessage = $"Could not update {s.Name}: {ex.Message}";
+            await LoadOverview();
+        }
+        finally { supplierBusy = false; }
+    }
+
+    private async Task SetQuantity(SupplierOverviewDto s, bool restore)
+    {
+        var question = restore
+            ? $"Set the eBay quantity of {s.ZeroedListings} {s.Name} listing(s) back to their listing quantity?"
+            : $"Set the eBay quantity of {s.PublishedListings - s.ZeroedListings} published {s.Name} listing(s) to 0? Buyers won't be able to purchase them until restored. (If 'out-of-stock control' is off in your eBay account, eBay may end listings at 0.)";
+        if (!await JS.InvokeAsync<bool>("confirm", question)) return;
+
+        supplierBusy = true;
+        supplierMessage = null;
+        try
+        {
+            quantityJobId = await ListingService.SetSupplierMarketplaceQuantityAsync(s.Code, restore);
+        }
+        catch (Exception ex)
+        {
+            supplierCss = "alert-danger";
+            supplierMessage = ex.Message;
+        }
+        finally { supplierBusy = false; }
+    }
+
+    private async Task OnQuantityJobFinished(BulkJobDto job)
+    {
+        supplierCss = job.Status == "Failed" || job.Failed > 0 ? "alert-warning" : "alert-success";
+        supplierMessage = job.Message;
+        await LoadOverview();
+        StateHasChanged();
+    }
+
+    private async Task UploadPriceList(SupplierOverviewDto s, InputFileChangeEventArgs e)
+    {
+        supplierBusy = true;
+        supplierMessage = null;
+        try
+        {
+            await using var browserStream = e.File.OpenReadStream(maxAllowedSize: 20_000_000);
+            using var buffer = new MemoryStream();
+            await browserStream.CopyToAsync(buffer);
+            buffer.Position = 0;
+
+            var result = await ListingService.UploadPriceListAsync(s.Code, buffer, e.File.Name);
+            supplierCss = "alert-success";
+            supplierMessage = $"Price list uploaded: {result.Rows} prices, {result.ProductsUpdated} imported product(s) re-priced. " + string.Join(" ", result.Notes);
+            await LoadOverview();
+        }
+        catch (Exception ex)
+        {
+            supplierCss = "alert-danger";
+            supplierMessage = $"Upload failed: {ex.Message}";
+        }
+        finally { supplierBusy = false; }
     }
 
     private async Task LoadFeeds()

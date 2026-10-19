@@ -106,11 +106,18 @@ public class ProductEnrichmentService
         listing.Barcode ??= product.Barcode;
         listing.SourceUrl ??= product.ProductUrl;
         listing.SourceProductCode ??= product.SupplierSku;
+        listing.SupplierCategory ??= product.CategoryName;
         listing.SourcePrice = product.SupplierPrice ?? listing.SourcePrice;
         listing.SourceStockLevel = product.StockLevel ?? listing.SourceStockLevel;
 
         // Pricing and delivery (only when not set yet).
         var supplier = await _catalog.FindAsync(product.Supplier, product.ProductUrl);
+        if (listing.DeliveryCost == null && supplier != null && product.DeliveryCost.HasValue)
+        {
+            // Per-product delivery charge (e.g. Safelincs price list), ex VAT.
+            listing.DeliveryOptionName = $"{supplier.Name} delivery";
+            listing.DeliveryCost = PricingMath.AddVat(product.DeliveryCost.Value, includesVat: false, supplier.VatRatePercent);
+        }
         if (listing.DeliveryCost == null && supplier != null)
         {
             var option = SupplierCatalogService.SuggestDeliveryOption(supplier, product.PostageCategory);
