@@ -306,10 +306,16 @@ public class AuthController : ControllerBase
 
     [Authorize]
     [HttpGet("accounts")]
-    public async Task<ActionResult<List<EbayAccountDto>>> GetAccounts()
+    public async Task<ActionResult<List<EbayAccountDto>>> GetAccounts([FromQuery] int? ownerUserId = null)
     {
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
+        // Admins can list another user's accounts (to publish that user's listing with the owner's account).
+        if (ownerUserId.HasValue && ownerUserId != userId)
+        {
+            if (!_currentUserService.CanManageUsers) return Forbid();
+            userId = ownerUserId;
+        }
 
         var accounts = await _context.EbayTokens
             .Where(t => t.UserId == userId.Value)

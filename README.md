@@ -292,8 +292,8 @@ asks for confirmation when the estimated profit is below the minimum.
 
 ### Suppliers: enable / disable
 The **Suppliers** table at the top (Admin/Manager) shows each supplier's products, listings and listings on eBay.
-- Switch a supplier **off** to stop its imports and syncs and hide its products and listings in the app
-  (the Dashboard has a *Show listings from disabled suppliers* tick box). Its listings can't be published while it's off.
+- Switch a supplier **off** to stop its imports and syncs. Listers no longer see its products or listings;
+  Managers and Admins still do (marked *disabled*). Its listings can't be published while it's off.
 - Its eBay listings are **not** changed. To stop sales, click **Set eBay quantity to 0** (runs in the background).
   If *out-of-stock control* is off in your eBay account, eBay may end listings at quantity 0.
 - Switch it back **on** and click **Restore eBay quantity** to put those listings back to their own quantity.
@@ -336,6 +336,15 @@ Account → Business policies, otherwise listings can't be published.
 
 1. **Add User**: Email, password, role (Admin / Manager / Lister) → **Add**.
 2. In *Existing Users*, change role or tick/untick **Active**, then **Save**.
+
+| | Lister | Manager | Admin |
+|---|---|---|---|
+| Own listings, own eBay accounts | ✓ | ✓ | ✓ |
+| See everyone's listings | – | ✓ | ✓ |
+| Publish someone else's listing (with the **owner's** eBay account) | – | – | ✓ |
+| Change suppliers, delivery, eBay fees, feeds, price lists, enable/disable | view only | ✓ | ✓ |
+| See disabled suppliers | – | ✓ | ✓ |
+| Manage users | – | – | ✓ |
 
 ---
 

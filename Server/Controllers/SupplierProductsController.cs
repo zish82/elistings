@@ -208,12 +208,15 @@ public class SupplierProductsController : ControllerBase
     }
 
     /// <summary>
-    /// Products shown on /products: not deleted by the user, still sold by the supplier, and from an enabled supplier.
+    /// Products shown on /products: not deleted by the user and still sold by the supplier. Disabled suppliers'
+    /// products are hidden from Listers; Managers and Admins still see them.
     /// </summary>
     private IQueryable<SupplierProduct> VisibleProducts()
     {
+        var query = _context.SupplierProducts.Where(p => p.IsActive && p.RemovedFromSupplierAtUtc == null);
+        if (_currentUserService.CanViewAllListings) return query;
         var disabled = _context.Suppliers.Where(s => !s.IsActive).Select(s => s.Code);
-        return _context.SupplierProducts.Where(p => p.IsActive && p.RemovedFromSupplierAtUtc == null && !disabled.Contains(p.Supplier));
+        return query.Where(p => !disabled.Contains(p.Supplier));
     }
 
     /// <summary>Products per supplier category, for the Products page "Categories" view.</summary>

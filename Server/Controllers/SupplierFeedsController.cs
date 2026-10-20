@@ -149,6 +149,7 @@ public class SupplierFeedsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<SupplierFeedDto>> Create([FromBody] CreateSupplierFeedRequest request)
     {
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
         if (request == null
             || string.IsNullOrWhiteSpace(request.Supplier)
             || string.IsNullOrWhiteSpace(request.FeedType)
@@ -207,6 +208,7 @@ public class SupplierFeedsController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
         var feed = await _context.SupplierFeeds.FirstOrDefaultAsync(f => f.Id == id);
         if (feed == null)
         {

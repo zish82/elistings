@@ -56,7 +56,7 @@
                                 <td>
                                     <div class="form-check form-switch">
                                         <input class="form-check-input" type="checkbox" id="enabled-@s.Id" checked="@s.IsActive"
-                                               disabled="@supplierBusy" @onchange="e => ToggleSupplier(s, (bool)(e.Value ?? false))" />
+                                               disabled="@(supplierBusy || !canEdit)" @onchange="e => ToggleSupplier(s, (bool)(e.Value ?? false))" />
                                         <label class="form-check-label small" for="enabled-@s.Id">@(s.IsActive ? "Enabled" : "Disabled")</label>
                                     </div>
                                 </td>
@@ -64,7 +64,7 @@
                                 <td class="text-end">@s.Listings</td>
                                 <td class="text-end">@s.PublishedListings</td>
                                 <td>
-                                    @if (!s.IsActive && s.PublishedListings > s.ZeroedListings)
+                                    @if (canEdit && !s.IsActive && s.PublishedListings > s.ZeroedListings)
                                     {
                                         <button class="btn btn-sm btn-outline-danger" disabled="@supplierBusy" @onclick="() => SetQuantity(s, restore: false)">
                                             Set eBay quantity to 0 (@(s.PublishedListings - s.ZeroedListings))
@@ -73,7 +73,7 @@
                                     @if (s.ZeroedListings > 0)
                                     {
                                         <span class="badge bg-secondary me-1">@s.ZeroedListings at 0</span>
-                                        @if (s.IsActive)
+                                        @if (canEdit && s.IsActive)
                                         {
                                             <button class="btn btn-sm btn-outline-success" disabled="@supplierBusy" @onclick="() => SetQuantity(s, restore: true)">Restore eBay quantity</button>
                                         }
@@ -96,8 +96,11 @@
                                                 <span class="text-warning">Not uploaded – website prices are used as estimates.</span>
                                             }
                                         </div>
-                                        <InputFile class="form-control form-control-sm mt-1" accept=".xlsx,.csv" disabled="@supplierBusy" OnChange="e => UploadPriceList(s, e)" />
-                                        <div class="small text-muted">Excel (.xlsx) or CSV with <em>Product Code</em> and <em>Price (ex VAT)</em> columns; replaces the previous list.</div>
+                                        @if (canEdit)
+                                        {
+                                            <InputFile class="form-control form-control-sm mt-1" accept=".xlsx,.csv" disabled="@supplierBusy" OnChange="e => UploadPriceList(s, e)" />
+                                            <div class="small text-muted">Excel (.xlsx) or CSV with <em>Product Code</em> and <em>Price (ex VAT)</em> columns; replaces the previous list.</div>
+                                        }
                                     }
                                     else
                                     {
@@ -127,6 +130,8 @@
     <div class="alert @statusCss">@statusMessage</div>
 }
 
+@if (canEdit)
+{
 <div class="card mb-4">
     <div class="card-body">
         <h5 class="card-title">Add Supplier Feed</h5>
@@ -170,6 +175,7 @@
         </div>
     </div>
 </div>
+}
 
 @if (isLoading)
 {
@@ -229,7 +235,10 @@ else
                             }
                         </td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteFeed(feed.Id)" disabled="@isSaving">Delete</button>
+                            @if (canEdit)
+                            {
+                                <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteFeed(feed.Id)" disabled="@isSaving">Delete</button>
+                            }
                         </td>
                     </tr>
                 }
@@ -264,6 +273,9 @@ else
         await LoadFeeds();
         await LoadOverview();
     }
+
+    // Admins and Managers can change suppliers and feeds; Listers see them read-only.
+    private bool canEdit => AuthService.CurrentUser?.CanViewAllListings == true;
 
     // ---- suppliers: enable/disable, eBay quantity, price list
     private List<SupplierOverviewDto>? overview;

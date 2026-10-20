@@ -260,7 +260,19 @@
                     <option value="@account.Id">@account.Name@(account.IsDefault ? " (Default)" : string.Empty)</option>
                 }
             </select>
-            <div class="small text-muted mt-1">Drafts default to your default account, but you can override it for this listing.</div>
+            @if (ownerEmail != null)
+            {
+                <div class="small text-info mt-1">
+                    This listing belongs to <strong>@ownerEmail</strong>.
+                    @(AuthService.CurrentUser?.CanManageUsers == true
+                        ? "It's published with one of their eBay accounts (listed above)."
+                        : "Only they or an Admin can publish it.")
+                </div>
+            }
+            else
+            {
+                <div class="small text-muted mt-1">Drafts default to your default account, but you can override it for this listing.</div>
+            }
         </div>
 
         <div class="col-md-4">
@@ -565,6 +577,8 @@
     private bool isExtracting = false;
     private string? extractionError;
     private string? extractedCategory;
+    /// <summary>Set when the listing belongs to another user (Admins/Managers can open it).</summary>
+    private string? ownerEmail;
     private decimal extractedIncVat;
     private decimal extractedExVat;
     private bool isSuggesting = false;
@@ -788,6 +802,18 @@
                 listing.SourceStockLevel = existing.SourceStockLevel;
                 listing.SourceProductCode = existing.SourceProductCode;
                 CopyExtras(existing);
+
+                // An Admin editing another user's listing publishes it with the owner's eBay account.
+                var me = AuthService.CurrentUser;
+                if (me != null && existing.OwnerUserId != me.Id && existing.OwnerUserId > 0)
+                {
+                    ownerEmail = existing.OwnerEmail ?? $"user #{existing.OwnerUserId}";
+                    if (me.CanManageUsers)
+                    {
+                        try { ebayAccounts = await ListingService.GetEbayAccountsAsync(existing.OwnerUserId); }
+                        catch (Exception ex) { Console.WriteLine($"Could not load the owner's eBay accounts: {ex.Message}"); }
+                    }
+                }
 
                 await LoadSupplierStatus();
                 await LoadSupplierContext();

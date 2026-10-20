@@ -264,9 +264,11 @@ public class ListingService
         return await GetAsync<ExtractedDetailsDto>($"api/listings/extract?url={Uri.EscapeDataString(url)}") ?? new ExtractedDetailsDto();
     }
 
-    public async Task<List<EbayAccountDto>> GetEbayAccountsAsync()
+    /// <param name="ownerUserId">Admins only: another user's accounts (null = your own).</param>
+    public async Task<List<EbayAccountDto>> GetEbayAccountsAsync(int? ownerUserId = null)
     {
-        return await GetAsync<List<EbayAccountDto>>("api/auth/accounts") ?? new List<EbayAccountDto>();
+        var url = ownerUserId.HasValue ? $"api/auth/accounts?ownerUserId={ownerUserId.Value}" : "api/auth/accounts";
+        return await GetAsync<List<EbayAccountDto>>(url) ?? new List<EbayAccountDto>();
     }
 
     public async Task SetDefaultEbayAccountAsync(int accountId)

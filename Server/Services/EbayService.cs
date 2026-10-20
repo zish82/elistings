@@ -595,7 +595,8 @@ public class EbayService : IEbayService
         // 2. Load from Database
         using var scope = _serviceProvider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<Server.Data.AppDbContext>();
-        var tokenInfo = await ResolveTokenInfoAsync(context, userId.Value, accountId);
+        // Admins may use any user's account (to publish another user's listing with the owner's account).
+        var tokenInfo = await ResolveTokenInfoAsync(context, userId.Value, accountId, anyUser: _currentUserService.CanManageUsers);
 
         if (tokenInfo == null)
             throw new Exception("eBay account not connected. Please login first.");
@@ -629,11 +630,11 @@ public class EbayService : IEbayService
         await RefreshTokenAsync(tokenInfo, context);
     }
 
-    private static async Task<Server.Data.EbayTokenInfo?> ResolveTokenInfoAsync(Server.Data.AppDbContext context, int userId, int? accountId)
+    private static async Task<Server.Data.EbayTokenInfo?> ResolveTokenInfoAsync(Server.Data.AppDbContext context, int userId, int? accountId, bool anyUser = false)
     {
         if (accountId.HasValue)
         {
-            return await context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId && t.Id == accountId.Value);
+            return await context.EbayTokens.FirstOrDefaultAsync(t => (anyUser || t.UserId == userId) && t.Id == accountId.Value);
         }
 
         return await context.EbayTokens

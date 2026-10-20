@@ -17,7 +17,7 @@
         <select class="form-select" value="@selectedSupplier" @onchange="OnSupplierChanged">
             @foreach (var supplier in suppliers)
             {
-                <option value="@supplier">@supplier</option>
+                <option value="@supplier">@supplier@(disabledSuppliers.Contains(supplier) ? " (disabled)" : "")</option>
             }
         </select>
     </div>
@@ -31,6 +31,12 @@
 </div>
 
 <div class="mb-3">
+    @if (disabledSuppliers.Contains(selectedSupplier))
+    {
+        <div class="alert alert-secondary py-2 small">
+            @selectedSupplier is <strong>disabled</strong> (Supplier Feeds): Listers don't see it, it isn't imported or synced, and its listings can't be published.
+        </div>
+    }
     <div class="fw-semibold mb-2">Available feeds for @selectedSupplier</div>
     <div class="d-flex gap-2 flex-wrap">
         @foreach (var feed in selectedFeeds)
@@ -399,6 +405,7 @@ else
     private readonly List<SupplierFeedDto> feeds = new();
     private readonly HashSet<int> selectedIds = new();
     private List<string> suppliers = new();
+    private HashSet<string> disabledSuppliers = new(StringComparer.OrdinalIgnoreCase);
 
     private string selectedSupplier = "DropShipMall";
     private string search = string.Empty;
@@ -715,7 +722,10 @@ else
             feeds.Clear();
             feeds.AddRange(await ListingService.GetSupplierFeedsAsync());
             // Disabled suppliers (Supplier Feeds page) are hidden here.
-            suppliers = feeds.Where(feed => feed.SupplierEnabled).Select(feed => feed.Supplier)
+            // Disabled suppliers (Supplier Feeds page) are hidden from Listers; Managers and Admins still see them.
+            var seeDisabled = AuthService.CurrentUser?.CanViewAllListings == true;
+            disabledSuppliers = feeds.Where(f => !f.SupplierEnabled).Select(f => f.Supplier).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            suppliers = feeds.Where(feed => feed.SupplierEnabled || seeDisabled).Select(feed => feed.Supplier)
                 .Where(supplier => !string.IsNullOrWhiteSpace(supplier))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(supplier => supplier)

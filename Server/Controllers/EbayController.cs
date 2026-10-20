@@ -45,7 +45,7 @@ public class EbayController : ControllerBase
             ListingDto dto;
             try
             {
-                dto = await ListingPublishHelper.PrepareAsync(listing, _context, _ebayService, _ebaySettings.Value, skuService);
+                dto = await ListingPublishHelper.PrepareAsync(listing, _context, _ebayService, _ebaySettings.Value, skuService, _currentUserService);
             }
             catch (InvalidOperationException validationError)
             {

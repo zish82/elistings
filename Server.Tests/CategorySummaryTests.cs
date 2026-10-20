@@ -15,12 +15,12 @@ namespace Server.Tests;
 /// <summary>Products page "Categories" view: counts per category/tag and the "In stock only" filter.</summary>
 public class CategorySummaryTests
 {
-    private static SupplierProductsController Controller(AppDbContext ctx)
+    private static SupplierProductsController Controller(AppDbContext ctx, string role = AuthRoles.Admin)
     {
         var catalog = new SupplierCatalogService(ctx);
         return new SupplierProductsController(
             ctx,
-            TestHelpers.User(),
+            TestHelpers.User(role: role),
             new Mock<IFeedProductSyncService>().Object,
             Options.Create(new EbaySettings()),
             new ProductEnrichmentService(ctx, Array.Empty<ISupplierProductEnricher>(), catalog),
@@ -107,12 +107,14 @@ public class CategorySummaryTests
     }
 
     [Fact]
-    public async Task DisabledSupplier_IsLeftOutOfTheSummary()
+    public async Task DisabledSupplier_IsHiddenFromListers_ButNotFromManagersAndAdmins()
     {
         using var ctx = Seed();
         ctx.Suppliers.Single(s => s.Code == "DropShipMall").IsActive = false;
         ctx.SaveChanges();
 
-        Assert.Empty(Rows(await Controller(ctx).GetCategorySummary("DropShipMall", ProductGrouping.SupplierCategory)));
+        Assert.Empty(Rows(await Controller(ctx, AuthRoles.Lister).GetCategorySummary("DropShipMall", ProductGrouping.SupplierCategory)));
+        Assert.NotEmpty(Rows(await Controller(ctx, AuthRoles.Manager).GetCategorySummary("DropShipMall", ProductGrouping.SupplierCategory)));
+        Assert.NotEmpty(Rows(await Controller(ctx, AuthRoles.Admin).GetCategorySummary("DropShipMall", ProductGrouping.SupplierCategory)));
     }
 }

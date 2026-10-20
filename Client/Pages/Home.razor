@@ -389,6 +389,8 @@ else
         }
 
         currentUser = (await AuthService.GetSessionAsync()).User;
+        // Managers and Admins see listings of disabled suppliers by default (Listers can tick to show them).
+        showDisabledSuppliers = currentUser?.CanViewAllListings == true;
         HandleOAuthCallbackMessage();
         await LoadEbayAccounts();
         await LoadListings();

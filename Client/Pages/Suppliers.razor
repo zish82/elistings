@@ -26,6 +26,13 @@
         </div>
     }
 
+    @if (!canEdit)
+    {
+        <div class="alert alert-info py-2 small">View only – ask an Admin or Manager to change supplier, delivery or eBay fee settings.</div>
+    }
+
+    @* Listers see the settings but can't change them (the server refuses changes from Listers too). *@
+    <fieldset disabled="@(!canEdit)" class="@(canEdit ? "" : "settings-readonly")">
     @if (fees != null)
     {
         <div class="card mb-4 shadow-sm border-primary">
@@ -301,6 +308,8 @@
             </div>
         }
 
+        @if (canEdit)
+        {
         <div class="card shadow-sm mb-5">
             <div class="card-header"><strong>Add supplier</strong></div>
             <div class="card-body row g-2">
@@ -312,7 +321,14 @@
                 <div class="small text-muted">The code must match the supplier name used by its product feed. Product-page fetching needs a small code addition per supplier.</div>
             </div>
         </div>
+        }
     }
+    </fieldset>
+
+    <style>
+        /* View only: hide the action buttons (inputs are disabled by the fieldset). */
+        .settings-readonly button, .settings-readonly .btn { display: none !important; }
+    </style>
 </div>
 
 @code {
@@ -326,6 +342,9 @@
         if (!await AuthService.EnsureAuthenticatedAsync("/suppliers")) return;
         await Load();
     }
+
+    // Admins and Managers can change settings; Listers see them read-only.
+    private bool canEdit => AuthService.CurrentUser?.CanViewAllListings == true;
 
     private async Task Load()
     {

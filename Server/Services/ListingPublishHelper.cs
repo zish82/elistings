@@ -14,8 +14,20 @@ public static class ListingPublishHelper
 {
     public const int MaxTitleLength = 80;
 
-    public static async Task<ListingDto> PrepareAsync(Listing listing, AppDbContext context, IEbayService ebayService, EbaySettings settings, SkuService skuService)
+    /// <param name="publisher">Who is publishing (null = not checked, e.g. tests). Another user's listing can only be published by an Admin.</param>
+    public static async Task<ListingDto> PrepareAsync(Listing listing, AppDbContext context, IEbayService ebayService, EbaySettings settings, SkuService skuService,
+        ICurrentUserService? publisher = null)
     {
+        // Listings are always published with their owner's eBay account (also when an Admin publishes someone else's).
+        if (!listing.EbayAccountId.HasValue)
+        {
+            listing.EbayAccountId = context.EbayTokens
+                .Where(t => t.UserId == listing.OwnerUserId)
+                .OrderByDescending(t => t.IsDefault).ThenBy(t => t.Id)
+                .Select(t => (int?)t.Id)
+                .FirstOrDefault();
+        }
+
         // Drafts created before SKU generation existed get one now; published listings keep theirs.
         await skuService.EnsureSkuAsync(listing);
 
@@ -38,6 +50,15 @@ public static class ListingPublishHelper
         if (string.IsNullOrWhiteSpace(listing.PaymentPolicyId)) problems.Add("no payment policy");
         if (string.IsNullOrWhiteSpace(listing.FulfillmentPolicyId)) problems.Add("no shipping policy");
         if (string.IsNullOrWhiteSpace(listing.ReturnPolicyId)) problems.Add("no return policy");
+
+        if (publisher?.UserId != null && publisher.UserId != listing.OwnerUserId && !publisher.CanManageUsers)
+        {
+            problems.Add("only the listing's owner or an Admin can publish it");
+        }
+        if (listing.EbayAccountId.HasValue && !context.EbayTokens.Any(t => t.Id == listing.EbayAccountId.Value && t.UserId == listing.OwnerUserId))
+        {
+            problems.Add("its eBay account doesn't belong to the listing's owner (choose one of the owner's accounts)");
+        }
 
         var disabledSupplier = await new SupplierCatalogService(context).FindDisabledSupplierNameAsync(listing);
         if (disabledSupplier != null) problems.Add($"supplier {disabledSupplier} is disabled (enable it on Supplier Feeds first)");

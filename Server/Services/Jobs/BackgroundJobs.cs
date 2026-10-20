@@ -226,7 +226,7 @@ public class BackgroundJobs
                 }
                 label = $"#{id} {Truncate(listing.Title, 50)}";
 
-                var dto = await ListingPublishHelper.PrepareAsync(listing, _context, ebayService, settings, skuService);
+                var dto = await ListingPublishHelper.PrepareAsync(listing, _context, ebayService, settings, skuService, Get<ICurrentUserService>());
                 await _context.SaveChangesAsync(); // keep auto-selected category even if eBay rejects
 
                 var result = await ebayService.CreateListingAsync(dto);
