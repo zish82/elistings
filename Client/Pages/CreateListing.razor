@@ -810,7 +810,12 @@
                     ownerEmail = existing.OwnerEmail ?? $"user #{existing.OwnerUserId}";
                     if (me.CanManageUsers)
                     {
-                        try { ebayAccounts = await ListingService.GetEbayAccountsAsync(existing.OwnerUserId); }
+                        try
+                        {
+                            ebayAccounts = await ListingService.GetEbayAccountsAsync(existing.OwnerUserId);
+                            // Policies are loaded for this account, so it must be the owner's.
+                            listing.EbayAccountId ??= ebayAccounts.FirstOrDefault(a => a.IsDefault)?.Id ?? ebayAccounts.FirstOrDefault()?.Id;
+                        }
                         catch (Exception ex) { Console.WriteLine($"Could not load the owner's eBay accounts: {ex.Message}"); }
                     }
                 }

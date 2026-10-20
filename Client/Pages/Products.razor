@@ -31,7 +31,7 @@
 </div>
 
 <div class="mb-3">
-    @if (disabledSuppliers.Contains(selectedSupplier))
+    @if (AuthService.CurrentUser?.CanViewAllListings == true && disabledSuppliers.Contains(selectedSupplier))
     {
         <div class="alert alert-secondary py-2 small">
             @selectedSupplier is <strong>disabled</strong> (Supplier Feeds): Listers don't see it, it isn't imported or synced, and its listings can't be published.
@@ -721,7 +721,6 @@ else
         {
             feeds.Clear();
             feeds.AddRange(await ListingService.GetSupplierFeedsAsync());
-            // Disabled suppliers (Supplier Feeds page) are hidden here.
             // Disabled suppliers (Supplier Feeds page) are hidden from Listers; Managers and Admins still see them.
             var seeDisabled = AuthService.CurrentUser?.CanViewAllListings == true;
             disabledSuppliers = feeds.Where(f => !f.SupplierEnabled).Select(f => f.Supplier).ToHashSet(StringComparer.OrdinalIgnoreCase);

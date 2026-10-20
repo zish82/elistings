@@ -55,9 +55,15 @@ public static class ListingPublishHelper
         {
             problems.Add("only the listing's owner or an Admin can publish it");
         }
-        if (listing.EbayAccountId.HasValue && !context.EbayTokens.Any(t => t.Id == listing.EbayAccountId.Value && t.UserId == listing.OwnerUserId))
+        if (!listing.EbayAccountId.HasValue && publisher?.UserId != null && publisher.UserId != listing.OwnerUserId)
         {
-            problems.Add("its eBay account doesn't belong to the listing's owner (choose one of the owner's accounts)");
+            problems.Add("the listing's owner has no eBay account connected");
+        }
+        if (listing.EbayAccountId.HasValue)
+        {
+            var accountOwner = context.EbayTokens.Where(t => t.Id == listing.EbayAccountId.Value).Select(t => (int?)t.UserId).FirstOrDefault();
+            if (accountOwner == null) problems.Add("its eBay account is no longer connected (choose another account)");
+            else if (accountOwner != listing.OwnerUserId) problems.Add("its eBay account doesn't belong to the listing's owner (choose one of the owner's accounts)");
         }
 
         var disabledSupplier = await new SupplierCatalogService(context).FindDisabledSupplierNameAsync(listing);
