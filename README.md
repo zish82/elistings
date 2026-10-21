@@ -403,7 +403,8 @@ Your eBay orders with cost of sales, month by month.
 
 **First time:** on **eBay Accounts**, click **Reconnect** for each account (it says *Reconnect to enable the Sales
 report*) and approve eBay's screen – the app then may read your orders. Then click **Sync now** on Sales. After that
-orders are imported automatically every 2 hours. History: the last **120 days** for now (`EbayOrders:HistoryDays` in the
+click **Sync now** whenever you want the latest orders (automatic syncing is off for now; to turn it on set
+`"EbayOrders": { "AutoSyncEnabled": true }` in the server settings – every 2 hours by default, `AutoSyncCron` changes it). History: the last **120 days** for now (`EbayOrders:HistoryDays` in the
 server settings; set it to 730 for eBay's full 2 years – the next sync then imports the older orders).
 
 | Column | Where it comes from |

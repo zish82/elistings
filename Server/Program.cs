@@ -330,15 +330,23 @@ using (var hangfireScope = app.Services.CreateScope())
             TimeZone = TimeZoneInfo.Utc
         });
 
-    // Sales report: new and changed eBay orders, every 2 hours.
-    recurringJobs.AddOrUpdate<Server.Services.EbayOrderSyncService>(
-        "ebay-orders-sync",
-        svc => svc.RunScheduledAsync(),
-        "15 */2 * * *",
-        new RecurringJobOptions
-        {
-            TimeZone = TimeZoneInfo.Utc
-        });
+    // Sales report: automatic import of new/changed eBay orders. Off by default (use "Sync now" on /sales);
+    // turn on with "EbayOrders": { "AutoSyncEnabled": true } (schedule: "AutoSyncCron", default every 2 hours).
+    if (app.Configuration.GetValue<bool>("EbayOrders:AutoSyncEnabled"))
+    {
+        recurringJobs.AddOrUpdate<Server.Services.EbayOrderSyncService>(
+            "ebay-orders-sync",
+            svc => svc.RunScheduledAsync(),
+            app.Configuration["EbayOrders:AutoSyncCron"] ?? "15 */2 * * *",
+            new RecurringJobOptions
+            {
+                TimeZone = TimeZoneInfo.Utc
+            });
+    }
+    else
+    {
+        recurringJobs.RemoveIfExists("ebay-orders-sync");
+    }
 
     recurringJobs.AddOrUpdate<Server.Services.IFeedProductSyncService>(
         "dropshipmall-stock-refresh",
