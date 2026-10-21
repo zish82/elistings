@@ -567,6 +567,58 @@ public static class LegacySqliteSchema
                 EnsureColumn("MarketplaceFeeCategoryRates", "Percent3", "TEXT NULL");
                 EnsureColumn("MarketplaceFeeCategoryRates", "PerOrderFeeSmall", "TEXT NULL");
                 EnsureColumn("Suppliers", "FeeCategoryId", "TEXT NULL");
+                EnsureColumn("EbayTokens", "Scopes", "TEXT NULL");
+                EnsureColumn("EbayTokens", "OrdersSyncedFromUtc", "TEXT NULL");
+                EnsureColumn("EbayTokens", "OrdersLastSyncedAtUtc", "TEXT NULL");
+
+                // eBay orders (sales report).
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""EbayOrders"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_EbayOrders"" PRIMARY KEY AUTOINCREMENT,
+                        ""OrderId"" TEXT NOT NULL,
+                        ""EbayAccountId"" INTEGER NOT NULL,
+                        ""OwnerUserId"" INTEGER NOT NULL,
+                        ""CreatedAtUtc"" TEXT NOT NULL,
+                        ""LastModifiedAtUtc"" TEXT NULL,
+                        ""BuyerUsername"" TEXT NULL,
+                        ""SaleTotal"" TEXT NOT NULL,
+                        ""ItemsTotal"" TEXT NOT NULL,
+                        ""PostageCharged"" TEXT NOT NULL,
+                        ""RefundedTotal"" TEXT NOT NULL,
+                        ""Currency"" TEXT NOT NULL,
+                        ""FulfillmentStatus"" TEXT NULL,
+                        ""PaymentStatus"" TEXT NULL,
+                        ""CancelState"" TEXT NULL,
+                        ""Fees"" TEXT NULL,
+                        ""FeesAreActual"" INTEGER NOT NULL DEFAULT 0,
+                        ""TrackingNumber"" TEXT NULL,
+                        ""DeliveryCompany"" TEXT NULL,
+                        ""ShippedAtUtc"" TEXT NULL,
+                        ""SupplierPrice"" TEXT NULL,
+                        ""SupplierPriceIsManual"" INTEGER NOT NULL DEFAULT 0,
+                        ""Supplier"" TEXT NULL,
+                        ""SourceOrderId"" TEXT NULL,
+                        ""SourceEmail"" TEXT NULL,
+                        ""SyncedAtUtc"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_EbayOrders_OrderId"" ON ""EbayOrders"" (""OrderId"");");
+                db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_EbayOrders_OwnerUserId_CreatedAtUtc"" ON ""EbayOrders"" (""OwnerUserId"", ""CreatedAtUtc"");");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""EbayOrderLines"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_EbayOrderLines"" PRIMARY KEY AUTOINCREMENT,
+                        ""EbayOrderId"" INTEGER NOT NULL,
+                        ""LineItemId"" TEXT NOT NULL,
+                        ""Sku"" TEXT NULL,
+                        ""LegacyItemId"" TEXT NULL,
+                        ""Title"" TEXT NOT NULL,
+                        ""Quantity"" INTEGER NOT NULL DEFAULT 1,
+                        ""LineTotal"" TEXT NOT NULL,
+                        ""ListingId"" INTEGER NULL,
+                        ""SupplierProductId"" INTEGER NULL,
+                        ""UnitCost"" TEXT NULL,
+                        ""DeliveryCost"" TEXT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_EbayOrderLines_EbayOrderId"" ON ""EbayOrderLines"" (""EbayOrderId"");");
                 db.Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS ""EbayCategories"" (
                         ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_EbayCategories"" PRIMARY KEY AUTOINCREMENT,

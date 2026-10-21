@@ -45,6 +45,11 @@ public class BulkJobService
     public Task<string> EnqueueSupplierQuantityAsync(int userId, string supplierCode, bool restore)
         => EnqueueAsync("supplier-quantity", userId, tag: supplierCode, id => Job(j => j.SetSupplierMarketplaceQuantityAsync(id, userId, supplierCode, restore)));
 
+    /// <summary>Imports eBay orders for the sales report (the user's accounts; every account for an Admin).</summary>
+    public Task<string> EnqueueSalesSyncAsync(int userId)
+        => EnqueueAsync("sales-sync", userId, tag: userId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            id => Job(j => j.SyncSalesAsync(id, userId)));
+
     public async Task<BulkJobDto?> GetAsync(string jobId)
     {
         var record = await _context.BulkJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId);

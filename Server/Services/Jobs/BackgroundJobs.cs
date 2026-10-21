@@ -66,6 +66,10 @@ public class BackgroundJobs
         => RunAsync(jobId, userId, progress => SetSupplierQuantityCoreAsync(progress, supplierCode, restore));
 
     [Queue(DefaultQueue), AutomaticRetry(Attempts = 0)]
+    public Task SyncSalesAsync(string jobId, int userId)
+        => RunAsync(jobId, userId, progress => SyncSalesCoreAsync(progress));
+
+    [Queue(DefaultQueue), AutomaticRetry(Attempts = 0)]
     public Task ImportSupplierCatalogueAsync(string jobId, int userId, string supplierCode)
         => RunAsync(jobId, userId, progress => ImportCoreAsync(progress, supplierCode));
 
@@ -290,6 +294,33 @@ public class BackgroundJobs
         var result = await importer.ImportAsync("manual", reporter);
         if (!result.IsSuccess) throw new InvalidOperationException(result.ErrorMessage);
         return last;
+    }
+
+    // ------------------------------------------------------------------ sales report
+
+    private async Task<string?> SyncSalesCoreAsync(JobProgress progress)
+    {
+        var sync = Get<EbayOrderSyncService>();
+        var accounts = await sync.AccountsForAsync(Get<ICurrentUserService>());
+        if (accounts.Count == 0) throw new InvalidOperationException("No eBay account is connected.");
+
+        progress.Total = accounts.Count;
+        var results = new List<string>();
+        foreach (var account in accounts)
+        {
+            try
+            {
+                var reporter = new SyncProgress(message => progress.Message = message);
+                results.Add($"{account.Name}: {await sync.SyncAccountAsync(account.Id, reporter)}");
+                progress.ItemSucceeded();
+            }
+            catch (Exception ex)
+            {
+                _context.ChangeTracker.Clear();
+                progress.ItemFailed($"{account.Name}: {ex.Message}");
+            }
+        }
+        return string.Join(" ", results);
     }
 
     // ------------------------------------------------------------------ supplier disabled: eBay quantity 0 / restore

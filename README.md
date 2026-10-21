@@ -24,6 +24,7 @@ marketplace listings, and publishes them to eBay. This guide walks through every
 12. [Writing good titles](#12-writing-good-titles)
 13. [Background jobs](#13-background-jobs)
 14. [Troubleshooting](#14-troubleshooting)
+15. [Sales (`/sales`)](#15-sales-sales)
 
 ---
 
@@ -393,3 +394,28 @@ working or even refresh the page – the progress bar picks up where it was.
 | Import shows *est.* prices for Eden | The trade price couldn't be confirmed; check the Eden login is configured and re-run the import. |
 | *Could not reach the server* | The server isn't running or the page was opened on the wrong address. |
 | Nothing happens after clicking a button | Refresh the page (Cmd+Shift+R) to load the latest version of the app. |
+
+---
+
+## 15. Sales (`/sales`)
+
+Your eBay orders with cost of sales, month by month.
+
+**First time:** on **eBay Accounts**, click **Reconnect** for each account (it says *Reconnect to enable the Sales
+report*) and approve eBay's screen – the app then may read your orders. Then click **Sync now** on Sales. After that
+orders are imported automatically every 2 hours. History: the last **120 days** for now (`EbayOrders:HistoryDays` in the
+server settings; set it to 730 for eBay's full 2 years – the next sync then imports the older orders).
+
+| Column | Where it comes from |
+|---|---|
+| Date, eBay Order ID, Tracking, Delivery Company | eBay |
+| Mail | You: the email account used to place the supplier order |
+| Source Order ID | You: the supplier's order number |
+| Supplier Price | Worked out when the order's SKU matches one of your listings (source price + VAT + delivery) or a supplier product (e.g. `DSM-S16301`). Saved at the time of sale, so later price changes don't alter it. Unmatched orders are blank – type it in (*auto* goes back to the worked-out value) |
+| Earning | What eBay pays you: sale total − refunds − eBay fees (eBay's own fee for the order when it reports one, plus VAT as you're not VAT-registered; otherwise estimated – shown as *est.*) |
+| Profit, ROI | Earning − Supplier Price; Profit ÷ Supplier Price |
+
+Cancelled orders count as £0. Month totals only include profit/ROI of orders with a supplier price (the number without
+one is shown). **Export month / Export all** download a CSV for Excel. Listers see their own orders; Managers and
+Admins see everyone's.
+

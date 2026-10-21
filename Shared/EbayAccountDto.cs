@@ -8,4 +8,6 @@ public class EbayAccountDto
     public bool IsConnected { get; set; }
     public DateTime? ExpiresAtUtc { get; set; }
     public int LinkedListingCount { get; set; }
+    /// <summary>False for accounts connected before the sales report: reconnect to allow reading orders.</summary>
+    public bool CanReadOrders { get; set; }
 }

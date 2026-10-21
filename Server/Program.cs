@@ -163,6 +163,7 @@ builder.Services.AddScoped<Server.Services.SupplierPriceListService>();
 builder.Services.AddScoped<Server.Services.ProductTagService>();
 builder.Services.AddScoped<Server.Services.MarketplaceFeeService>();
 builder.Services.AddScoped<Server.Services.EbayCategoryService>();
+builder.Services.AddScoped<Server.Services.EbayOrderSyncService>();
 builder.Services.AddScoped<Server.Services.SafelincsCatalogImportService>();
 builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.SafelincsCatalogImportService>());
 builder.Services.AddHttpClient("safelincs")
@@ -324,6 +325,16 @@ using (var hangfireScope = app.Services.CreateScope())
         "safelincs-catalogue-import",
         svc => svc.RunScheduledAsync(),
         "30 3 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.Utc
+        });
+
+    // Sales report: new and changed eBay orders, every 2 hours.
+    recurringJobs.AddOrUpdate<Server.Services.EbayOrderSyncService>(
+        "ebay-orders-sync",
+        svc => svc.RunScheduledAsync(),
+        "15 */2 * * *",
         new RecurringJobOptions
         {
             TimeZone = TimeZoneInfo.Utc

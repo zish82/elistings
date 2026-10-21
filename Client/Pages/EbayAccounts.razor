@@ -76,6 +76,12 @@ else
                             <span class="badge @(account.IsConnected ? "bg-success" : "bg-warning text-dark")">
                                 @(account.IsConnected ? "Connected" : "Expired")
                             </span>
+                            @if (!account.CanReadOrders)
+                            {
+                                <div class="small text-warning mt-1" title="Accounts connected before the Sales report only allow listing. Click Reconnect and approve eBay's consent screen.">
+                                    Reconnect to enable the Sales report
+                                </div>
+                            }
                         </td>
                         <td>@(account.ExpiresAtUtc?.ToLocalTime().ToString("g") ?? "-")</td>
                         <td>

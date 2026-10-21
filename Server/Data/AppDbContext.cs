@@ -22,6 +22,8 @@ public class AppDbContext : DbContext
     public DbSet<MarketplaceFeeSettings> MarketplaceFeeSettings { get; set; }
     public DbSet<MarketplaceFeeCategoryRate> MarketplaceFeeCategoryRates { get; set; }
     public DbSet<EbayCategory> EbayCategories { get; set; }
+    public DbSet<EbayOrder> EbayOrders { get; set; }
+    public DbSet<EbayOrderLine> EbayOrderLines { get; set; }
     public DbSet<ProductTag> ProductTags { get; set; }
     public DbSet<SupplierProductTag> SupplierProductTags { get; set; }
 
@@ -50,6 +52,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<MarketplaceFeeSettings>().HasIndex(s => s.Marketplace).IsUnique();
         modelBuilder.Entity<MarketplaceFeeCategoryRate>().HasIndex(r => new { r.Marketplace, r.CategoryId }).IsUnique();
         modelBuilder.Entity<EbayCategory>().HasIndex(c => c.CategoryId).IsUnique();
+        modelBuilder.Entity<EbayOrder>().HasIndex(o => o.OrderId).IsUnique();
+        modelBuilder.Entity<EbayOrder>().HasIndex(o => new { o.OwnerUserId, o.CreatedAtUtc });
+        modelBuilder.Entity<EbayOrderLine>().HasIndex(l => l.EbayOrderId);
         modelBuilder.Entity<ProductTag>().HasIndex(t => new { t.Supplier, t.NormalizedName }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => new { t.SupplierProductId, t.ProductTagId }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => t.ProductTagId);
@@ -291,6 +296,72 @@ public class EbayTokenInfo
     public string RefreshToken { get; set; } = string.Empty;
     public DateTime ExpiryTime { get; set; }
     public DateTime RefreshTokenExpiryTime { get; set; }
+    /// <summary>OAuth scopes granted when connected (null = the original listing-only set).</summary>
+    public string? Scopes { get; set; }
+    /// <summary>Orders have been imported from this date (sales report history); null = never.</summary>
+    public DateTime? OrdersSyncedFromUtc { get; set; }
+    public DateTime? OrdersLastSyncedAtUtc { get; set; }
+}
+
+/// <summary>
+/// An eBay order (sales report). eBay fields are refreshed by every sync; the cost/source fields are yours:
+/// SupplierPrice is worked out from the matched listing when first seen (or typed in), SourceOrderId/SourceEmail are typed in.
+/// </summary>
+public class EbayOrder
+{
+    public int Id { get; set; }
+    public string OrderId { get; set; } = string.Empty;
+    public int EbayAccountId { get; set; }
+    public int OwnerUserId { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime? LastModifiedAtUtc { get; set; }
+    public string? BuyerUsername { get; set; }
+    /// <summary>What the buyer paid you (item + postage, excluding tax eBay collects itself).</summary>
+    public decimal SaleTotal { get; set; }
+    public decimal ItemsTotal { get; set; }
+    public decimal PostageCharged { get; set; }
+    public decimal RefundedTotal { get; set; }
+    public string Currency { get; set; } = "GBP";
+    public string? FulfillmentStatus { get; set; }
+    public string? PaymentStatus { get; set; }
+    public string? CancelState { get; set; }
+    /// <summary>eBay's fees: actual (from the order) when eBay reports them, else estimated; incl. VAT when not VAT-registered.</summary>
+    public decimal? Fees { get; set; }
+    public bool FeesAreActual { get; set; }
+    public string? TrackingNumber { get; set; }
+    public string? DeliveryCompany { get; set; }
+    public DateTime? ShippedAtUtc { get; set; }
+
+    // ---- yours
+    /// <summary>What the supplier charges you for the order (items inc VAT + delivery). Null = unknown (not matched).</summary>
+    public decimal? SupplierPrice { get; set; }
+    /// <summary>True when typed in (syncs then leave it alone).</summary>
+    public bool SupplierPriceIsManual { get; set; }
+    public string? Supplier { get; set; }
+    /// <summary>The supplier's order number for this sale.</summary>
+    public string? SourceOrderId { get; set; }
+    /// <summary>Email account used to place the supplier order.</summary>
+    public string? SourceEmail { get; set; }
+    public DateTime SyncedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public class EbayOrderLine
+{
+    public int Id { get; set; }
+    public int EbayOrderId { get; set; }
+    public string LineItemId { get; set; } = string.Empty;
+    public string? Sku { get; set; }
+    public string? LegacyItemId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int Quantity { get; set; } = 1;
+    public decimal LineTotal { get; set; }
+    /// <summary>Matched listing / supplier product (by SKU), when found.</summary>
+    public int? ListingId { get; set; }
+    public int? SupplierProductId { get; set; }
+    /// <summary>Supplier cost per unit inc VAT, when matched (snapshot at the time of the first sync).</summary>
+    public decimal? UnitCost { get; set; }
+    /// <summary>Supplier delivery for this line, inc VAT, when matched.</summary>
+    public decimal? DeliveryCost { get; set; }
 }
 
 public class SupplierSyncRun

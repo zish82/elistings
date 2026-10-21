@@ -444,6 +444,20 @@ public class ListingService
     public async Task<List<ProductTagDto>> GetSupplierTagsAsync(string supplier)
         => await GetAsync<List<ProductTagDto>>($"api/supplierproducts/tags?supplier={Uri.EscapeDataString(supplier)}") ?? new List<ProductTagDto>();
 
+    // ---- Sales report (eBay orders)
+
+    public async Task<SalesReportDto> GetSalesReportAsync(string? month)
+        => await GetAsync<SalesReportDto>("api/sales" + (string.IsNullOrWhiteSpace(month) ? "" : $"?month={Uri.EscapeDataString(month)}")) ?? new SalesReportDto();
+
+    public async Task<SalesOrderDto?> UpdateSalesOrderAsync(int id, UpdateSalesOrderRequest request)
+        => await SendAsync<SalesOrderDto>(HttpMethod.Put, $"api/sales/{id}", request);
+
+    public async Task<string> StartSalesSyncAsync()
+    {
+        var result = await SendAsync<BulkJobStartedDto>(HttpMethod.Post, "api/sales/sync");
+        return result?.JobId ?? throw new Exception("Server did not return a job id.");
+    }
+
     // ---- eBay fee settings (fee / profit estimates)
 
     public async Task<MarketplaceFeeSettingsDto> GetMarketplaceFeesAsync()

@@ -1,0 +1,260 @@
+@page "/sales"
+@using Shared
+@using Client.Services
+@inject AuthService AuthService
+@inject ListingService ListingService
+
+<PageTitle>Sales</PageTitle>
+
+<h1>Sales</h1>
+<p class="text-muted">
+    Your eBay orders with cost of sales. eBay fields fill in automatically (every 2 hours, or <em>Sync now</em>);
+    <strong>Mail</strong>, <strong>Source Order ID</strong> and (when it isn't matched) <strong>Supplier Price</strong> are yours to type in.
+</p>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @messageCss">@message</div>
+}
+
+@if (report?.AccountsNeedingReconnect.Any() == true)
+{
+    <div class="alert alert-warning">
+        Reconnect @string.Join(", ", report.AccountsNeedingReconnect) on <a href="/ebay-accounts">eBay Accounts</a> first:
+        accounts connected before the Sales report only allow listing, not reading orders.
+    </div>
+}
+
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+    <button class="btn btn-primary" @onclick="SyncNow" disabled="@(busy || !string.IsNullOrEmpty(syncJobId))">Sync now</button>
+    @if (report != null)
+    {
+        <span class="small text-muted">
+            Last synced: @(report.LastSyncedAtUtc.HasValue ? report.LastSyncedAtUtc.Value.ToLocalTime().ToString("g") : "never") ·
+            history: last @report.HistoryDays days
+        </span>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(syncJobId))
+{
+    <div class="mb-3">
+        <BulkJobProgress JobId="@syncJobId" Title="Importing eBay orders" OnFinished="OnSyncFinished" />
+    </div>
+}
+
+@if (report == null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (!report.Months.Any())
+{
+    <div class="alert alert-info">No orders yet. Click <strong>Sync now</strong> to import your eBay orders.</div>
+}
+else
+{
+    <h5>By month</h5>
+    <div class="table-responsive mb-4">
+        <table class="table table-sm table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Month</th>
+                    <th class="text-end">Orders</th>
+                    <th class="text-end">Sales</th>
+                    <th class="text-end" title="eBay fees (actual when eBay reports them, else estimated)">eBay fees</th>
+                    <th class="text-end">Earning</th>
+                    <th class="text-end">Supplier Price</th>
+                    <th class="text-end">Profit</th>
+                    <th class="text-end">ROI</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var m in report.Months)
+                {
+                    <tr class="@(m.Month == report.Month ? "table-active" : "")" style="cursor: pointer;" @onclick="() => ShowMonth(m.Month)">
+                        <td>@MonthName(m.Month)</td>
+                        <td class="text-end">@m.Orders</td>
+                        <td class="text-end">£@m.Sales.ToString("N2")</td>
+                        <td class="text-end">£@m.Fees.ToString("N2")</td>
+                        <td class="text-end">£@m.Earning.ToString("N2")</td>
+                        <td class="text-end">£@m.SupplierPrice.ToString("N2")</td>
+                        <td class="text-end @(m.Profit < 0 ? "text-danger" : "")">£@m.Profit.ToString("N2")</td>
+                        <td class="text-end">@(m.RoiPercent.HasValue ? m.RoiPercent.Value.ToString("0.0") + "%" : "-")</td>
+                        <td class="small text-muted">
+                            @if (m.OrdersWithoutCost > 0)
+                            {
+                                <span title="Profit and ROI only include orders with a supplier price">@m.OrdersWithoutCost without supplier price</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+        <h5 class="mb-0">@MonthName(report.Month) orders</h5>
+        <a class="btn btn-sm btn-outline-secondary" href="@($"api/sales/export?month={report.Month}")" target="_blank">Export month (CSV)</a>
+        <a class="btn btn-sm btn-outline-secondary" href="api/sales/export" target="_blank">Export all (CSV)</a>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Mail</th>
+                    <th>eBay Order ID</th>
+                    <th>Source Order ID</th>
+                    <th class="text-end">Supplier Price</th>
+                    <th class="text-end" title="What eBay pays you: sale − refunds − eBay fees">Earning</th>
+                    <th class="text-end">Profit</th>
+                    <th class="text-end">ROI</th>
+                    <th>Tracking</th>
+                    <th>Delivery Company</th>
+                    <th>Items</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var o in report.Orders)
+                {
+                    <tr>
+                        <td class="text-nowrap">@o.DateUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                        <td style="min-width: 170px;">
+                            <input class="form-control form-control-sm" value="@o.Mail" placeholder="email used"
+                                   @onchange="e => Save(o, mail: e.Value?.ToString())" />
+                        </td>
+                        <td class="font-monospace small">@o.EbayOrderId</td>
+                        <td style="min-width: 140px;">
+                            <input class="form-control form-control-sm" value="@o.SourceOrderId" placeholder="supplier order no."
+                                   @onchange="e => Save(o, sourceOrderId: e.Value?.ToString())" />
+                        </td>
+                        <td class="text-end" style="min-width: 120px;">
+                            <input type="number" step="0.01" min="0" class="form-control form-control-sm text-end @(o.SupplierPrice.HasValue ? "" : "border-warning")"
+                                   value="@(o.SupplierPrice?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))" placeholder="unknown"
+                                   @onchange="e => SaveSupplierPrice(o, e.Value?.ToString())" />
+                            <div class="small text-muted">
+                                @if (o.SupplierPriceIsManual)
+                                {
+                                    <span>typed in · <a href="javascript:void(0)" @onclick="() => ResetSupplierPrice(o)">auto</a></span>
+                                }
+                                else if (o.SupplierPrice.HasValue)
+                                {
+                                    <span title="From the matched listing / supplier product">@(o.Supplier ?? "matched")</span>
+                                }
+                            </div>
+                        </td>
+                        <td class="text-end">
+                            £@o.Earning.ToString("N2")
+                            <div class="small text-muted" title="@(o.FeesAreActual ? "eBay's fee for this order" : "Estimated from your eBay fee settings")">
+                                fees £@((o.Fees ?? 0m).ToString("N2"))@(o.FeesAreActual ? "" : " est.")
+                            </div>
+                        </td>
+                        <td class="text-end @(o.Profit < 0 ? "text-danger fw-semibold" : "")">@(o.Profit.HasValue ? "£" + o.Profit.Value.ToString("N2") : "-")</td>
+                        <td class="text-end">@(o.RoiPercent.HasValue ? o.RoiPercent.Value.ToString("0.0") + "%" : "-")</td>
+                        <td class="small font-monospace">@(o.Tracking ?? "-")</td>
+                        <td class="small">@(o.DeliveryCompany ?? "-")</td>
+                        <td class="small" style="max-width: 320px;">
+                            @o.Items
+                            <div class="text-muted">£@o.SaleTotal.ToString("N2")@(o.Refunded > 0 ? $" (refunded £{o.Refunded:N2})" : "") · @o.Buyer@(o.AccountName != null ? $" · {o.AccountName}" : "")</div>
+                        </td>
+                        <td class="small">@o.Status</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private SalesReportDto? report;
+    private bool busy;
+    private string? message;
+    private string messageCss = "alert-info";
+    private string? syncJobId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.EnsureAuthenticatedAsync("/sales")) return;
+        await Load(null);
+    }
+
+    private async Task Load(string? month)
+    {
+        try { report = await ListingService.GetSalesReportAsync(month); }
+        catch (Exception ex)
+        {
+            report = new SalesReportDto();
+            Show($"Could not load sales: {ex.Message}", false);
+        }
+    }
+
+    private void Show(string text, bool ok) { message = text; messageCss = ok ? "alert-success" : "alert-danger"; }
+
+    private Task ShowMonth(string month) => Load(month);
+
+    private static string MonthName(string? month)
+        => DateTime.TryParseExact((month ?? "") + "-01", "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+               System.Globalization.DateTimeStyles.None, out var d) ? d.ToString("MMMM yyyy") : month ?? "";
+
+    private async Task SyncNow()
+    {
+        busy = true;
+        message = null;
+        try { syncJobId = await ListingService.StartSalesSyncAsync(); }
+        catch (Exception ex) { Show(ex.Message, false); }
+        finally { busy = false; }
+    }
+
+    private async Task OnSyncFinished(BulkJobDto job)
+    {
+        syncJobId = null;
+        Show(job.Status == "Failed" || job.Failed > 0 ? $"Sync finished with problems: {job.Message} {string.Join(" ", job.Errors)}" : $"Orders imported. {job.Message}",
+             job.Status != "Failed" && job.Failed == 0);
+        await Load(report?.Month);
+        StateHasChanged();
+    }
+
+    private async Task Save(SalesOrderDto o, string? mail = null, string? sourceOrderId = null)
+    {
+        if (mail != null) o.Mail = mail;
+        if (sourceOrderId != null) o.SourceOrderId = sourceOrderId;
+        await Update(o, new UpdateSalesOrderRequest { Mail = o.Mail, SourceOrderId = o.SourceOrderId });
+    }
+
+    private async Task SaveSupplierPrice(SalesOrderDto o, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            await ResetSupplierPrice(o);
+            return;
+        }
+        if (!decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var price) || price < 0)
+        {
+            Show("Enter the supplier price as a number, e.g. 12.50.", false);
+            return;
+        }
+        await Update(o, new UpdateSalesOrderRequest { Mail = o.Mail, SourceOrderId = o.SourceOrderId, SupplierPrice = price });
+    }
+
+    private Task ResetSupplierPrice(SalesOrderDto o)
+        => Update(o, new UpdateSalesOrderRequest { Mail = o.Mail, SourceOrderId = o.SourceOrderId, ResetSupplierPrice = true });
+
+    private async Task Update(SalesOrderDto o, UpdateSalesOrderRequest request)
+    {
+        try
+        {
+            var saved = await ListingService.UpdateSalesOrderAsync(o.Id, request);
+            if (saved != null && report != null)
+            {
+                var index = report.Orders.FindIndex(x => x.Id == o.Id);
+                if (index >= 0) report.Orders[index] = saved;
+                // Month totals change with the supplier price.
+                if (request.SupplierPrice.HasValue || request.ResetSupplierPrice) report.Months = (await ListingService.GetSalesReportAsync(report.Month)).Months;
+            }
+        }
+        catch (Exception ex) { Show($"Could not save order {o.EbayOrderId}: {ex.Message}", false); }
+    }
+}

@@ -666,7 +666,8 @@ public class EbayService : IEbayService
         {
             new KeyValuePair<string, string>("grant_type", "refresh_token"),
             new KeyValuePair<string, string>("refresh_token", tokenInfo.RefreshToken),
-            new KeyValuePair<string, string>("scope", "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.account")
+            // The scopes this account was connected with (asking for more is rejected by eBay).
+            new KeyValuePair<string, string>("scope", string.IsNullOrWhiteSpace(tokenInfo.Scopes) ? EbayScopes.Original : tokenInfo.Scopes)
         });
         request.Content = content;
 
@@ -695,6 +696,41 @@ public class EbayService : IEbayService
         
         await context.SaveChangesAsync();
         return tokenInfo.AccessToken;
+    }
+
+    public async Task<string> GetOrdersJsonAsync(int accountId, string filter, int offset, int limit = 200)
+    {
+        var token = await GetOAuthTokenAsync(accountId);
+        var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+        var url = $"{baseUrl}/sell/fulfillment/v1/order?filter={Uri.EscapeDataString(filter)}&limit={limit}&offset={offset}";
+        using var response = await SendWithRetryAsync(() =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            return request;
+        }, "orders");
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await EbayApiException.FromResponseAsync(response, "Reading eBay orders");
+        }
+        return await response.Content.ReadAsStringAsync();
+    }
+
+    public async Task<string> GetShippingFulfillmentsJsonAsync(int accountId, string orderId)
+    {
+        var token = await GetOAuthTokenAsync(accountId);
+        var baseUrl = _settings.IsSandbox ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+        using var response = await SendWithRetryAsync(() =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/sell/fulfillment/v1/order/{Uri.EscapeDataString(orderId)}/shipping_fulfillment");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            return request;
+        }, $"tracking for {orderId}");
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await EbayApiException.FromResponseAsync(response, $"Reading tracking for order {orderId}");
+        }
+        return await response.Content.ReadAsStringAsync();
     }
 
     public async Task<List<EbayCategoryNode>> GetCategoryTreeAsync(int? accountId = null)

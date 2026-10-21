@@ -55,7 +55,7 @@ public class AuthController : ControllerBase
 
         // For eBay OAuth 2.0, the redirect_uri parameter MUST be the RuName string itself
         var baseUrl = _settings.IsSandbox ? "https://auth.sandbox.ebay.com/oauth2/authorize" : "https://auth.ebay.com/oauth2/authorize";
-        var scope = "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/sell.inventory https://api.ebay.com/oauth/api_scope/sell.account";
+        var scope = EbayScopes.Current; // listing + orders (sales report) + finances
         var state = Guid.NewGuid().ToString("N");
         var expiry = DateTime.UtcNow.AddMinutes(15);
 
@@ -235,6 +235,7 @@ public class AuthController : ControllerBase
         existingToken.RefreshToken = result.refresh_token;
         existingToken.ExpiryTime = DateTime.UtcNow.AddSeconds(result.expires_in);
         existingToken.RefreshTokenExpiryTime = DateTime.UtcNow.AddSeconds(result.refresh_token_expires_in);
+        existingToken.Scopes = EbayScopes.Current; // refreshes must ask for exactly what was granted
 
         await _context.SaveChangesAsync();
 
@@ -328,6 +329,7 @@ public class AuthController : ControllerBase
                 IsDefault = t.IsDefault,
                 IsConnected = t.ExpiryTime > DateTime.UtcNow,
                 ExpiresAtUtc = t.ExpiryTime,
+                CanReadOrders = t.RefreshToken == "MANUAL" || (t.Scopes != null && t.Scopes.Contains("sell.fulfillment")),
                 LinkedListingCount = _context.Listings.Count(l => l.OwnerUserId == userId.Value && l.EbayAccountId == t.Id)
             })
             .ToListAsync();

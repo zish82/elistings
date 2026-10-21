@@ -23,6 +23,15 @@ public interface IEbayService
     /// </summary>
     Task<Dictionary<string, string>> UpdateQuantitiesAsync(int? accountId, IReadOnlyList<MarketplaceQuantityUpdate> updates);
 
+    /// <summary>
+    /// One page of orders (Fulfillment API getOrders) as raw JSON. <paramref name="filter"/> is eBay's filter, e.g.
+    /// "creationdate:[2026-06-01T00:00:00.000Z..]" or "lastmodifieddate:[...]".
+    /// </summary>
+    Task<string> GetOrdersJsonAsync(int accountId, string filter, int offset, int limit = 200);
+
+    /// <summary>The order's shipping fulfillments (tracking number, carrier) as raw JSON.</summary>
+    Task<string> GetShippingFulfillmentsJsonAsync(int accountId, string orderId);
+
     /// <summary>The whole eBay UK category tree (flattened), from the Taxonomy API.</summary>
     Task<List<EbayCategoryNode>> GetCategoryTreeAsync(int? accountId = null);
 }
