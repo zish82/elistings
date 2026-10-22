@@ -107,17 +107,17 @@ public class SalesController : ControllerBase
         var rows = await ToDtosAsync(orders);
 
         var csv = new StringBuilder();
-        csv.AppendLine("Date,Mail,eBay Order ID,Source Order ID,Supplier Price,Earning,Profit,ROI,Tracking,Delivery Company,Items,Supplier,Sale Total,Refunded,eBay Fees,Fees,Status,Buyer");
+        csv.AppendLine("Date,Mail,eBay Order ID,Source Order ID,Sold Price,Supplier Price,Earning,Profit,ROI,Items,Status,Tracking,Delivery Company,Refunded,eBay Fees,Fees,Supplier,Buyer");
         foreach (var r in rows)
         {
             csv.AppendLine(string.Join(",", new[]
             {
                 SalesReport.ToLocal(r.DateUtc).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
                 Csv(r.Mail), Csv(r.EbayOrderId), Csv(r.SourceOrderId),
-                Money(r.SupplierPrice), Money(r.Earning), Money(r.Profit),
+                Money(r.SaleTotal), Money(r.SupplierPrice), Money(r.Earning), Money(r.Profit),
                 r.RoiPercent.HasValue ? r.RoiPercent.Value.ToString("0.0", CultureInfo.InvariantCulture) + "%" : "",
-                Csv(r.Tracking), Csv(r.DeliveryCompany), Csv(r.Items), Csv(r.Supplier),
-                Money(r.SaleTotal), Money(r.Refunded), Money(r.Fees), r.FeesAreActual ? "actual" : "estimated", Csv(r.Status), Csv(r.Buyer)
+                Csv(r.Items), Csv(r.Status), Csv(r.Tracking), Csv(r.DeliveryCompany),
+                Money(r.Refunded), Money(r.Fees), r.FeesAreActual ? "actual" : "estimated", Csv(r.Supplier), Csv(r.Buyer)
             }));
         }
         var name = $"ebay-sales-{(string.IsNullOrWhiteSpace(month) ? "all" : month)}.csv";

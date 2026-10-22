@@ -107,14 +107,15 @@ else
                     <th>Mail</th>
                     <th>eBay Order ID</th>
                     <th>Source Order ID</th>
+                    <th class="text-end" title="What the buyer paid (item + postage)">Sold Price</th>
                     <th class="text-end">Supplier Price</th>
                     <th class="text-end" title="What eBay pays you: sale − refunds − eBay fees">Earning</th>
                     <th class="text-end">Profit</th>
                     <th class="text-end">ROI</th>
-                    <th>Tracking</th>
-                    <th>Delivery Company</th>
                     <th>Items</th>
                     <th>Status</th>
+                    <th>Tracking</th>
+                    <th>Delivery Company</th>
                 </tr>
             </thead>
             <tbody>
@@ -130,6 +131,13 @@ else
                         <td style="min-width: 140px;">
                             <input class="form-control form-control-sm" value="@o.SourceOrderId" placeholder="supplier order no."
                                    @onchange="e => Save(o, sourceOrderId: e.Value?.ToString())" />
+                        </td>
+                        <td class="text-end text-nowrap">
+                            £@o.SaleTotal.ToString("N2")
+                            @if (o.Refunded > 0)
+                            {
+                                <div class="small text-danger">refunded £@o.Refunded.ToString("N2")</div>
+                            }
                         </td>
                         <td class="text-end" style="min-width: 120px;">
                             <input type="number" step="0.01" min="0" class="form-control form-control-sm text-end @(o.SupplierPrice.HasValue ? "" : "border-warning")"
@@ -154,13 +162,13 @@ else
                         </td>
                         <td class="text-end @(o.Profit < 0 ? "text-danger fw-semibold" : "")">@(o.Profit.HasValue ? "£" + o.Profit.Value.ToString("N2") : "-")</td>
                         <td class="text-end">@(o.RoiPercent.HasValue ? o.RoiPercent.Value.ToString("0.0") + "%" : "-")</td>
-                        <td class="small font-monospace">@(o.Tracking ?? "-")</td>
-                        <td class="small">@(o.DeliveryCompany ?? "-")</td>
                         <td class="small" style="max-width: 320px;">
                             @o.Items
-                            <div class="text-muted">£@o.SaleTotal.ToString("N2")@(o.Refunded > 0 ? $" (refunded £{o.Refunded:N2})" : "") · @o.Buyer@(o.AccountName != null ? $" · {o.AccountName}" : "")</div>
+                            <div class="text-muted">@o.Buyer@(o.AccountName != null ? $" · {o.AccountName}" : "")</div>
                         </td>
                         <td class="small">@o.Status</td>
+                        <td class="small font-monospace">@(o.Tracking ?? "-")</td>
+                        <td class="small">@(o.DeliveryCompany ?? "-")</td>
                     </tr>
                 }
             </tbody>
