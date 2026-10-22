@@ -28,7 +28,7 @@ public class SalesReportTests
                 "deliveryCost": { "value": "0.00", "currency": "GBP" },
                 "total": { "value": "14.99", "currency": "GBP" }
               },
-              "paymentSummary": { "totalDueSeller": { "value": "14.99", "currency": "GBP" }, "refunds": [] },
+              "paymentSummary": { "totalDueSeller": { "value": "12.69", "currency": "GBP" }, "refunds": [] },
               "totalMarketplaceFee": { "value": "2.30", "currency": "GBP" },
               "fulfillmentHrefs": [ "https://api.ebay.com/sell/fulfillment/v1/order/12-34567-89012/shipping_fulfillment/1" ],
               "lineItems": [
@@ -72,7 +72,7 @@ public class SalesReportTests
         var first = orders[0];
         Assert.Equal("12-34567-89012", first.OrderId);
         Assert.Equal(new DateTime(2026, 9, 15, 10, 30, 0, DateTimeKind.Utc), first.CreatedAtUtc);
-        Assert.Equal(14.99m, first.SaleTotal);
+        Assert.Equal(14.99m, first.SaleTotal);    // what the buyer paid, not totalDueSeller (net of fees)
         Assert.Equal(2.30m, first.MarketplaceFee);
         Assert.True(first.HasFulfillments);
         Assert.Equal("DSM-S16301", Assert.Single(first.Lines).Sku);
@@ -83,6 +83,21 @@ public class SalesReportTests
         Assert.Null(second.MarketplaceFee);
         Assert.False(second.HasFulfillments);
         Assert.Equal(2, second.Lines[0].Quantity);
+    }
+
+    [Fact]
+    public void Parser_WorksOutFeesFromTotalDueSeller_WhenNotReported()
+    {
+        // Order 13-15324-44412: £25.65 sold, eBay pays £22.13 → £3.52 fees (9.5% + 40p + 0.35%, + VAT).
+        const string json = """
+            { "total": 1, "orders": [ { "orderId": "13-15324-44412", "creationDate": "2026-10-22T14:56:06.000Z",
+              "pricingSummary": { "priceSubtotal": { "value": "25.65" }, "deliveryCost": { "value": "0.00" }, "total": { "value": "25.65" } },
+              "paymentSummary": { "totalDueSeller": { "value": "22.13" } },
+              "lineItems": [ { "lineItemId": "L", "title": "Oil pump", "quantity": 1, "lineItemCost": { "value": "25.65" } } ] } ] }
+            """;
+        var order = EbayOrderParser.ParseOrders(json).Orders.Single();
+        Assert.Equal(25.65m, order.SaleTotal);
+        Assert.Equal(3.52m, order.MarketplaceFee);
     }
 
     [Fact]
@@ -182,7 +197,8 @@ public class SalesReportTests
         var matched = ctx.EbayOrders.Single(o => o.OrderId == "12-34567-89012");
         Assert.Equal(16.80m, matched.SupplierPrice);         // £10 + VAT = £12, + £4.80 delivery
         Assert.Equal("DropShipMall", matched.Supplier);
-        Assert.Equal(2.76m, matched.Fees);                   // eBay's £2.30 + 20% VAT (not VAT-registered)
+        Assert.Equal(2.30m, matched.Fees);                   // eBay's figure already includes VAT
+        Assert.Equal(12.69m, SalesReport.Earning(matched));  // = eBay's totalDueSeller
         Assert.True(matched.FeesAreActual);
         Assert.Equal("JD000123456GB", matched.TrackingNumber);
         Assert.Equal("Royal Mail", matched.DeliveryCompany);

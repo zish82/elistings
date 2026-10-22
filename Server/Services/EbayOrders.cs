@@ -38,8 +38,9 @@ public static class EbayOrderParser
             var payment = o.TryGetProperty("paymentSummary", out var pay) ? pay : default;
             var itemsTotal = Amount(pricing, "priceSubtotal") ?? 0m;
             var postage = Amount(pricing, "deliveryCost") ?? 0m;
-            // What you're paid: totalDueSeller excludes tax eBay collects and remits itself; fall back to the order total.
-            var saleTotal = Amount(payment, "totalDueSeller") ?? Amount(pricing, "total") ?? itemsTotal + postage;
+            // What the buyer paid (item + postage). Not totalDueSeller: eBay has already taken its fees off that.
+            var saleTotal = Amount(pricing, "total") ?? itemsTotal + postage;
+            var dueSeller = Amount(payment, "totalDueSeller");
 
             decimal refunded = 0m;
             if (payment.ValueKind == JsonValueKind.Object && payment.TryGetProperty("refunds", out var refunds) && refunds.ValueKind == JsonValueKind.Array)
@@ -76,7 +77,8 @@ public static class EbayOrderParser
                 Str(o, "orderFulfillmentStatus"),
                 Str(o, "orderPaymentStatus"),
                 o.TryGetProperty("cancelStatus", out var cancel) ? Str(cancel, "cancelState") : null,
-                Amount(o, "totalMarketplaceFee"),
+                // eBay's fees for the order, VAT included (sale total − what eBay pays you when not reported directly).
+                Amount(o, "totalMarketplaceFee") ?? (dueSeller.HasValue && dueSeller.Value <= saleTotal ? saleTotal - dueSeller.Value : null),
                 o.TryGetProperty("fulfillmentHrefs", out var hrefs) && hrefs.ValueKind == JsonValueKind.Array && hrefs.GetArrayLength() > 0,
                 lines));
         }
@@ -307,8 +309,9 @@ public class EbayOrderSyncService
         }
         if (parsed.MarketplaceFee.HasValue)
         {
+            // eBay's figure already includes VAT; a VAT-registered seller reclaims that VAT.
             var fee = parsed.MarketplaceFee.Value;
-            order.Fees = settings.VatRegistered ? fee : Math.Round(fee * (1 + settings.VatRatePercent / 100m), 2, MidpointRounding.AwayFromZero);
+            order.Fees = settings.VatRegistered ? Math.Round(fee / (1 + settings.VatRatePercent / 100m), 2, MidpointRounding.AwayFromZero) : fee;
             order.FeesAreActual = true;
             return;
         }

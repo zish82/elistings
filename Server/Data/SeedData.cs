@@ -15,6 +15,7 @@ public static class SeedData
         EnsureDefaultPolicies(db, configuration);
         BackfillListingSupplierCategories(db);
         EnsureFeeSettings(db);
+        ReimportMisreadOrders(db);
         RecoverInterruptedJobs(db, hangfireIsPersistent);
         db.SaveChanges();
     }
@@ -91,6 +92,21 @@ public static class SeedData
             feed.CreatedAtUtc = DateTime.UtcNow;
             db.SupplierFeeds.Add(feed);
         }
+    }
+
+    /// <summary>
+    /// Orders imported before the Oct 2026 fix stored eBay's "total due to seller" (already net of fees) as the sale amount
+    /// (and added VAT to eBay's fee). Their accounts re-import everything on the next sync, which corrects them.
+    /// Typed-in values (mail, source order, supplier price) are kept.
+    /// </summary>
+    private static void ReimportMisreadOrders(AppDbContext db)
+    {
+        var misread = db.EbayOrders
+            .Where(o => o.FeesAreActual && o.SaleTotal + 0.005m < o.ItemsTotal + o.PostageCharged)
+            .Select(o => o.EbayAccountId)
+            .Distinct()
+            .ToList();
+        foreach (var account in db.EbayTokens.Where(t => misread.Contains(t.Id)).ToList()) account.OrdersSyncedFromUtc = null;
     }
 
     /// <summary>eBay UK business-seller rate card (Feb 2026), not VAT-registered. Edited on /suppliers.</summary>
