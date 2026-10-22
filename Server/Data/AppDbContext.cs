@@ -23,6 +23,7 @@ public class AppDbContext : DbContext
     public DbSet<MarketplaceFeeCategoryRate> MarketplaceFeeCategoryRates { get; set; }
     public DbSet<EbayCategory> EbayCategories { get; set; }
     public DbSet<EbayOrder> EbayOrders { get; set; }
+    public DbSet<UserSupplierAccess> UserSupplierAccess { get; set; }
     public DbSet<EbayOrderLine> EbayOrderLines { get; set; }
     public DbSet<ProductTag> ProductTags { get; set; }
     public DbSet<SupplierProductTag> SupplierProductTags { get; set; }
@@ -53,6 +54,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<MarketplaceFeeCategoryRate>().HasIndex(r => new { r.Marketplace, r.CategoryId }).IsUnique();
         modelBuilder.Entity<EbayCategory>().HasIndex(c => c.CategoryId).IsUnique();
         modelBuilder.Entity<EbayOrder>().HasIndex(o => o.OrderId).IsUnique();
+        modelBuilder.Entity<UserSupplierAccess>().HasIndex(a => new { a.UserId, a.SupplierCode }).IsUnique();
         modelBuilder.Entity<EbayOrder>().HasIndex(o => new { o.OwnerUserId, o.CreatedAtUtc });
         modelBuilder.Entity<EbayOrderLine>().HasIndex(l => l.EbayOrderId);
         modelBuilder.Entity<ProductTag>().HasIndex(t => new { t.Supplier, t.NormalizedName }).IsUnique();
@@ -227,6 +229,20 @@ public class AppUser
     public string Role { get; set; } = Shared.AuthRoles.Lister;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>
+    /// True once the user's supplier access has been set (new users, or the one-time grant of all suppliers to users that
+    /// existed before supplier access was introduced). Admins always see every supplier.
+    /// </summary>
+    public bool SupplierAccessConfigured { get; set; }
+}
+
+/// <summary>A supplier a (non-Admin) user may see and work with. Admins see all suppliers.</summary>
+public class UserSupplierAccess
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    /// <summary>Supplier.Code, e.g. "DropShipMall".</summary>
+    public string SupplierCode { get; set; } = string.Empty;
 }
 
 public class Listing

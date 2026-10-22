@@ -192,6 +192,7 @@ public class SupplierProductsController : ControllerBase
     [HttpGet("import-status")]
     public async Task<ActionResult<SupplierImportStatusDto>> GetImportStatus([FromQuery] string supplier)
     {
+        if (!await Access.IsAllowedAsync(supplier)) return NotFound();
         var job = await _jobs.FindLatestAsync("import", supplier);
         var lastUpdated = await _context.SupplierProducts
             .Where(p => p.Supplier == supplier)
@@ -213,11 +214,14 @@ public class SupplierProductsController : ControllerBase
     /// </summary>
     private IQueryable<SupplierProduct> VisibleProducts()
     {
-        var query = _context.SupplierProducts.Where(p => p.IsActive && p.RemovedFromSupplierAtUtc == null);
+        // Only the suppliers this user may see (chosen per user on /users; Admins see all).
+        var query = Access.Filter(_context.SupplierProducts.Where(p => p.IsActive && p.RemovedFromSupplierAtUtc == null));
         if (_currentUserService.CanViewAllListings) return query;
         var disabled = _context.Suppliers.Where(s => !s.IsActive).Select(s => s.Code);
         return query.Where(p => !disabled.Contains(p.Supplier));
     }
+
+    private SupplierAccessService Access => new(_context, _currentUserService);
 
     /// <summary>Products per supplier category, for the Products page "Categories" view.</summary>
     [HttpGet("category-summary")]
@@ -331,7 +335,7 @@ public class SupplierProductsController : ControllerBase
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
 
-        var product = await _context.SupplierProducts.FirstOrDefaultAsync(p => p.Id == id && p.IsActive);
+        var product = await Access.Filter(_context.SupplierProducts).FirstOrDefaultAsync(p => p.Id == id && p.IsActive);
         if (product == null) return NotFound();
 
         var existingListingId = await _context.Listings
@@ -424,6 +428,7 @@ public class SupplierProductsController : ControllerBase
     [HttpPost("sync/catalogue")]
     public async Task<ActionResult<FeedSyncResult>> RunCatalogueSync()
     {
+        if (!await Access.IsAllowedAsync("DropShipMall")) return NotFound();
         var result = await _feedProductSyncService.ImportCatalogueAsync("manual-api");
         if (!result.IsSuccess)
         {
@@ -436,6 +441,7 @@ public class SupplierProductsController : ControllerBase
     [HttpPost("sync/stock")]
     public async Task<ActionResult<FeedSyncResult>> RunStockSync()
     {
+        if (!await Access.IsAllowedAsync("DropShipMall")) return NotFound();
         var result = await _feedProductSyncService.RefreshStockAsync("manual-api");
         if (!result.IsSuccess)
         {
@@ -450,6 +456,7 @@ public class SupplierProductsController : ControllerBase
     {
         // Suppliers with their own importer (e.g. Eden) run in the background; progress via bulk-jobs.
         var feed = await _context.SupplierFeeds.FirstOrDefaultAsync(f => f.Id == feedId);
+        if (feed != null && !await Access.IsAllowedAsync(feed.Supplier)) return NotFound();
         if (feed != null && await _context.Suppliers.AnyAsync(s => s.Code == feed.Supplier && !s.IsActive))
         {
             return BadRequest(new FeedSyncResult { Supplier = feed.Supplier, FeedType = feed.FeedType, ErrorMessage = $"{feed.Supplier} is disabled. Enable it on Supplier Feeds to import." });
@@ -480,7 +487,7 @@ public class SupplierProductsController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteProduct(int id)
     {
-        var product = await _context.SupplierProducts.FirstOrDefaultAsync(p => p.Id == id);
+        var product = await Access.Filter(_context.SupplierProducts).FirstOrDefaultAsync(p => p.Id == id);
         if (product == null) return NotFound();
 
         product.IsActive = false;
@@ -494,7 +501,7 @@ public class SupplierProductsController : ControllerBase
         var distinctIds = ids?.Distinct().ToList() ?? new List<int>();
         if (!distinctIds.Any()) return BadRequest("No product IDs provided.");
 
-        var products = await _context.SupplierProducts
+        var products = await Access.Filter(_context.SupplierProducts)
             .Where(p => distinctIds.Contains(p.Id) && p.IsActive)
             .ToListAsync();
         foreach (var product in products) product.IsActive = false;

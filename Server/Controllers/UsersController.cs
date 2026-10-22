@@ -14,12 +14,26 @@ public class UsersController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IPasswordHasher _passwordHasher;
+    private readonly ICurrentUserService _currentUserService;
 
-    public UsersController(AppDbContext context, IPasswordHasher passwordHasher)
+    public UsersController(AppDbContext context, IPasswordHasher passwordHasher, ICurrentUserService currentUserService)
     {
         _context = context;
         _passwordHasher = passwordHasher;
+        _currentUserService = currentUserService;
     }
+
+    private SupplierAccessService Access => new(_context, _currentUserService);
+
+    private async Task<UserDto> ToDtoAsync(AppUser u) => new()
+    {
+        Id = u.Id,
+        Email = u.Email,
+        Role = u.Role,
+        IsActive = u.IsActive,
+        CreatedAt = u.CreatedAt,
+        SupplierCodes = await _context.UserSupplierAccess.Where(a => a.UserId == u.Id).Select(a => a.SupplierCode).OrderBy(c => c).ToListAsync()
+    };
 
     [HttpGet]
     public async Task<ActionResult<List<UserDto>>> GetUsers()
@@ -36,6 +50,8 @@ public class UsersController : ControllerBase
             })
             .ToListAsync();
 
+        var access = (await _context.UserSupplierAccess.AsNoTracking().ToListAsync()).ToLookup(a => a.UserId, a => a.SupplierCode);
+        foreach (var u in users) u.SupplierCodes = access[u.Id].OrderBy(c => c).ToList();
         return Ok(users);
     }
 
@@ -65,20 +81,16 @@ public class UsersController : ControllerBase
             PasswordHash = hash,
             PasswordSalt = salt,
             Role = request.Role,
-            IsActive = request.IsActive
+            IsActive = request.IsActive,
+            SupplierAccessConfigured = true
         };
 
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
+        // New users only see the suppliers ticked for them.
+        await Access.SetForUserAsync(user.Id, request.SupplierCodes ?? new List<string>());
 
-        return Ok(new UserDto
-        {
-            Id = user.Id,
-            Email = user.Email,
-            Role = user.Role,
-            IsActive = user.IsActive,
-            CreatedAt = user.CreatedAt
-        });
+        return Ok(await ToDtoAsync(user));
     }
 
     [HttpPut("{id:int}")]
@@ -117,15 +129,9 @@ public class UsersController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
+        if (request.SupplierCodes != null) await Access.SetForUserAsync(user.Id, request.SupplierCodes);
 
-        return Ok(new UserDto
-        {
-            Id = user.Id,
-            Email = user.Email,
-            Role = user.Role,
-            IsActive = user.IsActive,
-            CreatedAt = user.CreatedAt
-        });
+        return Ok(await ToDtoAsync(user));
     }
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();

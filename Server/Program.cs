@@ -148,6 +148,7 @@ builder.Services.AddScoped<Server.Services.ICurrentUserService, Server.Services.
 builder.Services.AddScoped<Server.Services.Jobs.BulkJobService>();
 builder.Services.AddScoped<Server.Services.Jobs.BackgroundJobs>();
 builder.Services.AddScoped<Server.Services.SupplierCatalogService>();
+builder.Services.AddScoped<Server.Services.SupplierAccessService>();
 // Per-supplier integrations. Onboarding a supplier = add its enricher / stock checker here.
 builder.Services.AddHttpClient<Server.Services.DropShipMallWebsiteClient>();
 builder.Services.AddScoped<Server.Services.ISupplierProductEnricher, Server.Services.DropShipMallProductEnricher>();

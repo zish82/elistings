@@ -6,4 +6,6 @@ public class UpdateUserRequest
     public string Role { get; set; } = AuthRoles.Lister;
     public bool IsActive { get; set; } = true;
     public string? Password { get; set; }
+    /// <summary>Suppliers the user may see; null = leave unchanged.</summary>
+    public List<string>? SupplierCodes { get; set; }
 }

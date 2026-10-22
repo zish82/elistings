@@ -568,6 +568,14 @@ public static class LegacySqliteSchema
                 EnsureColumn("MarketplaceFeeCategoryRates", "PerOrderFeeSmall", "TEXT NULL");
                 EnsureColumn("Suppliers", "FeeCategoryId", "TEXT NULL");
                 EnsureColumn("EbayTokens", "Scopes", "TEXT NULL");
+                EnsureColumn("Users", "SupplierAccessConfigured", "INTEGER NOT NULL DEFAULT 0");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""UserSupplierAccess"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_UserSupplierAccess"" PRIMARY KEY AUTOINCREMENT,
+                        ""UserId"" INTEGER NOT NULL,
+                        ""SupplierCode"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_UserSupplierAccess_UserId_SupplierCode"" ON ""UserSupplierAccess"" (""UserId"", ""SupplierCode"");");
                 EnsureColumn("EbayTokens", "OrdersSyncedFromUtc", "TEXT NULL");
                 EnsureColumn("EbayTokens", "OrdersLastSyncedAtUtc", "TEXT NULL");
 

@@ -16,6 +16,7 @@ public static class SeedData
         BackfillListingSupplierCategories(db);
         EnsureFeeSettings(db);
         ReimportMisreadOrders(db);
+        GrantSuppliersToExistingUsers(db);
         RecoverInterruptedJobs(db, hangfireIsPersistent);
         db.SaveChanges();
     }
@@ -91,6 +92,26 @@ public static class SeedData
             if (existing.Any(e => e.Supplier == feed.Supplier && e.FeedType == feed.FeedType && e.Url == feed.Url)) continue;
             feed.CreatedAtUtc = DateTime.UtcNow;
             db.SupplierFeeds.Add(feed);
+        }
+    }
+
+    /// <summary>
+    /// Users created before per-user supplier access keep seeing every supplier (once); from then on Admins choose on /users.
+    /// </summary>
+    private static void GrantSuppliersToExistingUsers(AppDbContext db)
+    {
+        var users = db.Users.Where(u => !u.SupplierAccessConfigured).ToList();
+        if (users.Count == 0) return;
+        var codes = db.Suppliers.Select(s => s.Code).ToList();
+        foreach (var user in users)
+        {
+            if (user.Role != Shared.AuthRoles.Admin)
+            {
+                var existing = db.UserSupplierAccess.Where(a => a.UserId == user.Id).Select(a => a.SupplierCode).ToList();
+                foreach (var code in codes.Where(c => !existing.Contains(c)))
+                    db.UserSupplierAccess.Add(new UserSupplierAccess { UserId = user.Id, SupplierCode = code });
+            }
+            user.SupplierAccessConfigured = true;
         }
     }
 

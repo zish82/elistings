@@ -29,7 +29,20 @@ public class SuppliersController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<List<SupplierDto>>> GetAll([FromQuery] bool includeInactive = false)
-        => Ok(includeInactive ? await _catalog.GetAllForSettingsAsync() : await _catalog.GetAllAsync());
+    {
+        var all = includeInactive ? await _catalog.GetAllForSettingsAsync() : await _catalog.GetAllAsync();
+        // Only the suppliers this user may see (Admins see all).
+        var allowed = await Access.AllowedCodesAsync();
+        return Ok(allowed == null ? all : all.Where(s => allowed.Contains(s.Code)).ToList());
+    }
+
+    private SupplierAccessService Access => new(_context, _currentUserService);
+
+    private async Task<bool> CanUseSupplierAsync(int supplierId)
+    {
+        var code = await _context.Suppliers.Where(s => s.Id == supplierId).Select(s => s.Code).FirstOrDefaultAsync();
+        return code != null && await Access.IsAllowedAsync(code);
+    }
 
     /// <summary>Supplier + delivery options + suggested option for a listing (used by the listing editor).</summary>
     [HttpGet("for-listing/{listingId:int}")]
@@ -67,6 +80,12 @@ public class SuppliersController : ControllerBase
         entity.Code = code;
         _context.Suppliers.Add(entity);
         await _context.SaveChangesAsync();
+        // A Manager who adds a supplier can use it straight away.
+        if (!Access.SeesAllSuppliers && _currentUserService.UserId is { } creator)
+        {
+            _context.UserSupplierAccess.Add(new UserSupplierAccess { UserId = creator, SupplierCode = entity.Code });
+            await _context.SaveChangesAsync();
+        }
         return Ok(SupplierCatalogService.ToDto(entity, Array.Empty<SupplierDeliveryOption>()));
     }
 
@@ -75,7 +94,7 @@ public class SuppliersController : ControllerBase
     {
         if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
         var entity = await _context.Suppliers.FirstOrDefaultAsync(s => s.Id == id);
-        if (entity == null) return NotFound();
+        if (entity == null || !await Access.IsAllowedAsync(entity.Code)) return NotFound();
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest("Name is required.");
         Apply(entity, dto); // Code is the link to SupplierProducts.Supplier, so it is not changed here.
         await _context.SaveChangesAsync();
@@ -86,7 +105,7 @@ public class SuppliersController : ControllerBase
     public async Task<ActionResult<SupplierDeliveryOptionDto>> AddOption(int supplierId, [FromBody] SupplierDeliveryOptionDto dto)
     {
         if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
-        if (!await _context.Suppliers.AnyAsync(s => s.Id == supplierId)) return NotFound();
+        if (!await CanUseSupplierAsync(supplierId)) return NotFound();
         var error = Validate(dto);
         if (error != null) return BadRequest(error);
 
@@ -103,7 +122,7 @@ public class SuppliersController : ControllerBase
     {
         if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
         var entity = await _context.SupplierDeliveryOptions.FirstOrDefaultAsync(o => o.Id == id);
-        if (entity == null) return NotFound();
+        if (entity == null || !await CanUseSupplierAsync(entity.SupplierId)) return NotFound();
         var error = Validate(dto);
         if (error != null) return BadRequest(error);
 
@@ -118,7 +137,7 @@ public class SuppliersController : ControllerBase
     {
         if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, OnlyAdminsMessage);
         var entity = await _context.SupplierDeliveryOptions.FirstOrDefaultAsync(o => o.Id == id);
-        if (entity == null) return NotFound();
+        if (entity == null || !await CanUseSupplierAsync(entity.SupplierId)) return NotFound();
         _context.SupplierDeliveryOptions.Remove(entity);
         await _context.SaveChangesAsync();
         return NoContent();

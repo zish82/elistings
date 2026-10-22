@@ -337,6 +337,9 @@ Account → Business policies, otherwise listings can't be published.
 
 1. **Add User**: Email, password, role (Admin / Manager / Lister) → **Add**.
 2. In *Existing Users*, change role or tick/untick **Active**, then **Save**.
+3. **Suppliers**: tick the suppliers each Manager or Lister may see. They only see those suppliers' products, feeds,
+   imports and settings, and can't extract from other suppliers' websites. Admins always see every supplier.
+   (Users that existed before this was added were given every supplier once; untick to restrict them.)
 
 | | Lister | Manager | Admin |
 |---|---|---|---|
@@ -345,6 +348,7 @@ Account → Business policies, otherwise listings can't be published.
 | Publish someone else's listing (with the **owner's** eBay account) | – | – | ✓ |
 | Change suppliers, delivery, eBay fees, feeds, price lists, enable/disable | view only | ✓ | ✓ |
 | See disabled suppliers | – | ✓ | ✓ |
+| Which suppliers | the ones ticked | the ones ticked | all |
 | Manage users | – | – | ✓ |
 
 ---
@@ -416,7 +420,9 @@ server settings; set it to 730 for eBay's full 2 years – the next sync then im
 | Earning | What eBay pays you: sale total − refunds − eBay fees (eBay's own fee for the order when it reports one, plus VAT as you're not VAT-registered; otherwise estimated – shown as *est.*) |
 | Profit, ROI | Earning − Supplier Price; Profit ÷ Supplier Price |
 
-Cancelled orders count as £0. Month totals only include profit/ROI of orders with a supplier price (the number without
+Type in Mail, Source Order ID or Supplier Price – changed rows turn yellow – then click **Save** on the row or
+**Save changes** for all of them (**Undo** / **Discard** to drop them; you're warned before leaving with unsaved changes).
+A blank Supplier Price goes back to the worked-out value. Cancelled orders count as £0. Month totals only include profit/ROI of orders with a supplier price (the number without
 one is shown). **Export month / Export all** download a CSV for Excel. Listers see their own orders; Managers and
 Admins see everyone's.
 

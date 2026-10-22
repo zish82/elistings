@@ -46,6 +46,8 @@ public class ListingsController : ControllerBase
     public async Task<ActionResult<ExtractedDetailsDto>> ExtractFromUrl([FromQuery] string url)
     {
         if (string.IsNullOrEmpty(url)) return BadRequest("URL is required");
+        var supplierError = await SupplierAccessErrorAsync(url);
+        if (supplierError != null) return StatusCode(StatusCodes.Status403Forbidden, supplierError);
         try
         {
             var details = await _scraperService.ExtractDetailsAsync(url);
@@ -370,6 +372,8 @@ public class ListingsController : ControllerBase
 
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
+        var supplierError = await SupplierAccessErrorAsync(categoryUrl.Trim());
+        if (supplierError != null) return StatusCode(StatusCodes.Status403Forbidden, supplierError);
 
         // Runs on Hangfire (see BackgroundJobs.BulkExtractAsync); the page polls bulk-jobs/{id} for progress.
         var jobId = await jobs.EnqueueBulkExtractAsync(userId.Value, categoryUrl.Trim());
@@ -468,6 +472,14 @@ public class ListingsController : ControllerBase
         }
 
         return Ok(await stockService.CheckAsync(new SupplierStockQuery(request.SourceUrl, request.SupplierSku, null)));
+    }
+
+    /// <summary>A message when the URL is a supplier's website the user hasn't been given access to.</summary>
+    private async Task<string?> SupplierAccessErrorAsync(string url)
+    {
+        var access = new SupplierAccessService(_context, _currentUserService);
+        var code = await access.SupplierCodeForUrlAsync(url);
+        return code == null || await access.IsAllowedAsync(code) ? null : $"You don't have access to the supplier {code}. Ask an Admin.";
     }
 
     private async Task<Listing?> FindAccessibleListing(int id)

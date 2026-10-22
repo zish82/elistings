@@ -3,6 +3,7 @@
 @using Shared
 @inject AuthService AuthService
 @inject NavigationManager Navigation
+@inject ListingService ListingService
 
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
@@ -40,6 +41,24 @@
                     </div>
                     <button class="btn btn-primary" @onclick="CreateUser" disabled="@isSaving">Add</button>
                 </div>
+                <div class="col-12">
+                    @if (newUser.Role == AuthRoles.Admin)
+                    {
+                        <span class="small text-muted">Admins see all suppliers.</span>
+                    }
+                    else
+                    {
+                        <span class="small me-2">Suppliers this user can see:</span>
+                        @foreach (var s in suppliers)
+                        {
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="new-@s.Code" checked="@newUser.SupplierCodes.Contains(s.Code)"
+                                       @onchange="e => Toggle(newUser.SupplierCodes, s.Code, e.Value is true)" />
+                                <label class="form-check-label small" for="new-@s.Code">@s.Name</label>
+                            </div>
+                        }
+                    }
+                </div>
             </div>
         </div>
     </div>
@@ -59,6 +78,7 @@
                             <th>Email</th>
                             <th>Role</th>
                             <th>Active</th>
+                            <th title="Managers and Listers only see (and work with) these suppliers">Suppliers</th>
                             <th>Created</th>
                             <th class="text-end">Actions</th>
                         </tr>
@@ -78,6 +98,27 @@
                                     </select>
                                 </td>
                                 <td><input class="form-check-input" type="checkbox" @bind="edit.IsActive" /></td>
+                                <td>
+                                    @if (edit.Role == AuthRoles.Admin)
+                                    {
+                                        <span class="small text-muted">All (Admin)</span>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var s in suppliers)
+                                        {
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" id="sup-@user.Id-@s.Code" checked="@edit.SupplierCodes!.Contains(s.Code)"
+                                                       @onchange="e => Toggle(edit.SupplierCodes!, s.Code, e.Value is true)" />
+                                                <label class="form-check-label small" for="sup-@user.Id-@s.Code">@s.Name</label>
+                                            </div>
+                                        }
+                                        @if (!edit.SupplierCodes!.Any())
+                                        {
+                                            <div class="small text-warning">No suppliers – this user sees no products.</div>
+                                        }
+                                    }
+                                </td>
                                 <td>@user.CreatedAt.ToLocalTime().ToString("g")</td>
                                 <td class="text-end">
                                     <div class="input-group input-group-sm justify-content-end">
@@ -96,6 +137,13 @@
 
 @code {
     private List<UserDto>? users;
+    private List<SupplierDto> suppliers = new();
+
+    private static void Toggle(List<string> codes, string code, bool on)
+    {
+        codes.RemoveAll(c => c == code);
+        if (on) codes.Add(code);
+    }
     private readonly string[] roles = AuthRoles.All;
     private readonly CreateUserRequest newUser = new();
     private readonly Dictionary<int, UpdateUserRequest> editModels = new();
@@ -110,6 +158,8 @@
             return;
         }
 
+        try { suppliers = await ListingService.GetSuppliersAsync(includeInactive: true); }
+        catch (Exception ex) { message = $"Could not load suppliers: {ex.Message}"; messageIsError = true; }
         await LoadUsers();
     }
 
@@ -123,7 +173,8 @@
             {
                 Email = user.Email,
                 Role = user.Role,
-                IsActive = user.IsActive
+                IsActive = user.IsActive,
+                SupplierCodes = user.SupplierCodes.ToList()
             };
         }
     }
@@ -142,6 +193,7 @@
             newUser.Password = string.Empty;
             newUser.Role = AuthRoles.Lister;
             newUser.IsActive = true;
+            newUser.SupplierCodes = new List<string>();
             await LoadUsers();
             message = "User created.";
         }

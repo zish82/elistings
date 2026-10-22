@@ -111,6 +111,7 @@ public class CategorySummaryTests
     {
         using var ctx = Seed();
         ctx.Suppliers.Single(s => s.Code == "DropShipMall").IsActive = false;
+        ctx.UserSupplierAccess.Add(new UserSupplierAccess { UserId = 1, SupplierCode = "DropShipMall" }); // test user 1
         ctx.SaveChanges();
 
         Assert.Empty(Rows(await Controller(ctx, AuthRoles.Lister).GetCategorySummary("DropShipMall", ProductGrouping.SupplierCategory)));

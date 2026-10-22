@@ -22,6 +22,8 @@ public class SupplierFeedsController : ControllerBase
         _currentUserService = currentUserService;
     }
 
+    private SupplierAccessService Access => new(_context, _currentUserService);
+
     private bool CanEdit => _currentUserService.CanManageUsers || _currentUserService.CanViewAllListings;
 
     /// <summary>Suppliers that take an uploaded trade price list (no trade prices on their website).</summary>
@@ -49,6 +51,9 @@ public class SupplierFeedsController : ControllerBase
             .ToListAsync();
 
         foreach (var feed in feeds) feed.SupplierEnabled = !disabled.Contains(feed.Supplier.ToLower());
+        // Only the suppliers this user may see (Admins see all).
+        var allowed = await Access.AllowedCodesAsync();
+        if (allowed != null) feeds = feeds.Where(f => allowed.Contains(f.Supplier)).ToList();
         return Ok(feeds);
     }
 
@@ -57,7 +62,10 @@ public class SupplierFeedsController : ControllerBase
     [HttpGet("suppliers")]
     public async Task<ActionResult<List<SupplierOverviewDto>>> GetSuppliers([FromServices] SupplierPriceListService priceLists)
     {
-        var suppliers = await _context.Suppliers.AsNoTracking().OrderBy(s => s.Name).ToListAsync();
+        var allowedCodes = await Access.AllowedCodesAsync();
+        var suppliers = (await _context.Suppliers.AsNoTracking().OrderBy(s => s.Name).ToListAsync())
+            .Where(s => allowedCodes == null || allowedCodes.Contains(s.Code))
+            .ToList();
         var result = new List<SupplierOverviewDto>();
         foreach (var s in suppliers)
         {
@@ -89,7 +97,7 @@ public class SupplierFeedsController : ControllerBase
     {
         if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
         var supplier = await _context.Suppliers.FirstOrDefaultAsync(s => s.Code == code);
-        if (supplier == null) return NotFound();
+        if (supplier == null || !await Access.IsAllowedAsync(supplier.Code)) return NotFound();
         supplier.IsActive = enabled;
         await _context.SaveChangesAsync();
         return NoContent();
@@ -103,7 +111,7 @@ public class SupplierFeedsController : ControllerBase
         var userId = _currentUserService.UserId;
         if (userId == null) return Unauthorized();
         var supplier = await _context.Suppliers.FirstOrDefaultAsync(s => s.Code == code);
-        if (supplier == null) return NotFound();
+        if (supplier == null || !await Access.IsAllowedAsync(supplier.Code)) return NotFound();
         if (restore && !supplier.IsActive) return BadRequest($"Enable {supplier.Name} before restoring its eBay quantities.");
 
         var latest = await jobs.FindLatestAsync("supplier-quantity", supplier.Code);
@@ -119,7 +127,7 @@ public class SupplierFeedsController : ControllerBase
     {
         if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
         var supplier = await _context.Suppliers.FirstOrDefaultAsync(s => s.Code == code);
-        if (supplier == null) return NotFound();
+        if (supplier == null || !await Access.IsAllowedAsync(supplier.Code)) return NotFound();
         if (file == null || file.Length == 0) return BadRequest("Choose the price list file to upload.");
 
         List<PriceListRow> rows;
@@ -165,6 +173,7 @@ public class SupplierFeedsController : ControllerBase
         }
 
         var supplier = request.Supplier.Trim();
+        if (!await Access.IsAllowedAsync(supplier)) return StatusCode(StatusCodes.Status403Forbidden, "You don't have access to that supplier.");
         var feedType = request.FeedType.Trim();
         var normalizedUrl = request.Url.Trim();
 
@@ -210,7 +219,7 @@ public class SupplierFeedsController : ControllerBase
     {
         if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
         var feed = await _context.SupplierFeeds.FirstOrDefaultAsync(f => f.Id == id);
-        if (feed == null)
+        if (feed == null || !await Access.IsAllowedAsync(feed.Supplier))
         {
             return NotFound();
         }

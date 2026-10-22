@@ -95,6 +95,7 @@ public static class SqliteToPostgresCopier
         await CopyAsync(source.MarketplaceFeeCategoryRates, r => r.Id, target, "MarketplaceFeeCategoryRates");
         await CopyAsync(source.EbayCategories, c => c.Id, target, "EbayCategories");
         await CopyAsync(source.EbayOrders, o => o.Id, target, "EbayOrders");
+        await CopyAsync(source.UserSupplierAccess, a => a.Id, target, "UserSupplierAccess");
         await CopyAsync(source.EbayOrderLines, l => l.Id, target, "EbayOrderLines");
         await CopyAsync(source.ProductTags, t => t.Id, target, "ProductTags");
         await CopyAsync(source.SupplierProductTags, t => t.Id, target, "SupplierProductTags");

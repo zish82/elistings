@@ -3,6 +3,7 @@
 @using Client.Services
 @inject AuthService AuthService
 @inject ListingService ListingService
+@inject IJSRuntime JS
 
 <PageTitle>Sales</PageTitle>
 
@@ -97,7 +98,17 @@ else
         <h5 class="mb-0">@MonthName(report.Month) orders</h5>
         <a class="btn btn-sm btn-outline-secondary" href="@($"api/sales/export?month={report.Month}")" target="_blank">Export month (CSV)</a>
         <a class="btn btn-sm btn-outline-secondary" href="api/sales/export" target="_blank">Export all (CSV)</a>
+        <span class="vr mx-1"></span>
+        <button class="btn btn-sm btn-success" @onclick="SaveAll" disabled="@(saving || !edits.Any())">
+            @(saving ? "Saving..." : $"Save changes ({edits.Count})")
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="DiscardAll" disabled="@(saving || !edits.Any())">Discard</button>
+        @if (edits.Any())
+        {
+            <span class="small text-warning">Unsaved changes (highlighted rows).</span>
+        }
     </div>
+    <NavigationLock ConfirmExternalNavigation="@edits.Any()" OnBeforeInternalNavigation="ConfirmLeave" />
 
     <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -116,21 +127,23 @@ else
                     <th>Status</th>
                     <th>Tracking</th>
                     <th>Delivery Company</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var o in report.Orders)
                 {
-                    <tr>
+                    var edit = edits.GetValueOrDefault(o.Id);
+                    <tr class="@(edit != null ? "table-warning" : "")">
                         <td class="text-nowrap">@o.DateUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
                         <td style="min-width: 170px;">
-                            <input class="form-control form-control-sm" value="@o.Mail" placeholder="email used"
-                                   @onchange="e => Save(o, mail: e.Value?.ToString())" />
+                            <input class="form-control form-control-sm" value="@(edit?.Mail ?? o.Mail)" placeholder="email used"
+                                   @oninput="e => Edit(o).Mail = e.Value?.ToString() ?? string.Empty" />
                         </td>
                         <td class="font-monospace small">@o.EbayOrderId</td>
                         <td style="min-width: 140px;">
-                            <input class="form-control form-control-sm" value="@o.SourceOrderId" placeholder="supplier order no."
-                                   @onchange="e => Save(o, sourceOrderId: e.Value?.ToString())" />
+                            <input class="form-control form-control-sm" value="@(edit?.SourceOrderId ?? o.SourceOrderId)" placeholder="supplier order no."
+                                   @oninput="e => Edit(o).SourceOrderId = e.Value?.ToString() ?? string.Empty" />
                         </td>
                         <td class="text-end text-nowrap">
                             £@o.SaleTotal.ToString("N2")
@@ -140,9 +153,9 @@ else
                             }
                         </td>
                         <td class="text-end" style="min-width: 120px;">
-                            <input type="number" step="0.01" min="0" class="form-control form-control-sm text-end @(o.SupplierPrice.HasValue ? "" : "border-warning")"
-                                   value="@(o.SupplierPrice?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))" placeholder="unknown"
-                                   @onchange="e => SaveSupplierPrice(o, e.Value?.ToString())" />
+                            <input type="text" inputmode="decimal" class="form-control form-control-sm text-end @(o.SupplierPrice.HasValue ? "" : "border-warning")"
+                                   value="@(edit?.SupplierPrice ?? PriceText(o.SupplierPrice))" placeholder="unknown"
+                                   @oninput="e => Edit(o).SupplierPrice = e.Value?.ToString() ?? string.Empty" />
                             <div class="small text-muted">
                                 @if (o.SupplierPriceIsManual)
                                 {
@@ -169,6 +182,13 @@ else
                         <td class="small">@o.Status</td>
                         <td class="small font-monospace">@(o.Tracking ?? "-")</td>
                         <td class="small">@(o.DeliveryCompany ?? "-")</td>
+                        <td class="text-nowrap">
+                            @if (edit != null)
+                            {
+                                <button class="btn btn-sm btn-success" @onclick="() => SaveRow(o)" disabled="@saving">Save</button>
+                                <button class="btn btn-sm btn-link px-1" title="Undo changes" @onclick="() => edits.Remove(o.Id)" disabled="@saving">Undo</button>
+                            }
+                        </td>
                     </tr>
                 }
             </tbody>
@@ -201,7 +221,12 @@ else
 
     private void Show(string text, bool ok) { message = text; messageCss = ok ? "alert-success" : "alert-danger"; }
 
-    private Task ShowMonth(string month) => Load(month);
+    private async Task ShowMonth(string month)
+    {
+        if (edits.Any() && !await JS.InvokeAsync<bool>("confirm", $"You have {edits.Count} unsaved order(s). Switch month without saving?")) return;
+        edits.Clear();
+        await Load(month);
+    }
 
     private static string MonthName(string? month)
         => DateTime.TryParseExact((month ?? "") + "-01", "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
@@ -225,32 +250,112 @@ else
         StateHasChanged();
     }
 
-    private async Task Save(SalesOrderDto o, string? mail = null, string? sourceOrderId = null)
+    // ---- typed-in values: kept here until Save (per row, or Save changes for all).
+    private sealed class RowEdit
     {
-        if (mail != null) o.Mail = mail;
-        if (sourceOrderId != null) o.SourceOrderId = sourceOrderId;
-        await Update(o, new UpdateSalesOrderRequest { Mail = o.Mail, SourceOrderId = o.SourceOrderId });
+        public string Mail = string.Empty;
+        public string SourceOrderId = string.Empty;
+        public string SupplierPrice = string.Empty;
     }
 
-    private async Task SaveSupplierPrice(SalesOrderDto o, string? value)
+    private readonly Dictionary<int, RowEdit> edits = new();
+    private bool saving;
+
+    private static string PriceText(decimal? price) => price?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+
+    /// <summary>The row's pending edit (created from the saved values on first change).</summary>
+    private RowEdit Edit(SalesOrderDto o)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (!edits.TryGetValue(o.Id, out var edit))
         {
-            await ResetSupplierPrice(o);
-            return;
+            edit = new RowEdit { Mail = o.Mail ?? string.Empty, SourceOrderId = o.SourceOrderId ?? string.Empty, SupplierPrice = PriceText(o.SupplierPrice) };
+            edits[o.Id] = edit;
         }
-        if (!decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var price) || price < 0)
-        {
-            Show("Enter the supplier price as a number, e.g. 12.50.", false);
-            return;
-        }
-        await Update(o, new UpdateSalesOrderRequest { Mail = o.Mail, SourceOrderId = o.SourceOrderId, SupplierPrice = price });
+        return edit;
     }
 
-    private Task ResetSupplierPrice(SalesOrderDto o)
-        => Update(o, new UpdateSalesOrderRequest { Mail = o.Mail, SourceOrderId = o.SourceOrderId, ResetSupplierPrice = true });
+    private void DiscardAll() => edits.Clear();
 
-    private async Task Update(SalesOrderDto o, UpdateSalesOrderRequest request)
+    private async Task ConfirmLeave(LocationChangingContext context)
+    {
+        if (edits.Any() && !await JS.InvokeAsync<bool>("confirm", $"You have {edits.Count} unsaved order(s). Leave without saving?"))
+            context.PreventNavigation();
+    }
+
+    private async Task SaveRow(SalesOrderDto o)
+    {
+        saving = true;
+        try
+        {
+            if (await SaveEditAsync(o)) Show($"Order {o.EbayOrderId} saved.", true);
+            await RefreshTotalsAsync();
+        }
+        finally { saving = false; }
+    }
+
+    private async Task SaveAll()
+    {
+        saving = true;
+        var saved = 0;
+        try
+        {
+            foreach (var id in edits.Keys.ToList())
+            {
+                var o = report?.Orders.FirstOrDefault(x => x.Id == id);
+                if (o == null) { edits.Remove(id); continue; }
+                if (await SaveEditAsync(o)) saved++;
+            }
+            await RefreshTotalsAsync();
+            if (!edits.Any()) Show($"Saved {saved} order(s).", true);
+        }
+        finally { saving = false; }
+    }
+
+    /// <summary>Saves one row's edit; false (and the row stays highlighted) when it can't be saved.</summary>
+    private async Task<bool> SaveEditAsync(SalesOrderDto o)
+    {
+        if (!edits.TryGetValue(o.Id, out var edit)) return true;
+        var request = new UpdateSalesOrderRequest { Mail = edit.Mail, SourceOrderId = edit.SourceOrderId };
+
+        if (edit.SupplierPrice.Trim() != PriceText(o.SupplierPrice))
+        {
+            if (string.IsNullOrWhiteSpace(edit.SupplierPrice)) request.ResetSupplierPrice = true; // blank = work it out again
+            else if (decimal.TryParse(edit.SupplierPrice, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var price) && price >= 0)
+                request.SupplierPrice = price;
+            else
+            {
+                Show($"Order {o.EbayOrderId}: enter the supplier price as a number, e.g. 12.50.", false);
+                return false;
+            }
+        }
+
+        if (await Update(o, request))
+        {
+            edits.Remove(o.Id);
+            return true;
+        }
+        return false;
+    }
+
+    private async Task RefreshTotalsAsync()
+    {
+        if (report == null) return;
+        try { report.Months = (await ListingService.GetSalesReportAsync(report.Month)).Months; } // month totals follow supplier prices
+        catch (Exception ex) { Console.WriteLine($"Could not refresh totals: {ex.Message}"); }
+    }
+
+    /// <summary>"auto": back to the worked-out supplier price (saved straight away; other typed values are kept).</summary>
+    private async Task ResetSupplierPrice(SalesOrderDto o)
+    {
+        var edit = edits.GetValueOrDefault(o.Id);
+        if (await Update(o, new UpdateSalesOrderRequest { Mail = edit?.Mail ?? o.Mail, SourceOrderId = edit?.SourceOrderId ?? o.SourceOrderId, ResetSupplierPrice = true }))
+        {
+            edits.Remove(o.Id);
+            await RefreshTotalsAsync();
+        }
+    }
+
+    private async Task<bool> Update(SalesOrderDto o, UpdateSalesOrderRequest request)
     {
         try
         {
@@ -259,10 +364,13 @@ else
             {
                 var index = report.Orders.FindIndex(x => x.Id == o.Id);
                 if (index >= 0) report.Orders[index] = saved;
-                // Month totals change with the supplier price.
-                if (request.SupplierPrice.HasValue || request.ResetSupplierPrice) report.Months = (await ListingService.GetSalesReportAsync(report.Month)).Months;
             }
+            return true;
         }
-        catch (Exception ex) { Show($"Could not save order {o.EbayOrderId}: {ex.Message}", false); }
+        catch (Exception ex)
+        {
+            Show($"Could not save order {o.EbayOrderId}: {ex.Message}", false);
+            return false;
+        }
     }
 }
