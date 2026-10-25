@@ -50,22 +50,49 @@ services:
       EdenSupplier__Password: ${EDEN_PASSWORD:-}
       DropShipMall__Username: ${DSM_USERNAME:-}
       DropShipMall__Password: ${DSM_PASSWORD:-}
+      # Digital Club website contact form → email (leave CONTACT_TO_EMAIL or SMTP_HOST empty to switch it off)
+      Contact__ToEmail: ${CONTACT_TO_EMAIL:-}
+      Contact__FromEmail: ${CONTACT_FROM_EMAIL:-}
+      Contact__Smtp__Host: ${SMTP_HOST:-}
+      Contact__Smtp__Port: ${SMTP_PORT:-587}
+      Contact__Smtp__Username: ${SMTP_USERNAME:-}
+      Contact__Smtp__Password: ${SMTP_PASSWORD:-}
     ports:
       - "8080:8080"
 
+  # Builds the static Digital Club website into sites/digitalclub/dist (runs once, then exits).
+  site:
+    image: node:22-alpine
+    profiles: ["https"]
+    working_dir: /site
+    command: ["node", "build.mjs"]
+    environment:
+      SITE_URL: https://${SITE_DOMAIN:-site.localhost}
+      ELISTINGS_URL: https://${DOMAIN:-localhost}
+      CONTACT_EMAIL: ${SITE_CONTACT_EMAIL:-}
+    volumes:
+      - ./sites/digitalclub:/site
+
   # HTTPS reverse proxy for a real server: docker compose --profile https up -d
+  # Serves the app on DOMAIN and the Digital Club website on SITE_DOMAIN.
   caddy:
     image: caddy:2-alpine
     profiles: ["https"]
     restart: unless-stopped
-    depends_on: [app]
+    depends_on:
+      app:
+        condition: service_started
+      site:
+        condition: service_completed_successfully
     environment:
       DOMAIN: ${DOMAIN:?Set DOMAIN in .env for HTTPS}
+      SITE_DOMAIN: ${SITE_DOMAIN:-site.localhost}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites/digitalclub/dist:/srv/digitalclub:ro
       - caddy_data:/data
       - caddy_config:/config
 

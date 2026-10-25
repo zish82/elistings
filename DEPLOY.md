@@ -35,21 +35,47 @@ Hangfire's own history isn't copied; schedules are recreated at startup.
 
 ## 3. Deploy to a server (VPS)
 
-A small VPS (e.g. Hetzner CX22 / DigitalOcean 2 GB) with Docker installed is enough.
+A small VPS in the EU/UK with Docker installed is enough – e.g. Hetzner Cloud CX23 (2 vCPU, 4 GB, Germany, ~€6/month)
+or Netcup; OVH London if it must be in the UK.
 
-1. Point your domain's DNS **A record** at the server's IP.
-2. Copy the repo (or `git clone`) to the server, create `.env` with `DOMAIN=your.domain` and all secrets.
+One server runs everything:
+
+| Address | What | Served by |
+|---|---|---|
+| `https://SITE_DOMAIN` (e.g. `digitalclub.co.uk`) | Digital Club website (EN-GB, EN-US, DE, FR) | Caddy, static files |
+| `https://www.SITE_DOMAIN` | redirects to the above | Caddy |
+| `https://SITE_DOMAIN/products/elistings` | redirects to the eListings sign-in page | Caddy |
+| `https://SITE_DOMAIN/api/public/contact` | website contact form → email | the app |
+| `https://DOMAIN` (e.g. `elistings.digitalclub.co.uk`) | eListings (black landing + sign-in page, then the app) | the app |
+
+1. DNS: point **A records** for `SITE_DOMAIN`, `www.SITE_DOMAIN` and `DOMAIN` at the server's IP.
+2. Copy the repo (or `git clone`) to the server and create `.env` from `.env.example`:
+   `DOMAIN`, `SITE_DOMAIN`, `SITE_CONTACT_EMAIL`, the contact-form email settings
+   (`CONTACT_TO_EMAIL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `CONTACT_FROM_EMAIL`) and all other secrets.
+   Any SMTP service works (e.g. your mailbox provider's SMTP, Brevo, Mailgun, Amazon SES); the sender address must be allowed by it.
 3. Start with HTTPS:
    ```bash
    docker compose --profile https up -d --build
    ```
-   Caddy obtains and renews the HTTPS certificate automatically.
-4. In the eBay developer portal set the RuName *auth accepted URL* to `https://your.domain/api/auth/callback`
+   The `site` service builds the website into `sites/digitalclub/dist` (with your domains) and exits; Caddy then serves it
+   and obtains/renews HTTPS certificates for all the addresses automatically.
+4. In the eBay developer portal set the RuName *auth accepted URL* to `https://DOMAIN/api/auth/callback`
    (docker-compose sets `EbaySettings__RedirectUri` from `DOMAIN`; no ngrok needed in production).
 5. Copy your data across if needed (it replaces the seeded suppliers/feeds) (section 2: copy `app.db` to the server, or run the copy from your machine
    against the server's database through an SSH tunnel), then sign in.
 
-Updates: `git pull && docker compose --profile https up -d --build`.
+Updates: `git pull && docker compose --profile https up -d --build` (also rebuilds the website).
+
+### Website content and languages
+- Texts: `sites/digitalclub/i18n/*.json` (`en-gb.json` is the base; `en-us.json` only lists US spellings; `de.json` and
+  `fr.json` must have every key – the build stops and lists any that are missing).
+- Layout: `sites/digitalclub/src/index.html`, styles and script in `src/assets/`.
+- Preview locally: `cd sites/digitalclub && node build.mjs`, then serve `dist/` (e.g. `npx serve dist`).
+- A new product: add a card in `src/index.html` and its texts to the four language files.
+- The eListings sign-in page texts (4 languages) are in `Client/Services/LandingText.cs`; `?lang=de` picks the language,
+  otherwise the browser's.
+- Contact form: rate limited to `Contact:MaxPerHourPerIp` (5) per visitor; with no email settings it answers
+  "not available" and nothing is sent.
 
 ### Backups (do this!)
 Nightly dump, e.g. in the server's crontab:

@@ -1,0 +1,12 @@
+{
+  "_comment": "US English: only the strings that differ from en-gb.json. Anything not listed here falls back to en-gb.",
+  "lang": "en-US",
+  "htmlLang": "en-US",
+  "langName": "English (US)",
+  "meta.description": "Digital Club helps organizations implement AI, roll out AI agents across the business, and build the digital solutions they need – with or without AI.",
+  "hero.lead": "Digital Club turns ideas into working software. From your first AI pilot to agents running across the whole organization – and the solutions where AI isn't the answer at all.",
+  "hero.stat2": "Organization-wide agents",
+  "s2.tagline": "We can all create agents. Rolling them out across an organization is what we specialize in.",
+  "s3.p3": "Modernizing existing systems",
+  "contact.lead": "Tell us a little about your idea or problem. We'll get back to you within two business days."
+}

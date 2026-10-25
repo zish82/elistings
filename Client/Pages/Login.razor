@@ -1,48 +1,124 @@
 @page "/login"
+@layout BlankLayout
 @using Client.Services
 @using Shared
 @inject AuthService AuthService
 @inject NavigationManager Navigation
 
-<div class="container mt-5" style="max-width: 480px;">
-    <div class="card shadow-sm">
-        <div class="card-body p-4">
-            <h3 class="mb-3">Sign In</h3>
-            <p class="text-muted small">Use your email address and password to access your listings.</p>
+<PageTitle>eListings – @T("signin")</PageTitle>
 
-            <div class="mb-3">
-                <label class="form-label">Email</label>
-                <input class="form-control" @bind="email" autocomplete="username" />
-            </div>
+<div class="landing" lang="@language">
+    <div class="glow glow-a" aria-hidden="true"></div>
+    <div class="glow glow-b" aria-hidden="true"></div>
 
-            <div class="mb-3">
-                <label class="form-label">Password</label>
-                <input class="form-control" type="password" @bind="password" autocomplete="current-password" />
-            </div>
-
-            @if (!string.IsNullOrWhiteSpace(errorMessage))
-            {
-                <div class="alert alert-danger py-2">@errorMessage</div>
-            }
-
-            <button class="btn btn-primary w-100" @onclick="HandleLogin" disabled="@isSubmitting">
-                @(isSubmitting ? "Signing in..." : "Sign In")
-            </button>
+    <header class="landing-top">
+        <div class="logo">
+            <span class="logo-mark" aria-hidden="true"></span>
+            <span>e<b>Listings</b></span>
         </div>
+        <label class="lang">
+            <span class="visually-hidden">@T("language")</span>
+            <select value="@language" @onchange="ChangeLanguage" aria-label="@T("language")">
+                @foreach (var (code, name) in LandingText.Languages)
+                {
+                    <option value="@code">@name</option>
+                }
+            </select>
+        </label>
+    </header>
+
+    <div class="landing-grid">
+        <section class="pitch">
+            <span class="badge-pill">@T("badge")</span>
+            <h1>@T("headline1")<br /><span class="grad">@T("headline2")</span></h1>
+            <p class="lead-text">@T("lead")</p>
+
+            <ul class="features">
+                @for (var i = 1; i <= 4; i++)
+                {
+                    <li>
+                        <span class="feature-icon" aria-hidden="true">@(FeatureIcons[i - 1])</span>
+                        <div>
+                            <strong>@(T($"f{i}.title"))</strong>
+                            <span>@(T($"f{i}.body"))</span>
+                        </div>
+                    </li>
+                }
+            </ul>
+        </section>
+
+        <section class="signin-wrap">
+            <form class="signin" @onsubmit="HandleLogin" novalidate>
+                <h2>@T("signin.title")</h2>
+                <p class="muted">@T("signin.sub")</p>
+
+                <label for="login-email">@T("email")</label>
+                <input id="login-email" type="email" @bind="email" @bind:event="oninput" autocomplete="username" autofocus />
+
+                <label for="login-password">@T("password")</label>
+                <input id="login-password" type="password" @bind="password" @bind:event="oninput" autocomplete="current-password" />
+
+                @if (!string.IsNullOrWhiteSpace(errorMessage))
+                {
+                    <div class="error" role="alert">@errorMessage</div>
+                }
+
+                <button class="primary" type="submit" disabled="@isSubmitting">
+                    @(isSubmitting ? T("signing") : T("signin"))
+                </button>
+
+                <p class="muted small-note">@T("noaccount")</p>
+            </form>
+
+            @if (companySiteUrl != null)
+            {
+                <p class="want">
+                    @T("want") <a href="@($"{companySiteUrl}{language}/#contact")">@T("contact") →</a>
+                </p>
+            }
+        </section>
     </div>
+
+    <footer class="landing-foot">
+        @if (companySiteUrl != null)
+        {
+            <a href="@($"{companySiteUrl}{language}/")">@T("by")</a>
+        }
+        else
+        {
+            <span>@T("by")</span>
+        }
+        <span>© @DateTime.UtcNow.Year Digital Club</span>
+    </footer>
 </div>
 
 @code {
+    private static readonly string[] FeatureIcons = { "▦", "£", "⇪", "↻" };
+
     [SupplyParameterFromQuery]
     public string? ReturnUrl { get; set; }
 
+    [SupplyParameterFromQuery(Name = "lang")]
+    public string? Lang { get; set; }
+
+    private string language = LandingText.Default;
     private string email = string.Empty;
     private string password = string.Empty;
     private bool isSubmitting;
     private string? errorMessage;
+    private string? companySiteUrl;
+
+    private string T(string key) => LandingText.Get(language, key);
+
+    protected override void OnParametersSet()
+    {
+        language = LandingText.Resolve(Lang);
+    }
 
     protected override async Task OnInitializedAsync()
     {
+        companySiteUrl = CompanySiteUrl(Navigation.BaseUri);
+
         var session = await AuthService.GetSessionAsync(true);
         if (!session.HasUsers)
         {
@@ -52,18 +128,30 @@
 
         if (session.IsAuthenticated)
         {
-            Navigation.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl, replace: true);
+            Navigation.NavigateTo(SafeReturnUrl(), replace: true);
         }
+    }
+
+    private void ChangeLanguage(ChangeEventArgs e)
+    {
+        var code = LandingText.Resolve(e.Value?.ToString());
+        Navigation.NavigateTo(Navigation.GetUriWithQueryParameter("lang", code), replace: true);
     }
 
     private async Task HandleLogin()
     {
         errorMessage = null;
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrEmpty(password))
+        {
+            errorMessage = T("missing");
+            return;
+        }
+
         isSubmitting = true;
         try
         {
             await AuthService.LoginAsync(new LoginRequest { Email = email, Password = password });
-            Navigation.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/" : ReturnUrl, replace: true);
+            Navigation.NavigateTo(SafeReturnUrl(), replace: true);
         }
         catch (Exception ex)
         {
@@ -73,5 +161,24 @@
         {
             isSubmitting = false;
         }
+    }
+
+    /// <summary>Only paths on this site ("/sales", "listings/5"); absolute or "//other.example" addresses go to "/".</summary>
+    private string SafeReturnUrl()
+    {
+        var url = ReturnUrl?.Trim();
+        if (string.IsNullOrEmpty(url) || url.Contains("://") || url.StartsWith("//") || url.StartsWith("/\\") || url.StartsWith('\\'))
+            return "/";
+        return url.StartsWith('/') ? url : "/" + url;
+    }
+
+    /// <summary>"https://elistings.digitalclub.example/" → "https://digitalclub.example/"; null when not on an elistings.* address.</summary>
+    private static string? CompanySiteUrl(string baseUri)
+    {
+        if (!Uri.TryCreate(baseUri, UriKind.Absolute, out var uri)) return null;
+        const string prefix = "elistings.";
+        if (!uri.Host.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        var host = uri.Host[prefix.Length..];
+        return host.Contains('.') ? $"{uri.Scheme}://{host}/" : null;
     }
 }

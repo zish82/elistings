@@ -32,3 +32,6 @@ Server/appsettings.Development.json
 
 # Docker secrets
 .env
+
+# Digital Club website build output (built by `node build.mjs` or the compose "site" service)
+sites/digitalclub/dist/

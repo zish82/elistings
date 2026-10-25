@@ -1,0 +1,9 @@
+{
+  "_comment": "Site settings used by build.mjs. On the server docker compose sets SITE_URL / ELISTINGS_URL / CONTACT_EMAIL from .env. contactEndpoint is relative because Caddy sends /api/public/contact on the site's domain to the app.",
+  "siteUrl": "https://digitalclub.example",
+  "elistingsUrl": "https://elistings.digitalclub.example",
+  "contactEndpoint": "/api/public/contact",
+  "contactEmail": "hello@digitalclub.example",
+  "defaultLanguage": "en-gb",
+  "languages": ["en-gb", "en-us", "de", "fr"]
+}

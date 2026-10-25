@@ -204,6 +204,32 @@ builder.Services.AddCors(options =>
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials());
+
+    // Digital Club website contact form posted from another domain (only the origins in "Contact:AllowedOrigins").
+    var contactOrigins = builder.Configuration.GetSection("Contact:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+    options.AddPolicy(Server.Controllers.ContactPolicies.Cors, policy =>
+        policy.WithOrigins(contactOrigins)
+              .WithMethods("POST")
+              .WithHeaders("Content-Type"));
+});
+
+// Digital Club website contact form: email settings + per-IP rate limit.
+builder.Services.Configure<Server.Configuration.ContactSettings>(builder.Configuration.GetSection("Contact"));
+builder.Services.AddScoped<Server.Services.IContactMailer, Server.Services.SmtpContactMailer>();
+builder.Services.AddScoped<Server.Services.ContactService>();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    var perHour = Math.Max(1, builder.Configuration.GetValue<int?>("Contact:MaxPerHourPerIp") ?? 5);
+    options.AddPolicy(Server.Controllers.ContactPolicies.RateLimit, context =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = perHour,
+                Window = TimeSpan.FromHours(1),
+                QueueLimit = 0
+            }));
 });
 
 // One-off data copy from the old SQLite file into PostgreSQL:
@@ -246,12 +272,15 @@ app.UseForwardedHeaders(forwardedHeadersOptions);
 // Some browsers request /favicon.ico even when index.html specifies a PNG favicon.
 app.MapGet("/favicon.ico", () => Results.Redirect("/favicon.png"));
 
-app.UseCors("ClientCors");
-
 app.UseHttpsRedirection();
 
 // Enable routing middleware so endpoint routing can execute mapped endpoints
 app.UseRouting();
+
+// After UseRouting so an endpoint's own [EnableCors] policy (the public contact form) is honoured;
+// every other endpoint keeps the "ClientCors" default.
+app.UseCors("ClientCors");
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
