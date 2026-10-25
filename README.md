@@ -295,6 +295,11 @@ asks for confirmation when the estimated profit is below the minimum.
 The **Suppliers** table at the top (Admin/Manager) shows each supplier's products, listings and listings on eBay.
 - Switch a supplier **off** to stop its imports and syncs. Listers no longer see its products or listings;
   Managers and Admins still do (marked *disabled*). Its listings can't be published while it's off.
+- **Enable background sync** (separate switch): off stops only the supplier's *scheduled* imports and stock checks
+  (nightly / every few hours) – nothing calls the supplier in the background. You can still click **Import** on
+  Products and publish listings. A scheduled sync already running stops within a minute or so; switching a supplier
+  **off** (Enabled) stops any running sync, manual or scheduled. If the app was off when a nightly job was due, it
+  waits for the next night instead of running at start-up.
 - Its eBay listings are **not** changed. To stop sales, click **Set eBay quantity to 0** (runs in the background).
   If *out-of-stock control* is off in your eBay account, eBay may end listings at quantity 0.
 - Switch it back **on** and click **Restore eBay quantity** to put those listings back to their own quantity.
