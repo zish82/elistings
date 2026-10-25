@@ -390,6 +390,26 @@ working or even refresh the page – the progress bar picks up where it was.
 - Hangfire keeps its data in the app database (PostgreSQL schema `hangfire`). See **DEPLOY.md** for the database,
   Docker and hosting setup.
 
+### Scheduled jobs (times in UTC)
+
+| Job | When | Calls |
+|---|---|---|
+| DropShipMall catalogue import | 01:00 nightly | DropShipMall feed |
+| DropShipMall stock refresh | every 4 hours | DropShipMall stock feed |
+| Eden catalogue import (trade prices, stock) | 02:30 nightly | Eden website (logged in) |
+| Safelincs catalogue import | 03:30 nightly | Safelincs website, every product page (takes hours) |
+| Published listing check | every 4 hours | Eden / Safelincs pages of your published listings |
+| eBay orders (Sales) | off – see section 15 | eBay |
+
+- **Enable background sync** (per supplier, on *Supplier Feeds* or *Suppliers & Delivery*) switches that supplier's
+  scheduled jobs off or on. Off means nothing calls the supplier in the background; the **Import** button on Products
+  and publishing still work. A scheduled sync that's already running stops within a minute or so.
+- Switching a supplier **off** (*Enabled*) also stops any sync running for it, manual or scheduled.
+- **Missed schedules don't catch up:** if the app was off when a job was due (e.g. 03:30), it waits for the next
+  scheduled time instead of running when the app starts.
+- **To stop a job right now:** switch the supplier's background sync off (or disable the supplier). To remove a
+  stuck job, open **/hangfire → Jobs → Processing**, select it and click **Delete**.
+
 ---
 
 ## 14. Troubleshooting
@@ -403,6 +423,8 @@ working or even refresh the page – the progress bar picks up where it was.
 | Import shows *est.* prices for Eden | The trade price couldn't be confirmed; check the Eden login is configured and re-run the import. |
 | *Could not reach the server* | The server isn't running or the page was opened on the wrong address. |
 | Nothing happens after clicking a button | Refresh the page (Cmd+Shift+R) to load the latest version of the app. |
+| A supplier's website is being called in the background (e.g. Safelincs blocks you) | Switch its **Enable background sync** off on *Supplier Feeds*; delete any job still listed under **/hangfire → Processing**. |
+| A supplier's prices look like retail prices | On *Products*, tick **Estimated prices only**: those prices aren't confirmed trade prices (e.g. Safelincs products missing from the uploaded trade price list). |
 
 ---
 
