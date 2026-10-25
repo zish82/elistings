@@ -5,7 +5,7 @@
 #   Server:     set DOMAIN in .env and run   docker compose --profile https up -d --build
 #               Caddy gets a free HTTPS certificate for DOMAIN automatically.
 #
-# Data lives in the "pgdata" volume (back it up – see DEPLOY.md).
+# Data lives in the "pgdata" volume (back it up – see docs/DEPLOY.md).
 services:
   db:
     image: postgres:17-alpine
@@ -58,7 +58,8 @@ services:
       Contact__Smtp__Username: ${SMTP_USERNAME:-}
       Contact__Smtp__Password: ${SMTP_PASSWORD:-}
     ports:
-      - "8080:8080"
+      # Only reachable from this machine; on a server the public goes through Caddy (443).
+      - "127.0.0.1:8080:8080"
 
   # Builds the static Digital Club website into sites/digitalclub/dist (runs once, then exits).
   site:

@@ -35,6 +35,8 @@ Hangfire's own history isn't copied; schedules are recreated at startup.
 
 ## 3. Deploy to a server (VPS)
 
+**Full step-by-step for Hetzner (server, security, domain, sub-domain, email): [DEPLOY_HETZNER.md](DEPLOY_HETZNER.md).**
+
 A small VPS in the EU/UK with Docker installed is enough – e.g. Hetzner Cloud CX23 (2 vCPU, 4 GB, Germany, ~€6/month)
 or Netcup; OVH London if it must be in the UK.
 

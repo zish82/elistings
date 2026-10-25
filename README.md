@@ -6,6 +6,9 @@ marketplace listings, and publishes them to eBay. This guide walks through every
 > Prices: supplier prices are shown as the supplier gives them (DropShipMall and Eden are **ex VAT**).
 > The app adds VAT, delivery and your margin using the settings on **Suppliers & Delivery**.
 
+Developers: code layout in [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md); going live in
+[docs/DEPLOY_HETZNER.md](docs/DEPLOY_HETZNER.md) (step by step) and [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ---
 
 ## Contents
@@ -387,7 +390,7 @@ working or even refresh the page – the progress bar picks up where it was.
   (development mode), and trigger scheduled jobs from there.
 - If the server restarts while a job is running, it shows *Interrupted by a server restart*; Hangfire normally
   resumes it automatically.
-- Hangfire keeps its data in the app database (PostgreSQL schema `hangfire`). See **DEPLOY.md** for the database,
+- Hangfire keeps its data in the app database (PostgreSQL schema `hangfire`). See **docs/DEPLOY.md** for the database,
   Docker and hosting setup.
 
 ### Scheduled jobs (times in UTC)

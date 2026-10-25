@@ -8,8 +8,8 @@ These issues were identified during the requirements review. They are documented
 
 Affected files:
 
-- [Server/Controllers/ListingsController.cs](Server/Controllers/ListingsController.cs)
-- [Server.Tests/ListingsControllerTests.cs](Server.Tests/ListingsControllerTests.cs)
+- [Server/Controllers/ListingsController.cs](../Server/Controllers/ListingsController.cs)
+- [Server.Tests/Listings/ListingsControllerTests.cs](../Server.Tests/Listings/ListingsControllerTests.cs)
 
 ## 2. Rich-text HTML is not sanitized
 
@@ -17,7 +17,7 @@ Quill HTML is persisted directly by the create and update listing endpoints. The
 
 Affected file:
 
-- [Server/Controllers/ListingsController.cs](Server/Controllers/ListingsController.cs)
+- [Server/Controllers/ListingsController.cs](../Server/Controllers/ListingsController.cs)
 
 ## 3. Listing quantity is missing and hard-coded to one
 
@@ -25,10 +25,10 @@ The listing model and editor do not expose a quantity field. eBay inventory and 
 
 Affected files:
 
-- [Shared/CreateListingRequest.cs](Shared/CreateListingRequest.cs)
-- [Server/Data/AppDbContext.cs](Server/Data/AppDbContext.cs)
-- [Server/Services/EbayService.cs](Server/Services/EbayService.cs)
-- [Client/Pages/CreateListing.razor](Client/Pages/CreateListing.razor)
+- [Shared/Listings/CreateListingRequest.cs](../Shared/Listings/CreateListingRequest.cs)
+- [Server/Data/AppDbContext.cs](../Server/Data/AppDbContext.cs)
+- [Server/Services/Ebay/EbayService.cs](../Server/Services/Ebay/EbayService.cs)
+- [Client/Pages/Listings/CreateListing.razor](../Client/Pages/Listings/CreateListing.razor)
 
 ## 4. Listing SKU is not editable in the listing form
 
@@ -36,8 +36,8 @@ SKU is stored and can be generated during publication, but the create/edit UI do
 
 Affected files:
 
-- [Client/Pages/CreateListing.razor](Client/Pages/CreateListing.razor)
-- [Shared/CreateListingRequest.cs](Shared/CreateListingRequest.cs)
+- [Client/Pages/Listings/CreateListing.razor](../Client/Pages/Listings/CreateListing.razor)
+- [Shared/Listings/CreateListingRequest.cs](../Shared/Listings/CreateListingRequest.cs)
 
 ## 5. Dashboard lacks an individual Delete action
 
@@ -45,7 +45,7 @@ The dashboard provides Edit and Publish/Re-sync actions and supports bulk delete
 
 Affected file:
 
-- [Client/Pages/Home.razor](Client/Pages/Home.razor)
+- [Client/Pages/Listings/Home.razor](../Client/Pages/Listings/Home.razor)
 
 ## 6. Bulk operations are synchronous rather than queued
 
@@ -53,7 +53,7 @@ Bulk extraction and bulk publishing process all items inside a single HTTP reque
 
 Affected file:
 
-- [Server/Controllers/ListingsController.cs](Server/Controllers/ListingsController.cs)
+- [Server/Controllers/ListingsController.cs](../Server/Controllers/ListingsController.cs)
 
 ## 7. Bulk operations have no progress tracking UI
 
@@ -61,9 +61,9 @@ The bulk extraction and publishing interfaces show only a spinner and final coun
 
 Affected files:
 
-- [Client/Pages/BulkExtract.razor](Client/Pages/BulkExtract.razor)
-- [Client/Pages/Home.razor](Client/Pages/Home.razor)
-- [Server/Controllers/ListingsController.cs](Server/Controllers/ListingsController.cs)
+- [Client/Pages/Listings/BulkExtract.razor](../Client/Pages/Listings/BulkExtract.razor)
+- [Client/Pages/Listings/Home.razor](../Client/Pages/Listings/Home.razor)
+- [Server/Controllers/ListingsController.cs](../Server/Controllers/ListingsController.cs)
 
 ## 8. Bulk extraction can create duplicate drafts
 
@@ -71,7 +71,7 @@ Bulk extraction does not check whether a product link or source product already 
 
 Affected file:
 
-- [Server/Controllers/ListingsController.cs](Server/Controllers/ListingsController.cs)
+- [Server/Controllers/ListingsController.cs](../Server/Controllers/ListingsController.cs)
 
 ## 9. Scraped images are not downloaded locally
 
@@ -79,9 +79,9 @@ Scraping stores external image URLs. Images are downloaded later during eBay pub
 
 Affected files:
 
-- [Server/Services/ScraperService.cs](Server/Services/ScraperService.cs)
-- [Server/Services/SafelincsProductScraper.cs](Server/Services/SafelincsProductScraper.cs)
-- [Client/Pages/CreateListing.razor](Client/Pages/CreateListing.razor)
+- [Server/Services/Scraping/ScraperService.cs](../Server/Services/Scraping/ScraperService.cs)
+- [Server/Services/Suppliers/Safelincs/SafelincsProductScraper.cs](../Server/Services/Suppliers/Safelincs/SafelincsProductScraper.cs)
+- [Client/Pages/Listings/CreateListing.razor](../Client/Pages/Listings/CreateListing.razor)
 
 ## 10. Image upload failures fall back to a placeholder
 
@@ -89,7 +89,7 @@ If all extracted image uploads fail, publication adds `https://via.placeholder.c
 
 Affected file:
 
-- [Server/Services/EbayService.cs](Server/Services/EbayService.cs)
+- [Server/Services/Ebay/EbayService.cs](../Server/Services/Ebay/EbayService.cs)
 
 ## 11. eBay retry handling is too narrow
 
@@ -97,7 +97,7 @@ Retry logic only handles eBay error `25604` during offer publication. It does no
 
 Affected file:
 
-- [Server/Services/EbayService.cs](Server/Services/EbayService.cs)
+- [Server/Services/Ebay/EbayService.cs](../Server/Services/Ebay/EbayService.cs)
 
 ## 12. Publish validation is incomplete
 
@@ -105,9 +105,9 @@ Publish endpoints do not explicitly validate all required fields before calling 
 
 Affected files:
 
-- [Server/Controllers/EbayController.cs](Server/Controllers/EbayController.cs)
-- [Server/Controllers/ListingsController.cs](Server/Controllers/ListingsController.cs)
-- [Server/Services/EbayService.cs](Server/Services/EbayService.cs)
+- [Server/Controllers/EbayController.cs](../Server/Controllers/EbayController.cs)
+- [Server/Controllers/ListingsController.cs](../Server/Controllers/ListingsController.cs)
+- [Server/Services/Ebay/EbayService.cs](../Server/Services/Ebay/EbayService.cs)
 
 ## 13. Required item-specific defaults are unsafe for arbitrary products
 
@@ -115,7 +115,7 @@ Publication defaults `Type` to `Fire Extinguisher` and `Colour` to `Red` for lis
 
 Affected file:
 
-- [Server/Services/EbayService.cs](Server/Services/EbayService.cs)
+- [Server/Services/Ebay/EbayService.cs](../Server/Services/Ebay/EbayService.cs)
 
 ## 14. Dashboard publish failures are not user-visible
 
@@ -123,7 +123,7 @@ The edit page displays publication errors, but dashboard single-listing publicat
 
 Affected file:
 
-- [Client/Pages/Home.razor](Client/Pages/Home.razor)
+- [Client/Pages/Listings/Home.razor](../Client/Pages/Listings/Home.razor)
 
 ## Test coverage gap
 
@@ -131,4 +131,4 @@ The current test suite does not cover scraper parsing, VAT handling, OAuth state
 
 Affected file:
 
-- [Server.Tests/ListingsControllerTests.cs](Server.Tests/ListingsControllerTests.cs)
+- [Server.Tests/Listings/ListingsControllerTests.cs](../Server.Tests/Listings/ListingsControllerTests.cs)
