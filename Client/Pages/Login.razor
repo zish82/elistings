@@ -19,9 +19,9 @@
         <label class="lang">
             <span class="visually-hidden">@T("language")</span>
             <select value="@language" @onchange="ChangeLanguage" aria-label="@T("language")">
-                @foreach (var (code, name) in LandingText.Languages)
+                @foreach (var (langCode, langName) in LandingText.Languages)
                 {
-                    <option value="@code">@name</option>
+                    <option value="@langCode">@langName</option>
                 }
             </select>
         </label>
