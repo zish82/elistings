@@ -57,7 +57,29 @@ else
                 <dd class="col-sm-9">@(product.StockLevel?.ToString() ?? "-")</dd>
 
                 <dt class="col-sm-3">Supplier Price</dt>
-                <dd class="col-sm-9">@(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")</dd>
+                <dd class="col-sm-9">
+                    @(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")
+                    @if (product.SupplierPrice.HasValue)
+                    {
+                        <span class="text-muted">@(product.PriceIncludesVat ? "inc VAT" : "ex VAT")</span>
+                        @if (!product.PriceIncludesVat && product.CostIncVat.HasValue)
+                        {
+                            <span class="text-muted">(£@product.CostIncVat.Value.ToString("F2") inc VAT)</span>
+                        }
+                    }
+                    @if (product.PriceIsEstimate)
+                    {
+                        <span class="badge bg-warning text-dark">estimate</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(product.PriceSource))
+                    {
+                        <div class="small text-muted">Source: @product.PriceSource</div>
+                    }
+                    @if (product.RrpPrice.HasValue)
+                    {
+                        <div class="small text-muted">Retail price on the supplier's website: £@product.RrpPrice.Value.ToString("F2") inc VAT</div>
+                    }
+                </dd>
 
                 <dt class="col-sm-3">Suggested Price</dt>
                 <dd class="col-sm-9">@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</dd>

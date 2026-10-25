@@ -243,6 +243,10 @@ else
             <input class="form-check-input" type="checkbox" id="hideAdded" @bind="hideAdded" />
             <label class="form-check-label small" for="hideAdded">Hide already added</label>
         </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="estimatesOnly" @bind="estimatesOnly" />
+            <label class="form-check-label small" for="estimatesOnly" title="Products whose price isn't a confirmed trade price, e.g. Safelincs products missing from the trade price list">Estimated prices only</label>
+        </div>
     </div>
     <div class="col-12 d-flex gap-2">
         <button class="btn btn-sm btn-primary" @onclick="LoadProducts" disabled="@isLoading">Apply filters</button>
@@ -345,10 +349,18 @@ else
                             <td>@(string.IsNullOrWhiteSpace(product.SupplierSku) ? "-" : product.SupplierSku)</td>
                             <td>@(product.StockLevel?.ToString() ?? "-")</td>
                             <td>
-                                @(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")
+                                <span title="@product.PriceSource">@(product.SupplierPrice.HasValue ? $"£{product.SupplierPrice.Value:F2}" : "-")</span>
+                                @if (product.SupplierPrice.HasValue)
+                                {
+                                    <span class="small text-muted">@(product.PriceIncludesVat ? "inc VAT" : "ex VAT")</span>
+                                }
                                 @if (product.PriceIsEstimate)
                                 {
-                                    <span class="badge bg-warning text-dark" title="Trade price not confirmed yet (showing RRP)">est.</span>
+                                    <span class="badge bg-warning text-dark" title="@product.PriceSource">est.</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(product.PriceSource))
+                                {
+                                    <div class="small text-muted" style="max-width: 200px;">@product.PriceSource</div>
                                 }
                                 @if (product.RrpPrice.HasValue && !product.PriceIsEstimate)
                                 {
@@ -416,6 +428,7 @@ else
     private decimal? maxPrice;
     private bool inStockOnly;
     private bool hideAdded;
+    private bool estimatesOnly;
     private List<string> categories = new();
 
     // "list" = product grid, "categories" = products per supplier category.
@@ -599,7 +612,7 @@ else
     }
     private bool HasActiveFilters => !string.IsNullOrWhiteSpace(search) || !string.IsNullOrWhiteSpace(category) || !string.IsNullOrEmpty(groupKey)
                                      || tagId.HasValue
-                                     || minPrice.HasValue || maxPrice.HasValue || inStockOnly || hideAdded;
+                                     || minPrice.HasValue || maxPrice.HasValue || inStockOnly || hideAdded || estimatesOnly;
     private bool isLoading;
     private bool isBusy;
     private string? statusMessage;
@@ -710,6 +723,7 @@ else
         maxPrice = null;
         inStockOnly = false;
         hideAdded = false;
+        estimatesOnly = false;
         groupKey = null;
         sort = SupplierProductSort.PriceHighToLow;
         await LoadProducts();
@@ -773,6 +787,7 @@ else
                 MaxPrice = string.IsNullOrEmpty(groupKey) ? maxPrice : null,
                 InStockOnly = string.IsNullOrEmpty(groupKey) && inStockOnly,
                 HideAdded = string.IsNullOrEmpty(groupKey) && hideAdded,
+                EstimatesOnly = string.IsNullOrEmpty(groupKey) && estimatesOnly,
                 GroupKey = string.IsNullOrEmpty(groupKey) ? null : groupKey,
                 TagId = string.IsNullOrEmpty(groupKey) ? tagId : null,
                 Sort = sort

@@ -24,6 +24,12 @@ public class SupplierProductListItemDto
     public int GroupSize { get; set; } = 1;
     /// <summary>The product's type tags (e.g. "Carbon Filters").</summary>
     public List<string> Tags { get; set; } = new();
+    /// <summary>Whether <see cref="SupplierPrice"/> includes VAT (the supplier's setting on /suppliers).</summary>
+    public bool PriceIncludesVat { get; set; }
+    /// <summary>Where the supplier price came from, e.g. "Trade price list (23 Oct 2026)" or "Website price – not in the trade price list".</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>Supplier price with VAT added when it excludes VAT.</summary>
+    public decimal? CostIncVat { get; set; }
 
     /// <summary>
     /// Estimated profit per sale at the suggested price with the default delivery: after the supplier cost (inc VAT
@@ -53,6 +59,8 @@ public class SupplierProductQuery
     public string? GroupKey { get; set; }
     /// <summary>Products with this tag (0 = products without any type tag).</summary>
     public int? TagId { get; set; }
+    /// <summary>Only products whose price is an estimate (e.g. Safelincs products missing from the trade price list).</summary>
+    public bool EstimatesOnly { get; set; }
     /// <summary>One of <see cref="SupplierProductSort"/>.</summary>
     public string? Sort { get; set; }
     public int Limit { get; set; } = DefaultLimit;

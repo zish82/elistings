@@ -222,6 +222,7 @@ public class ListingService
         Add("maxPrice", q.MaxPrice?.ToString(inv));
         if (q.InStockOnly) Add("inStockOnly", "true");
         if (q.HideAdded) Add("hideAdded", "true");
+        if (q.EstimatesOnly) Add("estimatesOnly", "true");
         Add("groupKey", q.GroupKey);
         Add("tagId", q.TagId?.ToString(inv));
         Add("sort", q.Sort);

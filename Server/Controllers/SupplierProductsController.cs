@@ -97,6 +97,11 @@ public class SupplierProductsController : ControllerBase
             query = query.Where(p => p.SupplierPrice != null && (double)p.SupplierPrice <= max);
         }
 
+        if (q.EstimatesOnly)
+        {
+            query = query.Where(p => p.PriceIsEstimate);
+        }
+
         if (q.InStockOnly)
         {
             query = query.Where(p => p.StockLevel > 0);
@@ -176,7 +181,10 @@ public class SupplierProductsController : ControllerBase
             GroupSize = p.GroupKey != null && groupSizes.TryGetValue(p.GroupKey, out var size) ? size : 1,
             Tags = tagNames[p.Id].OrderBy(n => n).ToList(),
             EstimatedProfit = estimates[p.Id]?.Profit,
-            EstimatedFees = estimates[p.Id]?.TotalFees
+            EstimatedFees = estimates[p.Id]?.TotalFees,
+            PriceIncludesVat = suppliersByCode.GetValueOrDefault(p.Supplier)?.PricesIncludeVat ?? false,
+            PriceSource = PriceSource(p),
+            CostIncVat = PricingMath.CostIncVat(p.SupplierPrice, suppliersByCode.GetValueOrDefault(p.Supplier))
         }).ToList();
 
         // The database sorts by a simple profit proxy; put the loaded rows in true estimated-profit order.
@@ -320,6 +328,23 @@ public class SupplierProductsController : ControllerBase
         return Ok(rows.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList());
     }
 
+    /// <summary>Where a product's supplier price came from (shown next to the price).</summary>
+    internal static string PriceSource(SupplierProduct p)
+    {
+        var fetched = p.TradePriceFetchedAtUtc.HasValue ? $" ({p.TradePriceFetchedAtUtc.Value:d MMM yyyy})" : "";
+        return p.Supplier switch
+        {
+            "Safelincs" => p.PriceIsEstimate
+                ? "Safelincs website price (ex VAT) – not in the trade price list"
+                : "Safelincs trade price list" + fetched,
+            "EdenHorticulture" => p.PriceIsEstimate
+                ? "Eden RRP – trade price not confirmed yet"
+                : "Eden trade price (logged-in)" + fetched,
+            "DropShipMall" => "DropShipMall trade feed",
+            _ => p.PriceIsEstimate ? "Estimate" : "Supplier"
+        };
+    }
+
     /// <summary>Distinct categories for the category filter.</summary>
     [HttpGet("categories")]
     public async Task<ActionResult<List<string>>> GetCategories([FromQuery] string? supplier = null)
@@ -337,6 +362,8 @@ public class SupplierProductsController : ControllerBase
 
         var product = await Access.Filter(_context.SupplierProducts).FirstOrDefaultAsync(p => p.Id == id && p.IsActive);
         if (product == null) return NotFound();
+        var supplierSettings = (await new SupplierCatalogService(_context).GetAllAsync())
+            .FirstOrDefault(s => s.Code.Equals(product.Supplier, StringComparison.OrdinalIgnoreCase));
 
         var existingListingId = await _context.Listings
             .Where(l => l.OwnerUserId == userId.Value && l.SupplierProductId == id)
@@ -362,7 +389,12 @@ public class SupplierProductsController : ControllerBase
             AlreadyAdded = existingListingId.HasValue,
             ExistingListingId = existingListingId,
             CategoryName = product.CategoryName,
-            ImageUrlsJson = product.ImageUrlsJson
+            ImageUrlsJson = product.ImageUrlsJson,
+            RrpPrice = product.RrpPrice,
+            PriceIsEstimate = product.PriceIsEstimate,
+            PriceIncludesVat = supplierSettings?.PricesIncludeVat ?? false,
+            PriceSource = PriceSource(product),
+            CostIncVat = PricingMath.CostIncVat(product.SupplierPrice, supplierSettings)
         });
     }
 
