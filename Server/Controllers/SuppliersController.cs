@@ -169,6 +169,7 @@ public class SuppliersController : ControllerBase
         entity.DefaultMarginPercent = dto.DefaultMarginPercent < 0 ? 0 : dto.DefaultMarginPercent;
         entity.IsActive = dto.IsActive;
         entity.FeeCategoryId = string.IsNullOrWhiteSpace(dto.FeeCategoryId) ? null : dto.FeeCategoryId.Trim();
+        entity.BackgroundSyncEnabled = dto.BackgroundSyncEnabled;
     }
 
     private static void Apply(SupplierDeliveryOption entity, SupplierDeliveryOptionDto dto)

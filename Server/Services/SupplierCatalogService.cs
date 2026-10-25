@@ -78,6 +78,14 @@ public class SupplierCatalogService
             .Select(s => (s.Code, string.IsNullOrWhiteSpace(s.WebsiteHost) ? null : s.WebsiteHost!.ToLowerInvariant()))
             .ToList();
 
+    /// <summary>
+    /// Whether scheduled (background) work may call this supplier: the supplier is enabled and its
+    /// "Enable background sync" switch is on. Manual imports don't check this.
+    /// </summary>
+    public async Task<bool> IsBackgroundSyncAllowedAsync(string supplierCode)
+        => await _context.Suppliers.AsNoTracking().AnyAsync(s => s.Code == supplierCode && s.IsActive && s.BackgroundSyncEnabled)
+           || !await _context.Suppliers.AnyAsync(s => s.Code == supplierCode); // unknown supplier: nothing to switch off
+
     public async Task<bool> IsDisabledAsync(string supplierCode)
         => await _context.Suppliers.AnyAsync(s => s.Code == supplierCode && !s.IsActive);
 
@@ -177,6 +185,7 @@ public class SupplierCatalogService
         DefaultMarginPercent = s.DefaultMarginPercent,
         IsActive = s.IsActive,
         FeeCategoryId = s.FeeCategoryId,
+        BackgroundSyncEnabled = s.BackgroundSyncEnabled,
         DeliveryOptions = options.Select(ToDto).ToList()
     };
 

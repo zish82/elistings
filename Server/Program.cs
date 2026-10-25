@@ -300,7 +300,8 @@ using (var hangfireScope = app.Services.CreateScope())
         "0 */4 * * *",
         new RecurringJobOptions
         {
-            TimeZone = TimeZoneInfo.Utc
+            TimeZone = TimeZoneInfo.Utc,
+            MisfireHandling = MisfireHandlingMode.Ignorable // app was off at the scheduled time: wait for the next one
         });
 
     recurringJobs.AddOrUpdate<Server.Services.IFeedProductSyncService>(
@@ -309,7 +310,8 @@ using (var hangfireScope = app.Services.CreateScope())
         "0 1 * * *",
         new RecurringJobOptions
         {
-            TimeZone = TimeZoneInfo.Utc
+            TimeZone = TimeZoneInfo.Utc,
+            MisfireHandling = MisfireHandlingMode.Ignorable // app was off at the scheduled time: wait for the next one
         });
 
     recurringJobs.AddOrUpdate<Server.Services.EdenCatalogImportService>(
@@ -318,7 +320,8 @@ using (var hangfireScope = app.Services.CreateScope())
         "30 2 * * *",
         new RecurringJobOptions
         {
-            TimeZone = TimeZoneInfo.Utc
+            TimeZone = TimeZoneInfo.Utc,
+            MisfireHandling = MisfireHandlingMode.Ignorable // app was off at the scheduled time: wait for the next one
         });
 
     // Safelincs: a full website pass (a few hours at one page every few seconds), overnight.
@@ -328,7 +331,8 @@ using (var hangfireScope = app.Services.CreateScope())
         "30 3 * * *",
         new RecurringJobOptions
         {
-            TimeZone = TimeZoneInfo.Utc
+            TimeZone = TimeZoneInfo.Utc,
+            MisfireHandling = MisfireHandlingMode.Ignorable // app was off at the scheduled time: wait for the next one
         });
 
     // Sales report: automatic import of new/changed eBay orders. Off by default (use "Sync now" on /sales);
@@ -341,7 +345,8 @@ using (var hangfireScope = app.Services.CreateScope())
             app.Configuration["EbayOrders:AutoSyncCron"] ?? "15 */2 * * *",
             new RecurringJobOptions
             {
-                TimeZone = TimeZoneInfo.Utc
+                TimeZone = TimeZoneInfo.Utc,
+                MisfireHandling = MisfireHandlingMode.Ignorable
             });
     }
     else
@@ -355,7 +360,8 @@ using (var hangfireScope = app.Services.CreateScope())
         "0 */4 * * *",
         new RecurringJobOptions
         {
-            TimeZone = TimeZoneInfo.Utc
+            TimeZone = TimeZoneInfo.Utc,
+            MisfireHandling = MisfireHandlingMode.Ignorable // app was off at the scheduled time: wait for the next one
         });
 }
 

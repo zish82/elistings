@@ -414,6 +414,10 @@ public class ListingService
     public async Task<List<SupplierOverviewDto>> GetSupplierOverviewAsync()
         => await GetAsync<List<SupplierOverviewDto>>("api/supplierfeeds/suppliers") ?? new List<SupplierOverviewDto>();
 
+    /// <summary>"Enable background sync": the supplier's scheduled imports / stock checks.</summary>
+    public async Task SetSupplierBackgroundSyncAsync(string code, bool enabled)
+        => await SendAsync<object>(HttpMethod.Put, $"api/supplierfeeds/suppliers/{Uri.EscapeDataString(code)}/background-sync", enabled);
+
     public async Task SetSupplierEnabledAsync(string code, bool enabled)
         => await SendAsync<object>(HttpMethod.Put, $"api/supplierfeeds/suppliers/{Uri.EscapeDataString(code)}/enabled", enabled);
 

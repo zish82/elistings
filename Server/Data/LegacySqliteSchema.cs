@@ -567,6 +567,7 @@ public static class LegacySqliteSchema
                 EnsureColumn("MarketplaceFeeCategoryRates", "Percent3", "TEXT NULL");
                 EnsureColumn("MarketplaceFeeCategoryRates", "PerOrderFeeSmall", "TEXT NULL");
                 EnsureColumn("Suppliers", "FeeCategoryId", "TEXT NULL");
+                EnsureColumn("Suppliers", "BackgroundSyncEnabled", "INTEGER NOT NULL DEFAULT 1");
                 EnsureColumn("EbayTokens", "Scopes", "TEXT NULL");
                 EnsureColumn("Users", "SupplierAccessConfigured", "INTEGER NOT NULL DEFAULT 0");
                 db.Database.ExecuteSqlRaw(@"

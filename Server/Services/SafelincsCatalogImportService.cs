@@ -27,7 +27,7 @@ public class SafelincsCatalogImportService : ISupplierCatalogImporter
     private const int MaxVariantsPerPage = 40;
     /// <summary>Stop when this many pages in a row fail – Safelincs is probably blocking us, and carrying on won't help.</summary>
     private const int MaxConsecutiveFailures = 15;
-    private const int SaveEvery = 20;
+    private const int SaveEvery = 10; // also how often it checks whether it's been switched off
 
     private readonly AppDbContext _context;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -51,6 +51,7 @@ public class SafelincsCatalogImportService : ISupplierCatalogImporter
     [Queue(Jobs.BackgroundJobs.SafelincsQueue), AutomaticRetry(Attempts = 1, DelaysInSeconds = new[] { 3600 })]
     public async Task RunScheduledAsync()
     {
+        if (!await _catalog.IsBackgroundSyncAllowedAsync(Code)) { Console.WriteLine("[Safelincs] Background sync is off; nightly import skipped."); return; }
         var result = await ImportAsync("scheduler");
         Console.WriteLine(result.IsSuccess
             ? $"[Safelincs] Scheduled import complete. processed={result.ProcessedRows}, inserted={result.Inserted}, updated={result.Updated}"
@@ -203,7 +204,17 @@ public class SafelincsCatalogImportService : ISupplierCatalogImporter
                 tagsByEntity[entity] = page.Breadcrumbs; // every breadcrumb level is a tag, for filtering
             }
 
-            if (i % SaveEvery == 0) await _context.SaveChangesAsync(ct);
+            if (i % SaveEvery == 0)
+            {
+                await _context.SaveChangesAsync(ct);
+                // Stop early when switched off meanwhile: the supplier disabled, or (scheduled runs) background sync off.
+                var current = await _context.Suppliers.AsNoTracking().Where(s => s.Code == Code).Select(s => new { s.IsActive, s.BackgroundSyncEnabled }).FirstOrDefaultAsync(ct);
+                if (current != null && (!current.IsActive || (triggeredBy == "scheduler" && !current.BackgroundSyncEnabled)))
+                {
+                    notes.Add($"Stopped after {i + 1} of {pageUrls.Count} pages: {(current.IsActive ? "background sync was switched off" : "Safelincs was disabled")}.");
+                    break;
+                }
+            }
         }
         await _context.SaveChangesAsync(ct);
 

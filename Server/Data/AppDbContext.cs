@@ -201,6 +201,11 @@ public class Supplier
     public bool IsActive { get; set; } = true;
     /// <summary>eBay category whose fee rate estimates this supplier's products (e.g. 159912 Garden &amp; Patio).</summary>
     public string? FeeCategoryId { get; set; }
+    /// <summary>
+    /// "Enable background sync": the scheduled (nightly / every few hours) imports and stock checks for this supplier.
+    /// Off = no scheduled calls to the supplier; manual imports and publishing still work.
+    /// </summary>
+    public bool BackgroundSyncEnabled { get; set; } = true;
 }
 
 /// <summary>What the supplier charges us to deliver an order (e.g. Standard £4.99, Express £9.95).</summary>

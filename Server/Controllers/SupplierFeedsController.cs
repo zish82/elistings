@@ -77,6 +77,7 @@ public class SupplierFeedsController : ControllerBase
                 Code = s.Code,
                 Name = s.Name,
                 IsActive = s.IsActive,
+                BackgroundSyncEnabled = s.BackgroundSyncEnabled,
                 Products = await _context.SupplierProducts.CountAsync(p => p.Supplier == s.Code && p.IsActive && p.RemovedFromSupplierAtUtc == null),
                 Listings = await listings.CountAsync(l => l.Status != "Deleted"),
                 PublishedListings = await listings.CountAsync(l => l.Status == "Published"),
@@ -99,6 +100,21 @@ public class SupplierFeedsController : ControllerBase
         var supplier = await _context.Suppliers.FirstOrDefaultAsync(s => s.Code == code);
         if (supplier == null || !await Access.IsAllowedAsync(supplier.Code)) return NotFound();
         supplier.IsActive = enabled;
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    /// <summary>
+    /// "Enable background sync": turns the supplier's scheduled imports / stock checks on or off.
+    /// Manual imports and publishing are not affected. A scheduled import already running stops at its next checkpoint.
+    /// </summary>
+    [HttpPut("suppliers/{code}/background-sync")]
+    public async Task<IActionResult> SetBackgroundSync(string code, [FromBody] bool enabled)
+    {
+        if (!CanEdit) return StatusCode(StatusCodes.Status403Forbidden, SuppliersController.OnlyAdminsMessage);
+        var supplier = await _context.Suppliers.FirstOrDefaultAsync(s => s.Code == code);
+        if (supplier == null || !await Access.IsAllowedAsync(supplier.Code)) return NotFound();
+        supplier.BackgroundSyncEnabled = enabled;
         await _context.SaveChangesAsync();
         return NoContent();
     }

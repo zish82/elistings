@@ -13,6 +13,8 @@ public class SupplierDto
     public bool IsActive { get; set; } = true;
     /// <summary>eBay category whose fee rate is used for this supplier's products (and listings without an eBay category), e.g. 159912 Garden &amp; Patio.</summary>
     public string? FeeCategoryId { get; set; }
+    /// <summary>Scheduled imports/stock checks for this supplier (off = only manual imports; publishing unaffected).</summary>
+    public bool BackgroundSyncEnabled { get; set; } = true;
     public List<SupplierDeliveryOptionDto> DeliveryOptions { get; set; } = new();
     /// <summary>Postage classes found in this supplier's imported products (e.g. "Standard Parcel"). Read-only.</summary>
     public List<string> KnownPostageCategories { get; set; } = new();
@@ -104,6 +106,8 @@ public class SupplierOverviewDto
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public bool IsActive { get; set; }
+    /// <summary>Scheduled imports/stock checks (nightly etc.). Off = only manual imports; publishing still works.</summary>
+    public bool BackgroundSyncEnabled { get; set; } = true;
     public int Products { get; set; }
     public int Listings { get; set; }
     public int PublishedListings { get; set; }

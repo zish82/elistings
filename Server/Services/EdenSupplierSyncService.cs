@@ -53,13 +53,22 @@ public class EdenSupplierSyncService : IEdenSupplierSyncService
             .ToListAsync();
 
         // Disabled suppliers aren't synced.
-        var disabledHosts = await _context.Suppliers.Where(s => !s.IsActive && s.WebsiteHost != null).Select(s => s.WebsiteHost!.ToLower()).ToListAsync();
+        // Disabled suppliers, and suppliers with "Enable background sync" off, aren't checked.
+        var disabledHosts = await _context.Suppliers.Where(s => (!s.IsActive || !s.BackgroundSyncEnabled) && s.WebsiteHost != null).Select(s => s.WebsiteHost!.ToLower()).ToListAsync();
         listings = listings.Where(l => !disabledHosts.Any(h => l.SourceUrl!.Contains(h, StringComparison.OrdinalIgnoreCase))).ToList();
 
         run.ProcessedCount = listings.Count;
 
+        var checkedCount = 0;
         foreach (var listing in listings)
         {
+            // Every 10 listings: skip suppliers switched off meanwhile (disabled or background sync off).
+            if (++checkedCount % 10 == 0)
+            {
+                disabledHosts = await _context.Suppliers.Where(s => (!s.IsActive || !s.BackgroundSyncEnabled) && s.WebsiteHost != null).Select(s => s.WebsiteHost!.ToLower()).ToListAsync();
+            }
+            if (disabledHosts.Any(h => listing.SourceUrl!.Contains(h, StringComparison.OrdinalIgnoreCase))) continue;
+
             var snapshot = await SyncListingInternalAsync(listing, run.Id, "scheduler");
             if (snapshot.IsSuccess) run.SuccessCount++;
             else if (ShouldIgnoreHangfireFailure(snapshot))

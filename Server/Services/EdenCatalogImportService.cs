@@ -59,6 +59,7 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
     [Queue("eden"), AutomaticRetry(Attempts = 1, DelaysInSeconds = new[] { 3600 })]
     public async Task RunScheduledAsync()
     {
+        if (!await _catalog.IsBackgroundSyncAllowedAsync(Code)) { Console.WriteLine("[Eden] Background sync is off; nightly import skipped."); return; }
         var result = await ImportAsync("scheduler");
         Console.WriteLine(result.IsSuccess
             ? $"[Eden] Scheduled import complete. processed={result.ProcessedRows}, inserted={result.Inserted}, updated={result.Updated}"
@@ -85,8 +86,17 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
         }
     }
 
+    /// <summary>Scheduled runs stop early when Eden is disabled or its background sync is switched off meanwhile.</summary>
+    private bool _scheduledRun;
+
+    private async Task<bool> SwitchedOffAsync(CancellationToken ct)
+        => _scheduledRun
+            ? !await _context.Suppliers.AsNoTracking().AnyAsync(s => s.Code == Code && s.IsActive && s.BackgroundSyncEnabled, ct)
+            : await _context.Suppliers.AsNoTracking().AnyAsync(s => s.Code == Code && !s.IsActive, ct);
+
     private async Task<FeedSyncResult> ImportInternalAsync(string triggeredBy, IProgress<string>? progress, CancellationToken ct)
     {
+        _scheduledRun = triggeredBy == "scheduler";
         var result = new FeedSyncResult { Supplier = Code, FeedType = "Shopify Catalogue" };
         var notes = new List<string>();
         if (await _catalog.IsDisabledAsync(Code))
@@ -184,6 +194,11 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
             notes.Add($"Trade prices and stock were not updated (Eden login failed: {ex.Message}). Check EdenSupplier settings.");
         }
 
+        if (session != null && await SwitchedOffAsync(ct))
+        {
+            notes.Add("Stopped before trade prices and stock: Eden was switched off.");
+            session = null;
+        }
         if (session != null)
         {
             var priced = await UpdateTradePricesAsync(session, byVariant, supplier, progress, notes, ct);
@@ -308,6 +323,7 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
 
         for (var i = 0; i < ids.Count; i += TradePriceBatchSize)
         {
+            if (await SwitchedOffAsync(ct)) { notes.Add("Trade prices stopped: Eden was switched off."); break; }
             var batch = ids.Skip(i).Take(TradePriceBatchSize).ToList();
             progress?.Report($"Trade prices {Math.Min(i + batch.Count, ids.Count)}/{ids.Count}...");
             try
@@ -350,6 +366,7 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
         var stocked = 0;
         for (var page = 1; page <= MaxCollectionPages; page++)
         {
+            if (await SwitchedOffAsync(ct)) { notes.Add("Stock levels stopped: Eden was switched off."); break; }
             progress?.Report($"Stock levels, page {page}...");
             string html;
             try
