@@ -236,7 +236,10 @@ public class BackgroundJobs
                 var result = await ebayService.CreateListingAsync(dto);
                 ListingPublishHelper.ApplyPublishResult(listing, result);
                 await _context.SaveChangesAsync();
-                progress.ItemSucceeded();
+                if (result.ImageWarnings.Count > 0)
+                    progress.ItemSucceededWithWarning($"{label}: published without {result.ImageWarnings.Count} picture(s). {string.Join(" | ", result.ImageWarnings)}");
+                else
+                    progress.ItemSucceeded();
             }
             catch (Exception ex)
             {

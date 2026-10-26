@@ -16,7 +16,10 @@ public class ListingDto
     public string? EbayItemId { get; set; }
     public string? Sku { get; set; }
     public string? EbayOfferId { get; set; }
-    
+
+    /// <summary>Only in the publish response: pictures that were left out, with the reason. Not stored.</summary>
+    public List<string> PublishWarnings { get; set; } = new();
+
     // eBay Specifics
     public string? CategoryId { get; set; }
     public string? CategoryName { get; set; }

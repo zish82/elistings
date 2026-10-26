@@ -126,29 +126,39 @@ public class EbayService : IEbayService
         var finalImageUrls = new List<string>();
         var imageErrors = new List<string>();
         var imageService = _serviceProvider.GetRequiredService<IMarketplaceImageService>();
+        var progress = _serviceProvider.GetService<PublishProgressStore>(); // live status for the page (optional)
 
         if (listing.ImageUrls != null && listing.ImageUrls.Any())
         {
-            Console.WriteLine($"[Listing: {listing.Id}] Processing {listing.ImageUrls.Count} images...");
-            foreach (var url in listing.ImageUrls)
+            var urls = listing.ImageUrls;
+            Console.WriteLine($"[Listing: {listing.Id}] Processing {urls.Count} images...");
+            progress?.SetImages(listing.Id, urls);
+            for (var i = 0; i < urls.Count; i++)
             {
+                var url = urls[i];
+                var index = i;
+                progress?.SetStage(listing.Id, $"Pictures: {i + 1} of {urls.Count}");
                 if (url.Contains("ebayimg.com"))
                 {
                     finalImageUrls.Add(url);
+                    progress?.SetImage(listing.Id, index, PublishImageStates.OnEbay);
+                    continue;
                 }
-                else
+
+                var label = url.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? "Uploaded image" : url;
+                try
                 {
-                    try 
-                    {
-                        var ebayUrl = await imageService.UploadImageFromUrlAsync(url, listing.EbayAccountId);
-                        finalImageUrls.Add(ebayUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        var label = url.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? "uploaded image" : url;
-                        Console.WriteLine($"[Listing: {listing.Id}] Image upload failed for {label}: {ex.Message}");
-                        imageErrors.Add($"{label}: {ex.Message}");
-                    }
+                    progress?.SetImage(listing.Id, index, PublishImageStates.Working, "Starting");
+                    var ebayUrl = await imageService.UploadImageFromUrlAsync(url, listing.EbayAccountId,
+                        step => progress?.SetImage(listing.Id, index, PublishImageStates.Working, step));
+                    finalImageUrls.Add(ebayUrl);
+                    progress?.SetImage(listing.Id, index, PublishImageStates.Uploaded);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Listing: {listing.Id}] Image upload failed for {label}: {ex.Message}");
+                    imageErrors.Add($"Picture {i + 1} ({label}): {ex.Message}");
+                    progress?.SetImage(listing.Id, index, PublishImageStates.Failed, ex.Message);
                 }
             }
         }
@@ -156,9 +166,12 @@ public class EbayService : IEbayService
         if (!finalImageUrls.Any())
         {
             throw new Exception(imageErrors.Any()
-                ? "All image uploads to eBay failed. " + string.Join(" | ", imageErrors)
+                ? "None of the pictures could be uploaded to eBay. " + string.Join(" | ", imageErrors)
                 : "At least one image is required to publish on eBay.");
         }
+        progress?.SetStage(listing.Id, imageErrors.Any()
+            ? $"Publishing on eBay with {finalImageUrls.Count} of {listing.ImageUrls!.Count} pictures"
+            : "Publishing on eBay");
 
         var inventoryItem = new
         {
@@ -340,7 +353,8 @@ public class EbayService : IEbayService
         {
             Sku = sku,
             OfferId = offerId!,
-            ListingId = publishData?.listingId ?? $"LISTING-SUCCESS-{offerId}"
+            ListingId = publishData?.listingId ?? $"LISTING-SUCCESS-{offerId}",
+            ImageWarnings = imageErrors
         };
     }
 

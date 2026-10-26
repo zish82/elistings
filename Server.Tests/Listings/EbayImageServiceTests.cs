@@ -1,10 +1,11 @@
 using System.Text;
 using Server.Services;
+using Shared;
 using Xunit;
 
 namespace Server.Tests;
 
-/// <summary>Picture upload: spotting non-image downloads (supplier block pages) and non-XML eBay answers.</summary>
+/// <summary>Picture upload (eBay Media API): spotting non-image downloads, reading eBay's answers, live progress.</summary>
 public class EbayImageServiceTests
 {
     [Fact]
@@ -28,31 +29,56 @@ public class EbayImageServiceTests
     }
 
     [Fact]
-    public void NonXmlEbayAnswer_GivesAReadableError()
+    public void CreatedResponse_ReturnsThePictureUrl()
     {
-        var ex = Assert.Throws<Exception>(() => EbayImageService.ParseUploadResponse(503, "Service Unavailable"));
-        Assert.Contains("HTTP 503", ex.Message);
-        Assert.Contains("Service Unavailable", ex.Message);
+        const string json = @"{ ""imageUrl"": ""https://i.ebayimg.com/images/g/abc/s-l1600.jpg"", ""expirationDate"": ""2026-12-01T00:00:00.000Z"" }";
+        Assert.Equal("https://i.ebayimg.com/images/g/abc/s-l1600.jpg", EbayImageService.ParseImageResponse(201, json));
     }
 
     [Fact]
-    public void SuccessResponse_ReturnsThePictureUrl()
+    public void CreatedWithoutBody_MeansUseTheLocationHeader()
     {
-        const string xml = @"<?xml version=""1.0"" encoding=""UTF-8""?>
-<UploadSiteHostedPicturesResponse xmlns=""urn:ebay:apis:eBLBaseComponents"">
-  <Ack>Success</Ack>
-  <SiteHostedPictureDetails><FullURL>https://i.ebayimg.com/00/s/abc/$_1.JPG</FullURL></SiteHostedPictureDetails>
-</UploadSiteHostedPicturesResponse>";
-        Assert.Equal("https://i.ebayimg.com/00/s/abc/$_1.JPG", EbayImageService.ParseUploadResponse(200, xml));
+        Assert.Null(EbayImageService.ParseImageResponse(201, ""));
     }
 
     [Fact]
-    public void FailureResponse_ReturnsEbaysMessage()
+    public void ErrorResponse_ShowsEbaysMessage()
     {
-        const string xml = @"<UploadSiteHostedPicturesResponse xmlns=""urn:ebay:apis:eBLBaseComponents"">
-  <Ack>Failure</Ack><Errors><LongMessage>Picture is too small.</LongMessage></Errors>
-</UploadSiteHostedPicturesResponse>";
-        var ex = Assert.Throws<Exception>(() => EbayImageService.ParseUploadResponse(200, xml));
-        Assert.Contains("Picture is too small.", ex.Message);
+        const string json = @"{ ""errors"": [ { ""errorId"": 190201, ""domain"": ""API_MEDIA"", ""message"": ""The image file size is larger than the limit."" } ] }";
+        var ex = Assert.Throws<Exception>(() => EbayImageService.ParseImageResponse(400, json));
+        Assert.Contains("HTTP 400", ex.Message);
+        Assert.Contains("larger than the limit", ex.Message);
+    }
+
+    [Fact]
+    public void NonJsonError_IsQuoted()
+    {
+        var ex = Assert.Throws<Exception>(() => EbayImageService.ParseImageResponse(404, "Resource not found"));
+        Assert.Contains("HTTP 404", ex.Message);
+        Assert.Contains("Resource not found", ex.Message);
+    }
+
+    [Fact]
+    public void ProgressStore_TracksEachPicture()
+    {
+        var store = new PublishProgressStore();
+        store.Start(5, "Checking the listing");
+        store.SetImages(5, new[] { "https://supplier/a.jpg", "data:image/png;base64,AAAA" });
+        store.SetImage(5, 0, PublishImageStates.Uploaded);
+        store.SetImage(5, 1, PublishImageStates.Failed, "The supplier site answered 403 Forbidden instead of the picture");
+
+        var progress = store.Get(5)!;
+        Assert.Equal(PublishImageStates.Uploaded, progress.Images[0].State);
+        Assert.Equal("Uploaded image", progress.Images[1].Url); // data: URLs aren't sent back to the page
+        Assert.Contains("403", progress.Images[1].Message);
+        Assert.Null(store.Get(6));
+    }
+
+    [Fact]
+    public void ProgressStore_IgnoresPublishesThatWerentStarted()
+    {
+        var store = new PublishProgressStore(); // e.g. bulk publish, which has its own job progress
+        store.SetImages(9, new[] { "https://supplier/a.jpg" });
+        Assert.Null(store.Get(9));
     }
 }

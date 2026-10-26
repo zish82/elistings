@@ -1,19 +1,19 @@
-using System.IO;
 using System.Net.Http.Headers;
 using System.Text;
-using System.Xml;
-using System.Xml.Linq;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Server.Configuration;
 
 namespace Server.Services;
 
-/// <summary>Uploads listing pictures to eBay Picture Services (Trading API UploadSiteHostedPictures).</summary>
+/// <summary>
+/// Uploads listing pictures to eBay Picture Services with the Media API
+/// (createImageFromFile / createImageFromUrl). The old Trading API call UploadSiteHostedPictures was
+/// switched off by eBay on 30 Sep 2026 (it now answers 404 "Resource not found").
+/// </summary>
 public class EbayImageService : IMarketplaceImageService
 {
-    private const string ApiVersion = "1191";
     private const string BrowserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
-    private static readonly XNamespace Ns = "urn:ebay:apis:eBLBaseComponents";
 
     private readonly HttpClient _httpClient;
     private readonly EbaySettings _settings;
@@ -26,29 +26,32 @@ public class EbayImageService : IMarketplaceImageService
         _ebayService = ebayService;
     }
 
-    private string ApiUrl => _settings.IsSandbox ? "https://api.sandbox.ebay.com/ws/api.dll" : "https://api.ebay.com/ws/api.dll";
+    private string MediaBaseUrl => _settings.IsSandbox
+        ? "https://apim.sandbox.ebay.com/commerce/media/v1_beta"
+        : "https://apim.ebay.com/commerce/media/v1_beta";
 
-    public async Task<string> UploadImageFromUrlAsync(string imageUrl, int? accountId = null)
+    public async Task<string> UploadImageFromUrlAsync(string imageUrl, int? accountId = null, Action<string>? step = null)
     {
         if (imageUrl.StartsWith("data:image", StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine("[ImageService] Processing base64 data URL...");
             var parts = imageUrl.Split(new[] { "base64," }, StringSplitOptions.None);
-            if (parts.Length != 2) throw new Exception("Invalid base64 image data.");
+            if (parts.Length != 2) throw new Exception("The uploaded image isn't valid (bad data URL).");
 
-            var imageData = Convert.FromBase64String(parts[1]);
-            return await UploadImageAsync(imageData, "uploaded_image.jpg", accountId);
+            step?.Invoke("Uploading to eBay");
+            return await UploadImageAsync(Convert.FromBase64String(parts[1]), "uploaded_image.jpg", accountId);
         }
 
         // 1) Download the picture ourselves and send the bytes.
         //    Supplier sites can refuse this server (e.g. Safelincs returns a block page instead of the picture),
-        // 2) …so if we don't get a real image, let eBay fetch the URL itself (ExternalPictureURL).
+        // 2) …so if we don't get a real image, let eBay fetch the URL itself (createImageFromUrl).
+        step?.Invoke("Downloading from the supplier");
         string? downloadProblem;
         try
         {
             var (data, problem) = await DownloadImageAsync(imageUrl);
             if (data != null)
             {
+                step?.Invoke("Uploading to eBay");
                 var fileName = Path.GetFileName(new Uri(imageUrl).LocalPath);
                 if (string.IsNullOrEmpty(fileName)) fileName = "image.jpg";
                 return await UploadImageAsync(data, fileName, accountId);
@@ -57,14 +60,15 @@ public class EbayImageService : IMarketplaceImageService
         }
         catch (HttpRequestException ex)
         {
-            downloadProblem = $"download failed ({ex.Message})";
+            downloadProblem = $"Download failed ({ex.Message})";
         }
         catch (TaskCanceledException)
         {
-            downloadProblem = "download timed out";
+            downloadProblem = "Download timed out";
         }
 
         Console.WriteLine($"[ImageService] {downloadProblem} – asking eBay to fetch {imageUrl} itself");
+        step?.Invoke("Couldn't download it here – asking eBay to fetch it");
         try
         {
             return await UploadExternalUrlAsync(imageUrl, accountId);
@@ -87,14 +91,14 @@ public class EbayImageService : IMarketplaceImageService
         using var response = await _httpClient.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
-            return (null, $"the supplier site answered {(int)response.StatusCode} {response.ReasonPhrase} instead of the picture");
+            return (null, $"The supplier site answered {(int)response.StatusCode} {response.ReasonPhrase} instead of the picture");
         }
 
         var data = await response.Content.ReadAsByteArrayAsync();
         if (!LooksLikeImage(data))
         {
             var type = response.Content.Headers.ContentType?.MediaType ?? "unknown type";
-            return (null, $"the supplier site returned {type} ({data.Length} bytes) instead of a picture – it may be blocking this server");
+            return (null, $"The supplier site returned {type} ({data.Length} bytes) instead of a picture – it may be blocking this server");
         }
         return (data, null);
     }
@@ -102,86 +106,51 @@ public class EbayImageService : IMarketplaceImageService
     public async Task<string> UploadImageAsync(byte[] imageData, string fileName, int? accountId = null)
     {
         var token = await _ebayService.GetOAuthTokenAsync(accountId);
+        Console.WriteLine($"[ImageService] Uploading image '{fileName}' ({imageData.Length} bytes) to eBay (Media API)...");
 
-        Console.WriteLine($"[ImageService] Uploading image '{fileName}' ({imageData.Length} bytes) to eBay via Raw Byte Multipart...");
+        // Plain, quoted multipart headers (no filename*= extension, no quoted boundary) – what eBay's docs/examples send.
+        var image = new ByteArrayContent(imageData);
+        image.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeFor(imageData));
+        image.Headers.ContentDisposition = new ContentDispositionHeaderValue("form-data")
+        {
+            Name = "\"image\"",
+            FileName = $"\"{SafeFileName(fileName)}\""
+        };
+        var boundary = "eListings" + Guid.NewGuid().ToString("N");
+        using var form = new MultipartFormDataContent(boundary);
+        form.Headers.ContentType = MediaTypeHeaderValue.Parse($"multipart/form-data; boundary={boundary}");
+        form.Add(image);
 
-        // Manual Multipart Construction - The most robust way to handle legacy eBay EPS
-        var boundary = "eBayBinaryBoundary" + DateTime.Now.Ticks.ToString("x");
-        var utf8 = new UTF8Encoding(false); // No BOM
-
-        // 1. Build the XML Payload
-        var safePictureName = fileName.Length > 40 ? fileName.Substring(0, 40) : fileName;
-        var xmlRequest = $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<UploadSiteHostedPicturesRequest xmlns=""urn:ebay:apis:eBLBaseComponents"">
-  <Version>{ApiVersion}</Version>
-  <PictureName>{System.Security.SecurityElement.Escape(safePictureName)}</PictureName>
-  <ExtensionInDays>30</ExtensionInDays>
-</UploadSiteHostedPicturesRequest>";
-
-        // 2. Build the Full Request Body Manually
-        using var bodyStream = new MemoryStream();
-        using var writer = new StreamWriter(bodyStream, utf8);
-
-        // Part 1: XMLPayload
-        writer.Write($"--{boundary}\r\n");
-        writer.Write("Content-Disposition: form-data; name=\"XMLPayload\"\r\n");
-        writer.Write("Content-Type: text/xml; charset=utf-8\r\n\r\n");
-        writer.Write(xmlRequest);
-        writer.Write("\r\n");
-
-        // Part 2: image
-        writer.Write($"--{boundary}\r\n");
-        writer.Write("Content-Disposition: form-data; name=\"image\"; filename=\"image.jpg\"\r\n");
-        writer.Write("Content-Type: application/octet-stream\r\n\r\n");
-        writer.Flush(); // Flush text to stream before writing binary data
-
-        bodyStream.Write(imageData, 0, imageData.Length);
-
-        // Closing boundary
-        writer.Write($"\r\n--{boundary}--\r\n");
-        writer.Flush();
-
-        using var request = NewTradingRequest(token);
-        request.Content = new ByteArrayContent(bodyStream.ToArray());
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
-        request.Content.Headers.ContentType.Parameters.Add(new NameValueHeaderValue("boundary", boundary));
-
-        return await SendAsync(request);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{MediaBaseUrl}/image/create_image_from_file") { Content = form };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return await SendAsync(request, token);
     }
 
     /// <summary>eBay downloads the picture from <paramref name="imageUrl"/> itself (no bytes sent from here).</summary>
     private async Task<string> UploadExternalUrlAsync(string imageUrl, int? accountId)
     {
         var token = await _ebayService.GetOAuthTokenAsync(accountId);
-        var xmlRequest = $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<UploadSiteHostedPicturesRequest xmlns=""urn:ebay:apis:eBLBaseComponents"">
-  <Version>{ApiVersion}</Version>
-  <ExternalPictureURL>{System.Security.SecurityElement.Escape(imageUrl)}</ExternalPictureURL>
-  <ExtensionInDays>30</ExtensionInDays>
-</UploadSiteHostedPicturesRequest>";
-
-        using var request = NewTradingRequest(token);
-        request.Content = new StringContent(xmlRequest, new UTF8Encoding(false), "text/xml");
-        return await SendAsync(request);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{MediaBaseUrl}/image/create_image_from_url")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { imageUrl }), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return await SendAsync(request, token);
     }
 
-    private HttpRequestMessage NewTradingRequest(string token)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Post, ApiUrl);
-        request.Headers.Add("X-EBAY-API-CALL-NAME", "UploadSiteHostedPictures");
-        request.Headers.Add("X-EBAY-API-SITEID", "3");
-        request.Headers.Add("X-EBAY-API-COMPATIBILITY-LEVEL", ApiVersion);
-        request.Headers.Add("X-EBAY-API-IAF-TOKEN", token);
-        return request;
-    }
-
-    private async Task<string> SendAsync(HttpRequestMessage request)
+    private async Task<string> SendAsync(HttpRequestMessage request, string token)
     {
         using var response = await _httpClient.SendAsync(request);
         var content = await response.Content.ReadAsStringAsync();
         try
         {
-            var url = ParseUploadResponse((int)response.StatusCode, content);
+            var url = ParseImageResponse((int)response.StatusCode, content);
+            if (url == null && response.Headers.Location != null)
+            {
+                url = await GetImageUrlAsync(response.Headers.Location, token); // 201 with only a Location header
+            }
+            if (string.IsNullOrEmpty(url)) throw new Exception("eBay accepted the picture but didn't return its address.");
+
             Console.WriteLine($"[ImageService] Upload Success: {url}");
             return url;
         }
@@ -193,47 +162,84 @@ public class EbayImageService : IMarketplaceImageService
         }
     }
 
-    /// <summary>eBay's picture URL from an UploadSiteHostedPictures response, or an exception with a readable reason.</summary>
-    internal static string ParseUploadResponse(int statusCode, string content)
+    /// <summary>getImage: the picture's EPS URL from the Location returned by the create call.</summary>
+    private async Task<string?> GetImageUrlAsync(Uri location, string token)
     {
-        XDocument doc;
-        try
+        var uri = location.IsAbsoluteUri ? location : new Uri(new Uri(MediaBaseUrl + "/"), location);
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await _httpClient.SendAsync(request);
+        return ParseImageResponse((int)response.StatusCode, await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>
+    /// The EPS picture URL from a Media API image response; null when a successful response has no body (use Location);
+    /// an exception with eBay's message for errors.
+    /// </summary>
+    internal static string? ParseImageResponse(int statusCode, string content)
+    {
+        JsonElement root = default;
+        var isJson = false;
+        if (!string.IsNullOrWhiteSpace(content))
         {
-            doc = XDocument.Parse(content);
-        }
-        catch (XmlException)
-        {
-            var snippet = content.Length > 200 ? content[..200] + "…" : content;
-            throw new Exception($"eBay Image Upload Failed: eBay answered HTTP {statusCode} with an unexpected response: {snippet.Trim()}");
+            try
+            {
+                using var doc = JsonDocument.Parse(content);
+                root = doc.RootElement.Clone();
+                isJson = true;
+            }
+            catch (JsonException) { }
         }
 
-        var ack = doc.Root?.Element(Ns + "Ack")?.Value;
-        if (ack == "Success" || ack == "Warning")
+        if (statusCode is >= 200 and < 300)
         {
-            var fullUrl = doc.Root?.Element(Ns + "SiteHostedPictureDetails")?.Element(Ns + "FullURL")?.Value;
-            if (!string.IsNullOrEmpty(fullUrl)) return fullUrl;
+            if (isJson && root.ValueKind == JsonValueKind.Object && root.TryGetProperty("imageUrl", out var u) && u.ValueKind == JsonValueKind.String)
+                return u.GetString();
+            return null;
         }
 
-        var errors = doc.Root?.Elements(Ns + "Errors")
-            .Select(e => e.Element(Ns + "LongMessage")?.Value)
-            .Where(m => !string.IsNullOrEmpty(m))
-            .ToList();
-        var errorMsg = errors is { Count: > 0 } ? string.Join(", ", errors) : "Unknown error";
-        throw new Exception($"eBay Image Upload Failed: {errorMsg}");
+        if (isJson && root.ValueKind == JsonValueKind.Object && root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
+        {
+            var messages = errors.EnumerateArray()
+                .Select(e => e.TryGetProperty("longMessage", out var lm) && lm.ValueKind == JsonValueKind.String ? lm.GetString()
+                           : e.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null)
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Distinct()
+                .ToList();
+            if (messages.Count > 0)
+                throw new Exception($"eBay rejected the picture (HTTP {statusCode}): {string.Join(" ", messages)}");
+        }
+
+        var snippet = content.Length > 200 ? content[..200] + "…" : content;
+        throw new Exception($"eBay rejected the picture (HTTP {statusCode}): {(string.IsNullOrWhiteSpace(snippet) ? "no details" : snippet.Trim())}");
     }
 
     /// <summary>True for JPEG, PNG, GIF, WebP, BMP, TIFF and AVIF/HEIC bytes (checks the file signature).</summary>
-    internal static bool LooksLikeImage(byte[] data)
+    internal static bool LooksLikeImage(byte[] data) => DetectFormat(data) != null;
+
+    private static string MediaTypeFor(byte[] data) => DetectFormat(data) ?? "application/octet-stream";
+
+    private static string? DetectFormat(byte[] data)
     {
-        if (data.Length < 12) return false;
+        if (data.Length < 12) return null;
         bool StartsWith(params byte[] sig) => data.AsSpan(0, sig.Length).SequenceEqual(sig);
 
-        return StartsWith(0xFF, 0xD8, 0xFF)                                        // JPEG
-            || StartsWith(0x89, 0x50, 0x4E, 0x47)                                  // PNG
-            || StartsWith(0x47, 0x49, 0x46, 0x38)                                  // GIF
-            || (StartsWith(0x52, 0x49, 0x46, 0x46) && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50) // WebP
-            || StartsWith(0x42, 0x4D)                                              // BMP
-            || StartsWith(0x49, 0x49, 0x2A, 0x00) || StartsWith(0x4D, 0x4D, 0x00, 0x2A) // TIFF
-            || (data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x70); // AVIF/HEIC ("ftyp")
+        if (StartsWith(0xFF, 0xD8, 0xFF)) return "image/jpeg";
+        if (StartsWith(0x89, 0x50, 0x4E, 0x47)) return "image/png";
+        if (StartsWith(0x47, 0x49, 0x46, 0x38)) return "image/gif";
+        if (StartsWith(0x52, 0x49, 0x46, 0x46) && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50) return "image/webp";
+        if (StartsWith(0x42, 0x4D)) return "image/bmp";
+        if (StartsWith(0x49, 0x49, 0x2A, 0x00) || StartsWith(0x4D, 0x4D, 0x00, 0x2A)) return "image/tiff";
+        if (data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x70) // "ftyp"
+            return data[8] == 0x61 ? "image/avif" : "image/heic";
+        return null;
+    }
+
+    /// <summary>Plain ASCII file name for the multipart header.</summary>
+    private static string SafeFileName(string fileName)
+    {
+        var clean = new string(fileName.Where(c => c < 128 && (char.IsLetterOrDigit(c) || c is '.' or '-' or '_')).ToArray());
+        if (clean.Length > 60) clean = clean[^60..];
+        return string.IsNullOrEmpty(clean) || !clean.Contains('.') ? "image.jpg" : clean;
     }
 }

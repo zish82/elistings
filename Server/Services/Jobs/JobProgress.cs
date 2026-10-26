@@ -64,6 +64,18 @@ public sealed class JobProgress : IAsyncDisposable
 
     public void ItemSucceeded() { lock (_lock) { _processed++; _succeeded++; _dirty = true; } }
     public void ItemSkipped() { lock (_lock) { _processed++; _skipped++; _dirty = true; } }
+
+    /// <summary>Counts as succeeded, but the note (e.g. pictures left out) is listed with the errors.</summary>
+    public void ItemSucceededWithWarning(string warning)
+    {
+        lock (_lock)
+        {
+            _processed++;
+            _succeeded++;
+            if (_errors.Count < MaxStoredErrors) _errors.Add("Warning – " + warning);
+            _dirty = true;
+        }
+    }
     public void ItemFailed(string error)
     {
         lock (_lock)

@@ -1,0 +1,90 @@
+@using Shared
+@* Picture-by-picture status of a publish, and any pictures that were left out. *@
+
+@if (Progress != null && Progress.Images.Count > 0)
+{
+    <div class="small">
+        @if (!string.IsNullOrWhiteSpace(Progress.Stage))
+        {
+            <div class="mb-1 fw-semibold">@Progress.Stage</div>
+        }
+        <ul class="list-unstyled mb-0">
+            @for (var i = 0; i < Progress.Images.Count; i++)
+            {
+                var image = Progress.Images[i];
+                <li class="d-flex gap-2 align-items-start py-1 border-top">
+                    <span style="width: 1.2rem;" class="flex-shrink-0 text-center">
+                        @switch (image.State)
+                        {
+                            case PublishImageStates.Uploaded:
+                            case PublishImageStates.OnEbay:
+                                <i class="bi bi-check-circle-fill text-success" title="@image.State"></i>
+                                break;
+                            case PublishImageStates.Failed:
+                                <i class="bi bi-x-circle-fill text-danger" title="Failed"></i>
+                                break;
+                            case PublishImageStates.Working:
+                                <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+                                break;
+                            default:
+                                <i class="bi bi-circle text-muted" title="Waiting"></i>
+                                break;
+                        }
+                    </span>
+                    <div class="text-break" style="min-width: 0;">
+                        <div>
+                            Picture @(i + 1):
+                            @if (image.Url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <a href="@image.Url" target="_blank" rel="noopener" class="text-muted">@ShortName(image.Url)</a>
+                            }
+                            else
+                            {
+                                <span class="text-muted">@image.Url</span>
+                            }
+                            <span class="@StateClass(image.State)"> – @image.State</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(image.Message))
+                        {
+                            <div class="@(image.State == PublishImageStates.Failed ? "text-danger" : "text-muted")">@image.Message</div>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+    </div>
+}
+
+@if (Warnings.Count > 0)
+{
+    <div class="alert alert-warning small mt-2 mb-0">
+        <div class="fw-semibold mb-1">Published without @Warnings.Count picture(s):</div>
+        <ul class="mb-0 ps-3">
+            @foreach (var w in Warnings)
+            {
+                <li class="text-break">@w</li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    [Parameter] public PublishProgressDto? Progress { get; set; }
+    [Parameter] public List<string> Warnings { get; set; } = new();
+
+    private static string StateClass(string state) => state switch
+    {
+        PublishImageStates.Uploaded or PublishImageStates.OnEbay => "text-success",
+        PublishImageStates.Failed => "text-danger fw-semibold",
+        PublishImageStates.Working => "text-primary",
+        _ => "text-muted"
+    };
+
+    /// <summary>Last part of the address, e.g. ".../first-aid-kit_front/530x530.jpg".</summary>
+    private static string ShortName(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return url;
+        var segments = uri.AbsolutePath.Trim('/').Split('/');
+        return segments.Length >= 2 ? $"…/{segments[^2]}/{segments[^1]}" : uri.AbsolutePath;
+    }
+}

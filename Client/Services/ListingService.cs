@@ -382,6 +382,39 @@ public class ListingService
         return await response.Content.ReadFromJsonAsync<ListingDto>() ?? throw new Exception("Failed to deserialize response");
     }
 
+    /// <summary>Live picture-by-picture status of a running publish; null when there is none yet.</summary>
+    public async Task<PublishProgressDto?> GetPublishProgressAsync(int id)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"api/ebay/publish/{id}/progress");
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        using var response = await _http.SendAsync(request);
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent || !response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<PublishProgressDto>();
+    }
+
+    /// <summary>
+    /// Publishes and, while that runs, polls the progress about once a second and passes it to <paramref name="onProgress"/>
+    /// (also once more at the end so the final picture states are shown).
+    /// </summary>
+    public async Task<ListingDto> PublishListingWithProgressAsync(int id, Func<PublishProgressDto, Task> onProgress)
+    {
+        var publish = PublishListingAsync(id);
+        while (!publish.IsCompleted)
+        {
+            await Task.WhenAny(publish, Task.Delay(900));
+            try
+            {
+                var progress = await GetPublishProgressAsync(id);
+                if (progress != null) await onProgress(progress);
+            }
+            catch
+            {
+                // progress is only for display; the publish result below is what matters
+            }
+        }
+        return await publish; // throws the publish error, if any
+    }
+
     public async Task<List<CategorySuggestionDto>> GetCategorySuggestionsAsync(string title, int? accountId = null)
     {
         var url = $"api/ebaypolicies/category-suggestions?title={Uri.EscapeDataString(title)}";

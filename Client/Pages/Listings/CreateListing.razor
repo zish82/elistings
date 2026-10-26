@@ -557,6 +557,16 @@
                     {
                         <div class="text-primary"><div class="spinner-border spinner-border-sm me-2" role="status"></div>@publishStatus</div>
                     }
+                    @if (publishProgress != null || publishWarnings.Count > 0)
+                    {
+                        <div class="mt-2">
+                            <PublishProgressPanel Progress="publishProgress" Warnings="publishWarnings" />
+                        </div>
+                        @if (!isPublishing && publishWarnings.Count > 0)
+                        {
+                            <a href="/" class="btn btn-sm btn-outline-secondary mt-2">Back to My Listings</a>
+                        }
+                    }
                 </div>
             }
         </div>
@@ -600,6 +610,8 @@
     private string? imageUploadError;
 
     private string publishStatus = "";
+    private PublishProgressDto? publishProgress;
+    private List<string> publishWarnings = new();
     private string publishStatusShort = "Processing...";
     private bool isPublishing = false;
 
@@ -1390,6 +1402,8 @@
         }
 
         isPublishing = true;
+        publishProgress = null;
+        publishWarnings = new();
         publishStatus = "Step 1/2: Saving local changes...";
         publishStatusShort = "Saving...";
         StateHasChanged();
@@ -1412,17 +1426,36 @@
             publishStatusShort = "Publishing...";
             StateHasChanged();
 
-            await ListingService.PublishListingAsync(listingId);
-            
+            var published = await ListingService.PublishListingWithProgressAsync(listingId, async progress =>
+            {
+                publishProgress = progress;
+                await InvokeAsync(StateHasChanged);
+            });
+            publishProgress = await ListingService.GetPublishProgressAsync(listingId) ?? publishProgress;
+            publishWarnings = published.PublishWarnings ?? new();
+
+            if (publishWarnings.Count > 0)
+            {
+                // Stay on the page so the missing pictures can be read.
+                publishStatus = "Success! Listing published on eBay, but some pictures were left out (see below). ✅";
+                StateHasChanged();
+                return;
+            }
+
             publishStatus = "Success! Listing updated on eBay. ✅";
             StateHasChanged();
-            
+
             await Task.Delay(2000);
             Navigation.NavigateTo("/");
         }
         catch (Exception ex)
         {
             publishStatus = $"Error: {ex.Message} ❌";
+            if (publishProgress != null)
+            {
+                try { publishProgress = await ListingService.GetPublishProgressAsync(publishProgress.ListingId) ?? publishProgress; }
+                catch { /* display only */ }
+            }
         }
         finally
         {

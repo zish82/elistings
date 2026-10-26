@@ -175,6 +175,7 @@ builder.Services.AddHttpClient("safelincs")
 
 builder.Services.AddHttpClient<Server.Services.IEbayService, Server.Services.EbayService>();
 builder.Services.AddHttpClient<Server.Services.IMarketplaceImageService, Server.Services.EbayImageService>();
+builder.Services.AddSingleton<Server.Services.PublishProgressStore>(); // live picture-by-picture publish status
 builder.Services.AddScoped<Server.Services.IEdenSupplierSyncService, Server.Services.EdenSupplierSyncService>();
 builder.Services.AddScoped<Server.Services.IFeedProductSyncService, Server.Services.DropShipMallFeedSyncService>();
 builder.Services.AddHttpClient("eden-auth")

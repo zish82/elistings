@@ -26,21 +26,38 @@ public class EbayController : ControllerBase
         _currentUserService = currentUserService;
     }
 
+    /// <summary>Listings this user may publish / see progress for: their own; Managers/Admins everyone's.</summary>
+    private IQueryable<Listing>? AccessibleListings()
+    {
+        var query = _context.Listings.AsQueryable();
+        if (_currentUserService.CanViewAllListings) return query;
+        var userId = _currentUserService.UserId;
+        return userId == null ? null : query.Where(l => l.OwnerUserId == userId.Value);
+    }
+
+    /// <summary>Live status of a publish that is running (picture by picture). 204 when there is none.</summary>
+    [HttpGet("publish/{id}/progress")]
+    public async Task<ActionResult<PublishProgressDto>> GetPublishProgress(int id, [FromServices] PublishProgressStore progressStore)
+    {
+        var query = AccessibleListings();
+        if (query == null) return Unauthorized();
+        if (!await query.AnyAsync(l => l.Id == id)) return NotFound();
+
+        var progress = progressStore.Get(id);
+        return progress == null ? NoContent() : Ok(progress);
+    }
+
     [HttpPost("publish/{id}")]
-    public async Task<ActionResult<ListingDto>> PublishListing(int id, [FromServices] SkuService skuService)
+    public async Task<ActionResult<ListingDto>> PublishListing(int id, [FromServices] SkuService skuService, [FromServices] PublishProgressStore progressStore)
     {
         try
         {
-            var query = _context.Listings.Where(l => l.Id == id);
-            if (!_currentUserService.CanViewAllListings)
-            {
-                var userId = _currentUserService.UserId;
-                if (userId == null) return Unauthorized();
-                query = query.Where(l => l.OwnerUserId == userId.Value);
-            }
+            var query = AccessibleListings();
+            if (query == null) return Unauthorized();
 
-            var listing = await query.FirstOrDefaultAsync();
+            var listing = await query.FirstOrDefaultAsync(l => l.Id == id);
             if (listing == null) return NotFound();
+            progressStore.Start(id, "Checking the listing");
 
             ListingDto dto;
             try
@@ -58,6 +75,7 @@ public class EbayController : ControllerBase
             var result = await _ebayService.CreateListingAsync(dto);
             ListingPublishHelper.ApplyPublishResult(listing, result);
             await _context.SaveChangesAsync();
+            progressStore.SetStage(id, "Published");
 
             return Ok(new ListingDto
             {
@@ -69,7 +87,8 @@ public class EbayController : ControllerBase
                 Status = listing.Status,
                 EbayItemId = listing.EbayItemId,
                 Sku = listing.Sku,
-                EbayOfferId = listing.EbayOfferId
+                EbayOfferId = listing.EbayOfferId,
+                PublishWarnings = result.ImageWarnings
             });
         }
         catch (Exception ex)

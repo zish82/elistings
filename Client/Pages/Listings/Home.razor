@@ -175,11 +175,23 @@ else
         </div>
     }
     
+    @if (publishingId.HasValue && publishProgress != null)
+    {
+        <div class="alert alert-light border" role="status">
+            <div class="fw-semibold mb-1"><span class="spinner-border spinner-border-sm me-2"></span>Publishing listing #@publishingId…</div>
+            <PublishProgressPanel Progress="publishProgress" />
+        </div>
+    }
+
     @if (!string.IsNullOrEmpty(bulkPublishStatus))
     {
-        <div class="alert @(bulkPublishStatus.Contains("failed", StringComparison.OrdinalIgnoreCase) ? "alert-danger" : "alert-info") alert-dismissible fade show text-break" role="alert">
+        <div class="alert @(bulkPublishStatus.Contains("failed", StringComparison.OrdinalIgnoreCase) ? "alert-danger" : publishWarnings.Count > 0 ? "alert-warning" : "alert-info") alert-dismissible fade show text-break" role="alert">
             @bulkPublishStatus
-            <button type="button" class="btn-close" @onclick='() => bulkPublishStatus = ""'></button>
+            @if (publishProgress != null && (publishWarnings.Count > 0 || bulkPublishStatus.Contains("failed", StringComparison.OrdinalIgnoreCase)))
+            {
+                <div class="mt-2 bg-white rounded p-2"><PublishProgressPanel Progress="publishProgress" /></div>
+            }
+            <button type="button" class="btn-close" @onclick="ClearPublishStatus"></button>
         </div>
     }
 
@@ -465,15 +477,27 @@ else
 
     private int? publishingId;
 
+    private PublishProgressDto? publishProgress;
+    private List<string> publishWarnings = new();
+
     private async Task Publish(int id)
     {
         publishingId = id;
         bulkPublishStatus = "";
+        publishProgress = null;
+        publishWarnings = new();
         try
         {
-            await ListingService.PublishListingAsync(id);
+            var published = await ListingService.PublishListingWithProgressAsync(id, async progress =>
+            {
+                publishProgress = progress;
+                await InvokeAsync(StateHasChanged);
+            });
+            publishWarnings = published.PublishWarnings ?? new();
             await LoadListings();
-            bulkPublishStatus = $"Listing #{id} published to eBay.";
+            bulkPublishStatus = publishWarnings.Count > 0
+                ? $"Listing #{id} published to eBay, but {publishWarnings.Count} picture(s) were left out (see below)."
+                : $"Listing #{id} published to eBay.";
         }
         catch (Exception ex)
         {
@@ -481,8 +505,17 @@ else
         }
         finally
         {
+            try { publishProgress = await ListingService.GetPublishProgressAsync(id) ?? publishProgress; }
+            catch { /* display only */ }
             publishingId = null;
         }
+    }
+
+    private void ClearPublishStatus()
+    {
+        bulkPublishStatus = "";
+        publishProgress = null;
+        publishWarnings = new();
     }
 
     private HashSet<int> selectedIds = new();

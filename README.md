@@ -421,6 +421,7 @@ working or even refresh the page – the progress bar picks up where it was.
 |---|---|
 | *User is not eligible for Business Policy* | Opt in to business policies in eBay Seller Hub and create Payment, Postage and Returns policies. |
 | *The item specific X is missing* | Fill **X** in *eBay Item Specifics* on the listing, then publish again. |
+| Picture errors while publishing | The page lists every picture as it's processed (✔ uploaded / ✖ failed, with the reason). If at least one picture uploads, the listing is published with those and the missing ones are listed as warnings (bulk publish: under the job's warnings). If the supplier site blocks the download, eBay is asked to fetch the picture itself. |
 | *A system error has occurred* (eBay 25001) | Temporary eBay error – the app retries automatically; try again later if it persists. |
 | *Cannot publish: price is not set / no images / title is N characters* | Fix the field named and publish again. |
 | Import shows *est.* prices for Eden | The trade price couldn't be confirmed; check the Eden login is configured and re-run the import. |
