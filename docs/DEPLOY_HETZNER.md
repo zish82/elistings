@@ -68,7 +68,7 @@ sudo apt -y install unattended-upgrades fail2ban
 sudo dpkg-reconfigure -plow unattended-upgrades      # answer Yes
 
 # SSH: keys only, no root login
-sudo tee /etc/ssh/sshd_config.d/99-hardening.conf >/dev/null <<'EOF'
+sudo tee /etc/ssh/sshd_config.d/00-hardening.conf >/dev/null <<'EOF'
 PermitRootLogin no
 PasswordAuthentication no
 KbdInteractiveAuthentication no
