@@ -14,6 +14,19 @@ Rough monthly cost: server ~€6 + backups ~€1.20 + mailbox ~£1 per user + do
 
 ---
 
+## Quick way: two scripts
+
+After the manual parts (SSH key, Hetzner firewall, server created), you can let scripts do the rest:
+
+1. **On your Mac** – copy the code: `bash deploy/push.sh zee@SERVER_IP`
+2. **On the server** – `cd ~/elistings && sudo bash deploy/setup-server.sh`
+   (updates, security, swap, Docker, checks `.env`, starts the app, asks you to create the admin through the
+   SSH tunnel, then starts HTTPS and nightly backups). Safe to run again; it skips what's done.
+   The first run creates `.env` and stops – fill it in, then run it again.
+3. **Updates later (on your Mac)** – `bash deploy/push.sh zee@SERVER_IP --restart`
+
+The sections below are the same steps by hand.
+
 ## 1. Buy the domain
 
 1. Check the name is free and buy it at a registrar, e.g. **Cloudflare Registrar** (sold at cost, free DNS),
