@@ -20,7 +20,8 @@
 
 set -euo pipefail
 
-APP_USER="${APP_USER:-${SUDO_USER:-zee}}"
+APP_USER="${APP_USER:-${SUDO_USER:-}}"
+[[ -z "$APP_USER" || "$APP_USER" == "root" ]] && APP_USER=zee
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSHD_DIR=/etc/ssh/sshd_config.d
 

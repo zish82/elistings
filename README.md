@@ -6,7 +6,7 @@ marketplace listings, and publishes them to eBay. This guide walks through every
 > Prices: supplier prices are shown as the supplier gives them (DropShipMall and Eden are **ex VAT**).
 > The app adds VAT, delivery and your margin using the settings on **Suppliers & Delivery**.
 
-Developers: code layout in [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md); going live in
+Developers: code layout in [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md); going live in [README-DEPLOY.md](README-DEPLOY.md) (all steps), plus
 [docs/DEPLOY_HETZNER.md](docs/DEPLOY_HETZNER.md) (step by step) and [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ---
