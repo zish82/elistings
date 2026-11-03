@@ -1,0 +1,314 @@
+<title>Hetzner Server Setup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one narrow column of numbered steps; each step = tick box + title + note + copyable command blocks. */
+:root {
+  --bg: #f6f7f8;
+  --panel: #ffffff;
+  --fg: #1c2226;
+  --muted: #5d6870;
+  --line: #dde2e5;
+  --accent: #0f7c86;
+  --accent-soft: #e2f2f3;
+  --code-bg: #14191c;
+  --code-fg: #e4ecef;
+  --done: #2f8f4e;
+  --warn-bg: #fff6e0;
+  --warn-fg: #7a5600;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111518; --panel: #181e22; --fg: #e6ebee; --muted: #9aa6ad; --line: #2a3237;
+    --accent: #4fc2cc; --accent-soft: #163236; --code-bg: #0b0e10; --code-fg: #dce6ea;
+    --done: #5cc27c; --warn-bg: #33290f; --warn-fg: #f2cf7a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111518; --panel: #181e22; --fg: #e6ebee; --muted: #9aa6ad; --line: #2a3237;
+  --accent: #4fc2cc; --accent-soft: #163236; --code-bg: #0b0e10; --code-fg: #dce6ea;
+  --done: #5cc27c; --warn-bg: #33290f; --warn-fg: #f2cf7a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+}
+.wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: grid; gap: 6px; }
+h1 { font-size: 1.5rem; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 0; }
+.vars { display: flex; flex-wrap: wrap; gap: 8px; font-family: var(--font-mono); font-size: .8rem; }
+.vars span { background: var(--accent-soft); color: var(--accent); padding: 3px 8px; border-radius: 6px; }
+.progress { display: flex; align-items: center; gap: 10px; font-size: .85rem; color: var(--muted); }
+.bar { flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--done); transition: width .3s; }
+section { display: grid; gap: 10px; }
+h2 { font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin: 10px 0 0; }
+.step { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+.step > div { min-width: 0; display: grid; gap: 8px; }
+.step input[type=checkbox] { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--done); cursor: pointer; }
+.step.is-done { opacity: .6; }
+.step.is-done .t { text-decoration: line-through; }
+.t { font-weight: 700; }
+.n { font-variant-numeric: tabular-nums; color: var(--muted); font-family: var(--font-mono); font-size: .8rem; margin-right: 6px; }
+.note { color: var(--muted); margin: 0; }
+.warn { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 8px 10px; margin: 0; font-size: .92rem; }
+.cmd { position: relative; background: var(--code-bg); color: var(--code-fg); border-radius: 8px; }
+.cmd pre { margin: 0; padding: 10px 70px 10px 12px; overflow-x: auto; font-family: var(--font-mono); font-size: .8rem; line-height: 1.6; white-space: pre; }
+.cmd button {
+  position: absolute; top: 6px; right: 6px; font: 600 .72rem var(--font-body); color: var(--code-fg);
+  background: var(--code-bg); border: 1px solid var(--muted); border-radius: 6px; padding: 3px 8px; cursor: pointer;
+}
+.cmd button:hover, .cmd button:focus-visible { border-color: var(--accent); outline: none; }
+code { font-family: var(--font-mono); font-size: .85em; background: var(--accent-soft); color: var(--fg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+footer { color: var(--muted); font-size: .85rem; }
+.reset { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: .8rem; }
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Hetzner server setup</h1>
+    <p class="sub">eListings + Digital Club on one CX23, tested on a free sslip.io address until the domain is bought. Tick steps as you go – ticks stay in this browser.</p>
+    <div class="vars"><span>Server IP: 2.29.130.158</span><span>Test address: 2-29-130-158.sslip.io</span><span>User: zee</span></div>
+    <div class="progress"><div class="bar"><i id="bar"></i></div><span id="count">0 / 0</span></div>
+  </header>
+
+  <section>
+    <h2>A · Mac: key and first login</h2>
+    <div class="step" data-id="a1"><input type="checkbox" id="a1" aria-label="Done"><div>
+      <div class="t"><span class="n">1</span>Create the SSH key</div>
+      <p class="note">Enter for the default place, then a passphrase.</p>
+      <div class="cmd"><pre>ssh-keygen -t ed25519</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="a2"><input type="checkbox" id="a2" aria-label="Done"><div>
+      <div class="t"><span class="n">2</span>Change the expired root password</div>
+      <p class="note">Hetzner's password first, then the current one again, then a new one twice. Save the new one.</p>
+      <div class="cmd"><pre>ssh root@2.29.130.158</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="a3"><input type="checkbox" id="a3" aria-label="Done"><div>
+      <div class="t"><span class="n">3</span>Copy the key to the server</div>
+      <p class="note">Uses the new root password once. Should end with "Number of key(s) added: 1".</p>
+      <div class="cmd"><pre>ssh-copy-id root@2.29.130.158</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>B · Hetzner Console: firewall</h2>
+    <div class="step" data-id="b1"><input type="checkbox" id="b1" aria-label="Done"><div>
+      <div class="t"><span class="n">4</span>Find your home IP</div>
+      <div class="cmd"><pre>curl -4 ifconfig.me</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="b2"><input type="checkbox" id="b2" aria-label="Done"><div>
+      <div class="t"><span class="n">5</span>Create and apply the firewall</div>
+      <p class="note">Firewalls → Create firewall. Inbound: TCP 22 from <code>YOUR_HOME_IP/32</code>; TCP 80 and 443 from Any; ICMP from Any. Apply it to the server.</p>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>C · Server (as root): your own user</h2>
+    <div class="step" data-id="c1"><input type="checkbox" id="c1" aria-label="Done"><div>
+      <div class="t"><span class="n">6</span>Create user zee with sudo and your key</div>
+      <p class="note">adduser asks a password (for sudo), then name, room number, phones – press Enter to skip those, then Y.</p>
+      <div class="cmd"><pre>adduser zee
+usermod -aG sudo zee
+rsync --archive --chown=zee:zee ~/.ssh /home/zee</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="c2"><input type="checkbox" id="c2" aria-label="Done"><div>
+      <div class="t"><span class="n">7</span>Test the new login in a new Mac terminal</div>
+      <p class="warn">Don't continue until this works – step 9 turns off root and password logins.</p>
+      <div class="cmd"><pre>ssh zee@2.29.130.158</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>D · Server (as zee): secure it</h2>
+    <div class="step" data-id="d1"><input type="checkbox" id="d1" aria-label="Done"><div>
+      <div class="t"><span class="n">8</span>Updates, automatic security updates, fail2ban</div>
+      <p class="note">Answer Yes in the last one.</p>
+      <div class="cmd"><pre>sudo apt update && sudo apt -y upgrade
+sudo apt -y install unattended-upgrades fail2ban
+sudo dpkg-reconfigure -plow unattended-upgrades</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="d2"><input type="checkbox" id="d2" aria-label="Done"><div>
+      <div class="t"><span class="n">9</span>SSH: keys only, no root login</div>
+      <div class="cmd"><pre>sudo tee /etc/ssh/sshd_config.d/00-hardening.conf >/dev/null &lt;&lt;'EOF'
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+EOF
+sudo systemctl restart ssh</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="d3"><input type="checkbox" id="d3" aria-label="Done"><div>
+      <div class="t"><span class="n">10</span>Swap, timezone, reboot</div>
+      <div class="cmd"><pre>sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+sudo timedatectl set-timezone Europe/London
+sudo reboot</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>E · Docker</h2>
+    <div class="step" data-id="e1"><input type="checkbox" id="e1" aria-label="Done"><div>
+      <div class="t"><span class="n">11</span>Install Docker</div>
+      <div class="cmd"><pre>ssh zee@2.29.130.158
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker zee
+exit</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="e2"><input type="checkbox" id="e2" aria-label="Done"><div>
+      <div class="t"><span class="n">12</span>Log back in and check</div>
+      <div class="cmd"><pre>ssh zee@2.29.130.158
+docker compose version</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>F · Mac: copy the code</h2>
+    <div class="step" data-id="f1"><input type="checkbox" id="f1" aria-label="Done"><div>
+      <div class="t"><span class="n">13</span>rsync the project (no secrets, no build output)</div>
+      <div class="cmd"><pre>cd ~/_source/dsc/elistings
+rsync -av --exclude bin --exclude obj --exclude '*.db*' --exclude .env \
+  --exclude 'Server/appsettings.Development.json' --exclude 'sites/digitalclub/dist' \
+  ./ zee@2.29.130.158:~/elistings/</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>G · Server: settings</h2>
+    <div class="step" data-id="g1"><input type="checkbox" id="g1" aria-label="Done"><div>
+      <div class="t"><span class="n">14</span>Create .env and a database password</div>
+      <div class="cmd"><pre>cd ~/elistings
+cp .env.example .env
+chmod 600 .env
+openssl rand -base64 32
+nano .env</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="g2"><input type="checkbox" id="g2" aria-label="Done"><div>
+      <div class="t"><span class="n">15</span>Fill in .env</div>
+      <p class="note">eBay keys and supplier logins from your <code>appsettings.Development.json</code>. Save: Ctrl+O, Enter, Ctrl+X.</p>
+      <div class="cmd"><pre>POSTGRES_PASSWORD=&lt;the random value&gt;
+DOMAIN=elistings.2-29-130-158.sslip.io
+SITE_DOMAIN=2-29-130-158.sslip.io
+EBAY_APP_ID=...
+EBAY_CERT_ID=...
+EBAY_DEV_ID=...
+EBAY_RUNAME=...
+EDEN_USERNAME=...
+EDEN_PASSWORD=...
+DSM_USERNAME=...
+DSM_PASSWORD=...</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>H · First start (private)</h2>
+    <div class="step" data-id="h1"><input type="checkbox" id="h1" aria-label="Done"><div>
+      <div class="t"><span class="n">16</span>Start app and database</div>
+      <p class="note">First build ~5–10 minutes. Expect db "healthy", app "running".</p>
+      <div class="cmd"><pre>docker compose up -d --build
+docker compose ps</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="h2"><input type="checkbox" id="h2" aria-label="Done"><div>
+      <div class="t"><span class="n">17</span>Create the admin through a tunnel (on the Mac)</div>
+      <p class="note">Then open http://localhost:8080, create the admin, close the tunnel.</p>
+      <div class="cmd"><pre>ssh -L 8080:localhost:8080 zee@2.29.130.158</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>I · Go live with HTTPS</h2>
+    <div class="step" data-id="i1"><input type="checkbox" id="i1" aria-label="Done"><div>
+      <div class="t"><span class="n">18</span>Start everything</div>
+      <p class="note">Wait for "certificate obtained", then Ctrl+C.</p>
+      <div class="cmd"><pre>docker compose --profile https up -d --build
+docker compose logs -f caddy</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="i2"><input type="checkbox" id="i2" aria-label="Done"><div>
+      <div class="t"><span class="n">19</span>Open both addresses</div>
+      <p class="note">Website: <code>https://2-29-130-158.sslip.io</code><br>eListings: <code>https://elistings.2-29-130-158.sslip.io</code></p>
+    </div></div>
+    <div class="step" data-id="i3"><input type="checkbox" id="i3" aria-label="Done"><div>
+      <div class="t"><span class="n">20</span>eBay accepted URL, then reconnect eBay</div>
+      <p class="note">eBay developer portal → RuName → auth accepted URL. Then eListings → eBay Accounts → reconnect.</p>
+      <div class="cmd"><pre>https://elistings.2-29-130-158.sslip.io/api/auth/callback</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>J · Backups</h2>
+    <div class="step" data-id="j1"><input type="checkbox" id="j1" aria-label="Done"><div>
+      <div class="t"><span class="n">21</span>Nightly database backup</div>
+      <p class="note">Run the first line, then paste the second into the editor that opens.</p>
+      <div class="cmd"><pre>mkdir -p ~/backups && crontab -e</pre><button type="button">Copy</button></div>
+      <div class="cmd"><pre>0 3 * * * cd ~/elistings && docker compose exec -T db pg_dump -U elistings elistings | gzip > ~/backups/elistings-$(date +\%F).sql.gz && find ~/backups -name '*.sql.gz' -mtime +14 -delete</pre><button type="button">Copy</button></div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>Later</h2>
+    <div class="step" data-id="k1"><input type="checkbox" id="k1" aria-label="Done"><div>
+      <div class="t"><span class="n">22</span>Updating</div>
+      <p class="note">Run step 13 again from the Mac, then on the server:</p>
+      <div class="cmd"><pre>cd ~/elistings && docker compose --profile https up -d --build</pre><button type="button">Copy</button></div>
+    </div></div>
+    <div class="step" data-id="k2"><input type="checkbox" id="k2" aria-label="Done"><div>
+      <div class="t"><span class="n">23</span>Domain and email</div>
+      <p class="note">After buying the domain: DNS A records for <code>@</code>, <code>www</code>, <code>elistings</code> → 2.29.130.158; set DOMAIN / SITE_DOMAIN in .env; run step 18; update the eBay URL. Email (Zoho): see docs/DEPLOY_HETZNER.md step 8.</p>
+    </div></div>
+  </section>
+
+  <footer><button type="button" class="reset" id="reset">Clear all ticks</button></footer>
+</div>
+
+<script>
+(function () {
+  var KEY = 'hetzner-setup-done';
+  var done = {};
+  try { done = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { done = {}; }
+  var steps = Array.prototype.slice.call(document.querySelectorAll('.step'));
+
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(done)); } catch (e) {} }
+  function render() {
+    var n = 0;
+    steps.forEach(function (s) {
+      var on = !!done[s.dataset.id];
+      s.querySelector('input').checked = on;
+      s.classList.toggle('is-done', on);
+      if (on) n++;
+    });
+    document.getElementById('count').textContent = n + ' / ' + steps.length;
+    document.getElementById('bar').style.width = (100 * n / steps.length) + '%';
+  }
+  steps.forEach(function (s) {
+    s.querySelector('input').addEventListener('change', function (e) {
+      done[s.dataset.id] = e.target.checked; save(); render();
+    });
+  });
+  document.getElementById('reset').addEventListener('click', function () { done = {}; save(); render(); });
+
+  document.querySelectorAll('.cmd button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var pre = b.parentNode.querySelector('pre');
+      var text = pre.textContent;
+      function selectIt() {
+        var r = document.createRange(); r.selectNodeContents(pre);
+        var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        b.textContent = 'Selected';
+      }
+      try {
+        navigator.clipboard.writeText(text).then(function () { b.textContent = 'Copied'; }, selectIt);
+      } catch (e) { selectIt(); }
+      setTimeout(function () { b.textContent = 'Copy'; }, 1500);
+    });
+  });
+  render();
+})();
+</script>

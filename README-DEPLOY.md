@@ -207,6 +207,35 @@ Hetzner blocks outgoing mail ports 25/465 – the app sends through your mail pr
 
 ---
 
+## Part 5b – Safelincs import from your Mac (while Safelincs blocks the server)
+
+Safelincs returns **403 Forbidden** to the server's IP (data-centre addresses are blocked), but allows your home
+connection. Until they allow `2.29.130.158` (or provide a feed), run the import on your Mac **against the server's
+database** – Safelincs sees your home IP, the products are saved straight on the server.
+
+Before the first time: in eListings on the server → **Supplier Feeds** → Safelincs → turn **Enable background sync** off
+(the nightly import would only get 403). Database password: on the server `grep POSTGRES_PASSWORD ~/elistings/.env`.
+
+1. **Mac, terminal 1 – tunnel to the server's database** (leave it open; it shows nothing and waits):
+   ```bash
+   ssh -N -L 5434:localhost:5432 zee@2.29.130.158
+   ```
+2. **Mac, terminal 2 – run the app on the server's database** (same code version as the server):
+   ```bash
+   cd ~/_source/dsc/elistings
+   export ConnectionStrings__DefaultConnection='Host=localhost;Port=5434;Database=elistings;Username=elistings;Password=PASTE_PASSWORD_HERE'
+   export Hangfire__Storage=Memory
+   dotnet run --project Server
+   ```
+   `Hangfire__Storage=Memory` keeps the job on your Mac (otherwise the server could pick it up and get 403 again).
+3. **Open http://localhost:5197**, sign in with your **server** account, and start the Safelincs import on
+   *Supplier Feeds* (upload the trade price list there first if it changed). Takes ~2–3 hours: keep the Mac awake and
+   both terminals open. When it finishes: Ctrl+C in both terminals.
+
+If port 5434 is busy ("Address already in use"), use another (e.g. 5440) in both step 1 and step 2.
+Other Safelincs website calls from the server (stock checks of published Safelincs listings, "fill from URL") also
+get 403 until Safelincs allows the server's IP.
+
 ## Part 6 – Manual reference (what the script does)
 
 Only needed if you prefer doing it by hand. Run as `zee` unless noted.
@@ -269,6 +298,7 @@ docker compose --profile https up -d --build   # public: + Caddy + website
 | `.env: line N: unexpected character` | That line isn't `NAME=value` – fix with `nano .env` |
 | Pasted commands run together | Paste one line at a time |
 | `fallocate: Text file busy` | Swap already exists – check `swapon --show` |
+| Safelincs import: `403 (Forbidden)` | Safelincs blocks the server's IP – use Part 5b, and ask Safelincs to allow `2.29.130.158` |
 | Site doesn't open | Hetzner firewall allows 80/443? `dig +short` shows the server IP? `docker compose logs caddy` |
 | Certificate errors | DNS must point at the server; Cloudflare records "DNS only"; sslip.io is occasionally rate-limited – try later |
 | eBay sign-in fails | RuName accepted URL must be `https://DOMAIN/api/auth/callback` |
