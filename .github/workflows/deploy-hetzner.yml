@@ -1,0 +1,97 @@
+# Deploy to the Hetzner server: GitHub → Actions → "Deploy to Hetzner" → Run workflow.
+#
+# 1. Builds and runs the tests (stops here if anything fails).
+# 2. Joins your Tailscale network for the duration of the job (the server's SSH port stays closed to the internet).
+# 3. Copies the code to ~/elistings on the server (never .env, local settings, databases or build output).
+# 4. Rebuilds and restarts the containers, then checks the app answers.
+#
+# One-time setup: README-DEPLOY.md → "Part 7 – Deploy from GitHub".
+# Repository secrets used: TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS
+
+name: Deploy to Hetzner
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hetzner
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build Server.Tests/Server.Tests.csproj -c Release
+
+      - name: Test
+        run: dotnet test Server.Tests/Server.Tests.csproj -c Release --no-build
+
+  deploy:
+    name: Deploy
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Join Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Copy code to the server
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy_key" \
+            --exclude .git --exclude .github --exclude bin --exclude obj \
+            --exclude '*.db' --exclude '*.db-*' \
+            --exclude .env --exclude 'Server/appsettings.Development.json' \
+            --exclude 'sites/digitalclub/dist' --exclude node_modules \
+            ./ "$TARGET:~/elistings/"
+
+      - name: Rebuild and restart
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$TARGET" 'bash -s' <<'EOF'
+          set -euo pipefail
+          cd ~/elistings
+          docker compose --profile https up -d --build
+          docker image prune -f > /dev/null
+          # The app answers on the server itself once it has started (up to ~2 minutes).
+          for i in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://localhost:8080; then
+              echo "App is up."
+              docker compose ps
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "App did not answer within 2 minutes. Last log lines:"
+          docker compose logs --tail 80 app
+          exit 1
+          EOF

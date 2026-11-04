@@ -195,7 +195,7 @@ Hetzner blocks outgoing mail ports 25/465 – the app sends through your mail pr
 
 | Task | Command |
 |---|---|
-| Update after code changes (Mac) | `bash deploy/push.sh zee@SERVER_IP --restart` |
+| Update after code changes | GitHub → Actions → **Deploy to Hetzner** → Run workflow (Part 7), or from the Mac `bash deploy/push.sh zee@SERVER_IP --restart` |
 | Status | `docker compose ps` |
 | Logs | `docker compose logs -f app` (or `db`, `caddy`) |
 | Restart | `docker compose --profile https restart` |
@@ -283,6 +283,57 @@ docker compose --profile https up -d --build   # public: + Caddy + website
 ```
 
 ---
+
+## Part 7 – Deploy from GitHub (button)
+
+GitHub → **Actions** → **Deploy to Hetzner** → **Run workflow**. It builds and tests, copies the code to the server,
+rebuilds and restarts, and checks the app answers (`.github/workflows/deploy-hetzner.yml`).
+GitHub reaches the server through **Tailscale** (a free private network), so SSH stays closed to the internet.
+
+### One-time setup
+
+1. **Tailscale account** – sign up free at tailscale.com.
+2. **Server joins Tailscale:**
+   ```bash
+   curl -fsSL https://tailscale.com/install.sh | sh
+   sudo tailscale up            # open the link it prints and approve the server
+   tailscale ip -4              # note this 100.x.x.x address = DEPLOY_HOST
+   ```
+   In the Tailscale admin → Machines → the server → **Disable key expiry**.
+3. **Tailscale tag + OAuth client** (lets GitHub join for one job):
+   - Admin → **Access controls** – add to the policy:
+     ```json
+     "tagOwners": { "tag:ci": ["autogroup:admin"] },
+     ```
+     (keep the existing rules; the default policy lets your devices reach each other).
+   - Admin → **Settings → OAuth clients → Generate** – scope **Auth Keys: Write**, tag `tag:ci`.
+     Copy the client ID and secret.
+4. **Deploy SSH key** (only for GitHub; on your Mac):
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/elistings_deploy -N "" -C github-deploy
+   ssh-copy-id -i ~/.ssh/elistings_deploy.pub zee@2.29.130.158
+   ```
+5. **Server's fingerprint** (on the server, using the address from step 2):
+   ```bash
+   ssh-keyscan -t ed25519 $(tailscale ip -4)
+   ```
+6. **GitHub → repo → Settings → Secrets and variables → Actions → New repository secret:**
+
+   | Secret | Value |
+   |---|---|
+   | `TS_OAUTH_CLIENT_ID` | from step 3 |
+   | `TS_OAUTH_SECRET` | from step 3 |
+   | `DEPLOY_HOST` | the 100.x.x.x address from step 2 |
+   | `DEPLOY_USER` | `zee` |
+   | `DEPLOY_SSH_KEY` | the whole output of `cat ~/.ssh/elistings_deploy` (private key, incl. BEGIN/END lines) |
+   | `DEPLOY_KNOWN_HOSTS` | the line printed in step 5 |
+
+7. Optional: GitHub → Settings → **Environments → production** → *Required reviewers* (you) for an extra
+   confirmation click before each deploy.
+8. Push the code to GitHub (`git push`), then run the workflow.
+
+Tip: install Tailscale on your Mac too – then `ssh zee@100.x.x.x` works from anywhere, and you could remove the
+port-22 rule from the Hetzner firewall entirely.
 
 ## Troubleshooting
 
