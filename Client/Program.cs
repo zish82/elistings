@@ -11,5 +11,6 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<ListingService>();
+builder.Services.AddScoped<ProductsPageState>(); // Products page filters/scroll, restored after viewing a product
 
 await builder.Build().RunAsync();

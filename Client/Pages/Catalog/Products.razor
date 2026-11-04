@@ -5,6 +5,7 @@
 @inject ListingService ListingService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject ProductsPageState PageState
 
 <PageTitle>Products</PageTitle>
 
@@ -310,7 +311,7 @@ else
                         <tr id="product-@product.Id" class="@(product.Id == highlightProductId ? "table-warning" : "")">
                             <td><input type="checkbox" class="form-check-input" checked="@selectedIds.Contains(product.Id)" @onchange="() => ToggleSelection(product.Id)" /></td>
                             <td>
-                                <a href="/products/@product.Id">@product.Title</a>
+                                <a href="/products/@product.Id" @onclick="RememberPosition">@product.Title</a>
                                 @if (product.GroupSize > 1 && product.GroupKey != null && groupKey != product.GroupKey)
                                 {
                                     <div><a href="javascript:void(0)" class="small" @onclick="() => ShowGroup(product)">@product.GroupSize sizes / variants</a></div>
@@ -596,8 +597,74 @@ else
         }
     }
 
+    // ---- Coming back from a product page: same supplier, filters, view, open categories and scroll position.
+    private double? restoreScrollY;
+
+    /// <summary>Saves where you are (called when a product is opened; reads the scroll position synchronously).</summary>
+    private void RememberPosition()
+    {
+        double scrollY = 0;
+        try
+        {
+            if (JS is IJSInProcessRuntime js) scrollY = js.Invoke<double>("eval", "window.scrollY");
+        }
+        catch { /* position is a convenience only */ }
+
+        PageState.Supplier = selectedSupplier;
+        PageState.Search = search;
+        PageState.Sort = sort;
+        PageState.Category = category;
+        PageState.MinPrice = minPrice;
+        PageState.MaxPrice = maxPrice;
+        PageState.InStockOnly = inStockOnly;
+        PageState.HideAdded = hideAdded;
+        PageState.EstimatesOnly = estimatesOnly;
+        PageState.TagId = tagId;
+        PageState.GroupKey = groupKey;
+        PageState.GroupLabel = groupLabel;
+        PageState.View = view;
+        PageState.Grouping = grouping;
+        PageState.CategoriesInStockOnly = categoriesInStockOnly;
+        PageState.ExpandedCategories = expandedCategories.ToList();
+        PageState.ScrollY = scrollY;
+        PageState.MarkSaved();
+    }
+
+    /// <summary>Applies the saved state, unless the address asks for something specific (?supplier= / ?group=).</summary>
+    private bool RestoreState()
+    {
+        if (!PageState.HasState || !string.IsNullOrWhiteSpace(SupplierFromUrl) || !string.IsNullOrWhiteSpace(GroupFromUrl)) return false;
+        if (!suppliers.Contains(PageState.Supplier, StringComparer.OrdinalIgnoreCase)) return false; // e.g. access removed
+
+        selectedSupplier = PageState.Supplier;
+        search = PageState.Search;
+        sort = string.IsNullOrEmpty(PageState.Sort) ? sort : PageState.Sort;
+        category = PageState.Category;
+        minPrice = PageState.MinPrice;
+        maxPrice = PageState.MaxPrice;
+        inStockOnly = PageState.InStockOnly;
+        hideAdded = PageState.HideAdded;
+        estimatesOnly = PageState.EstimatesOnly;
+        tagId = PageState.TagId;
+        groupKey = PageState.GroupKey;
+        groupLabel = string.IsNullOrEmpty(PageState.GroupLabel) ? groupLabel : PageState.GroupLabel;
+        view = PageState.View;
+        grouping = string.IsNullOrEmpty(PageState.Grouping) ? grouping : PageState.Grouping;
+        categoriesInStockOnly = PageState.CategoriesInStockOnly;
+        expandedCategories.Clear();
+        foreach (var key in PageState.ExpandedCategories) expandedCategories.Add(key);
+        return true;
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (restoreScrollY.HasValue)
+        {
+            var y = restoreScrollY.Value;
+            restoreScrollY = null;
+            await JS.InvokeVoidAsync("window.scrollTo", 0, y);
+            return;
+        }
         if (scrollToTop)
         {
             scrollToTop = false;
@@ -665,10 +732,18 @@ else
         await LoadFeeds();
         if (!string.IsNullOrWhiteSpace(SupplierFromUrl)) selectedSupplier = SupplierFromUrl;
         if (!string.IsNullOrWhiteSpace(GroupFromUrl)) groupKey = GroupFromUrl;
+        var restoring = RestoreState();
         await LoadCategories();
         await LoadFilterLists();
         await LoadImportStatus();
         await LoadProducts();
+        if (restoring && view == "categories")
+        {
+            var keys = expandedCategories.ToList();
+            await LoadCategorySummary();
+            foreach (var key in keys) await LoadCategoryProducts(key);
+        }
+        if (restoring) restoreScrollY = PageState.ScrollY; // applied after the loaded list has rendered
         if (!string.IsNullOrEmpty(groupKey) && products.Any())
         {
             var first = products[0];
