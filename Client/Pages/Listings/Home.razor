@@ -67,7 +67,7 @@
                                 <td>@account.Name</td>
                                 <td>
                                     <span class="badge @(account.IsConnected ? "bg-success" : "bg-warning text-dark")">
-                                        @(account.IsConnected ? "Connected" : "Expired")
+                                        @(account.IsConnected ? "Connected" : "Needs reconnect")
                                     </span>
                                 </td>
                                 <td>@(account.ExpiresAtUtc?.ToLocalTime().ToString("g") ?? "-")</td>
