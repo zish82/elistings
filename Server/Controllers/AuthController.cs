@@ -216,9 +216,16 @@ public class AuthController : ControllerBase
         if (result == null) return Redirect(BuildRedirect("error", "Failed to parse eBay token response."));
 
         // Save to DB
-        var accountName = string.IsNullOrWhiteSpace(pending.AccountName)
-            ? $"eBay Account {(await _context.EbayTokens.CountAsync(t => t.UserId == pending.UserId)) + 1}"
-            : pending.AccountName!;
+        // No label given: the next free "eBay Account N" (a count alone could repeat a name after a delete
+        // and overwrite that account).
+        var accountName = pending.AccountName;
+        if (string.IsNullOrWhiteSpace(accountName))
+        {
+            var existingNames = await _context.EbayTokens.Where(t => t.UserId == pending.UserId).Select(t => t.Name).ToListAsync();
+            var n = existingNames.Count + 1;
+            while (existingNames.Contains($"eBay Account {n}", StringComparer.OrdinalIgnoreCase)) n++;
+            accountName = $"eBay Account {n}";
+        }
         var existingToken = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == pending.UserId && t.Name == accountName);
         if (existingToken == null)
         {
