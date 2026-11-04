@@ -334,8 +334,10 @@ public class AuthController : ControllerBase
                 Id = t.Id,
                 Name = t.Name,
                 IsDefault = t.IsDefault,
-                IsConnected = t.ExpiryTime > DateTime.UtcNow,
-                ExpiresAtUtc = t.ExpiryTime,
+                // eBay access tokens last 2 hours and are renewed automatically from the refresh token (~18 months),
+                // so an account stays connected until the refresh token expires. Manual tokens can't be renewed.
+                IsConnected = t.RefreshToken == "MANUAL" ? t.ExpiryTime > DateTime.UtcNow : t.RefreshTokenExpiryTime > DateTime.UtcNow,
+                ExpiresAtUtc = t.RefreshToken == "MANUAL" ? t.ExpiryTime : t.RefreshTokenExpiryTime,
                 CanReadOrders = t.RefreshToken == "MANUAL" || (t.Scopes != null && t.Scopes.Contains("sell.fulfillment")),
                 LinkedListingCount = _context.Listings.Count(l => l.OwnerUserId == userId.Value && l.EbayAccountId == t.Id)
             })

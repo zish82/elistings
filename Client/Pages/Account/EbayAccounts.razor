@@ -60,7 +60,7 @@ else
                 <tr>
                     <th>Name</th>
                     <th>Status</th>
-                    <th>Expires</th>
+                    <th title="Reconnect before this date">Connected until</th>
                     <th>Linked Listings</th>
                     <th>Default</th>
                     <th class="text-end">Actions</th>
@@ -74,7 +74,7 @@ else
                         <td>@account.Name</td>
                         <td>
                             <span class="badge @(account.IsConnected ? "bg-success" : "bg-warning text-dark")">
-                                @(account.IsConnected ? "Connected" : "Expired")
+                                @(account.IsConnected ? "Connected" : "Needs reconnect")
                             </span>
                             @if (!account.CanReadOrders)
                             {
@@ -83,7 +83,7 @@ else
                                 </div>
                             }
                         </td>
-                        <td>@(account.ExpiresAtUtc?.ToLocalTime().ToString("g") ?? "-")</td>
+                        <td>@(account.ExpiresAtUtc?.ToLocalTime().ToString("d MMM yyyy") ?? "-")</td>
                         <td>
                             @if (account.LinkedListingCount > 0)
                             {
