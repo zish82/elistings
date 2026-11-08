@@ -277,7 +277,7 @@ else
                             @foreach (var pub in listing.Publications)
                             {
                                 <span class="badge @(pub.Status == PublicationStatuses.Published ? "bg-info text-dark" : "bg-danger") me-1"
-                                      title="@(pub.Marketplace)@(pub.ExternalListingId != null ? $" item {pub.ExternalListingId}" : "")@(pub.LastError != null ? $" – last error: {pub.LastError}" : "")">
+                                      title="@PublicationTitle(pub)">
                                     @pub.AccountName@(pub.Status == PublicationStatuses.Published ? "" : " ✖")
                                 </span>
                             }
@@ -412,6 +412,12 @@ else
             await JS.InvokeVoidAsync("eval", $"document.getElementById('listing-{id}')?.scrollIntoView({{block:'center'}})");
         }
     }
+
+    /// <summary>Hover text of an account badge: marketplace, eBay item number, last error.</summary>
+    private static string PublicationTitle(ListingPublicationDto pub)
+        => pub.Marketplace
+           + (pub.ExternalListingId != null ? " item " + pub.ExternalListingId : string.Empty)
+           + (pub.LastError != null ? " – last error: " + pub.LastError : string.Empty);
 
     /// <summary>?account=ID (from the Accounts overview): show only listings on that account.</summary>
     [SupplyParameterFromQuery(Name = "account")] public int? AccountFromUrl { get; set; }
