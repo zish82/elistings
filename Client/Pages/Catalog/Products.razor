@@ -178,9 +178,11 @@
                                     else
                                     {
                                         @ProductTable(items, sortable: false)
-                                        @if (items.Count >= SupplierProductQuery.DefaultLimit)
+                                        @if (categoryHasMore.Contains(key))
                                         {
-                                            <div class="small text-muted">First @SupplierProductQuery.DefaultLimit shown (highest price first).</div>
+                                            <button type="button" class="btn btn-sm btn-outline-primary me-2" @onclick="() => LoadCategoryProducts(key, append: true)">
+                                                Load more (@items.Count of @c.Products shown)
+                                            </button>
                                         }
                                         <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleCategory(c)">▴ Hide @c.Label</button>
                                     }
@@ -255,7 +257,7 @@ else
         <button class="btn btn-sm btn-primary" @onclick="LoadProducts" disabled="@isLoading">Apply filters</button>
         <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFilters" disabled="@isLoading">Clear</button>
         <span class="small text-muted align-self-center">
-            @products.Count product(s)@(products.Count >= SupplierProductQuery.DefaultLimit ? $" (first {SupplierProductQuery.DefaultLimit} shown – narrow the filters to see more)" : "")
+            @products.Count product(s)@(hasMoreProducts ? " shown – more below (Load more)" : "")
         </span>
     </div>
 </div>
@@ -273,6 +275,14 @@ else if (!products.Any())
 else
 {
     @ProductTable(products, sortable: true)
+    @if (hasMoreProducts)
+    {
+        <div class="text-center my-3">
+            <button class="btn btn-outline-primary" @onclick="LoadMoreProducts" disabled="@isLoadingMore">
+                @(isLoadingMore ? "Loading..." : $"Load more (next {SupplierProductQuery.DefaultLimit})")
+            </button>
+        </div>
+    }
 }
 }
 
@@ -520,16 +530,27 @@ else
     {
         expandedCategories.Clear();
         categoryProducts.Clear();
+        categoryHasMore.Clear();
     }
 
-    private async Task LoadCategoryProducts(string key)
+    // Categories whose expanded list has more products to load.
+    private readonly HashSet<string> categoryHasMore = new();
+
+    private async Task LoadCategoryProducts(string key, bool append = false)
     {
         try
         {
-            var query = new SupplierProductQuery { Supplier = selectedSupplier, Sort = SupplierProductSort.PriceHighToLow, InStockOnly = categoriesInStockOnly };
+            var already = append && categoryProducts.TryGetValue(key, out var current) ? current : new List<SupplierProductListItemDto>();
+            var query = new SupplierProductQuery
+            {
+                Supplier = selectedSupplier, Sort = SupplierProductSort.PriceHighToLow, InStockOnly = categoriesInStockOnly,
+                Offset = already.Count
+            };
             if (grouping == ProductGrouping.SupplierCategory) query.Category = key;
             else query.TagId = int.Parse(key);
-            categoryProducts[key] = await ListingService.GetSupplierProductsAsync(query);
+            var page = await ListingService.GetSupplierProductsAsync(query);
+            categoryProducts[key] = already.Concat(page).ToList();
+            if (page.Count >= query.Limit) categoryHasMore.Add(key); else categoryHasMore.Remove(key);
         }
         catch (Exception ex)
         {
@@ -853,7 +874,28 @@ else
         statusMessage = null;
         try
         {
-            var loaded = await ListingService.GetSupplierProductsAsync(new SupplierProductQuery
+            var loaded = await ListingService.GetSupplierProductsAsync(CurrentQuery(0));
+            products.Clear();
+            products.AddRange(loaded);
+            hasMoreProducts = loaded.Count >= SupplierProductQuery.DefaultLimit;
+            selectedIds.RemoveWhere(id => products.All(p => p.Id != id));
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not load products: {ex.Message}";
+            products.Clear();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    /// <summary>The list view's filters as a query, starting at <paramref name="offset"/>.</summary>
+    private SupplierProductQuery CurrentQuery(int offset)
+    {
+        var q = new SupplierProductQuery
             {
                 // A group link (e.g. from the Dashboard) doesn't know the supplier; group keys are unique enough.
                 // In a group view only the group applies, so every variant is shown whatever the filters are.
@@ -868,20 +910,32 @@ else
                 GroupKey = string.IsNullOrEmpty(groupKey) ? null : groupKey,
                 TagId = string.IsNullOrEmpty(groupKey) ? tagId : null,
                 Sort = sort
-            });
-            products.Clear();
-            products.AddRange(loaded);
-            selectedIds.RemoveWhere(id => products.All(p => p.Id != id));
+            };
+        q.Offset = offset;
+        return q;
+    }
+
+    private bool hasMoreProducts;
+    private bool isLoadingMore;
+
+    private async Task LoadMoreProducts()
+    {
+        isLoadingMore = true;
+        try
+        {
+            var page = await ListingService.GetSupplierProductsAsync(CurrentQuery(products.Count));
+            var known = products.Select(p => p.Id).ToHashSet();
+            products.AddRange(page.Where(p => !known.Contains(p.Id)));
+            hasMoreProducts = page.Count >= SupplierProductQuery.DefaultLimit;
         }
         catch (Exception ex)
         {
             statusCss = "alert-danger";
-            statusMessage = $"Could not load products: {ex.Message}";
-            products.Clear();
+            statusMessage = $"Could not load more products: {ex.Message}";
         }
         finally
         {
-            isLoading = false;
+            isLoadingMore = false;
         }
     }
 

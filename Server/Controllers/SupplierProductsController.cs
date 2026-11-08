@@ -115,17 +115,19 @@ public class SupplierProductsController : ControllerBase
 
         query = q.Sort switch
         {
-            SupplierProductSort.PriceHighToLow => query.OrderByDescending(p => p.SupplierPrice != null).ThenByDescending(p => (double?)p.SupplierPrice),
-            SupplierProductSort.PriceLowToHigh => query.OrderByDescending(p => p.SupplierPrice != null).ThenBy(p => (double?)p.SupplierPrice),
+            // Id last everywhere, so "Load more" pages never repeat or skip products with equal values.
+            SupplierProductSort.PriceHighToLow => query.OrderByDescending(p => p.SupplierPrice != null).ThenByDescending(p => (double?)p.SupplierPrice).ThenBy(p => p.Id),
+            SupplierProductSort.PriceLowToHigh => query.OrderByDescending(p => p.SupplierPrice != null).ThenBy(p => (double?)p.SupplierPrice).ThenBy(p => p.Id),
             SupplierProductSort.ProfitHighToLow => query
                 .OrderByDescending(p => p.SuggestedPrice != null && p.SupplierPrice != null)
-                .ThenByDescending(p => (double?)p.SuggestedPrice - (double?)p.SupplierPrice),
-            SupplierProductSort.StockHighToLow => query.OrderByDescending(p => p.StockLevel ?? -1),
-            _ => query.OrderBy(p => p.Supplier).ThenBy(p => p.Title)
+                .ThenByDescending(p => (double?)p.SuggestedPrice - (double?)p.SupplierPrice)
+                .ThenBy(p => p.Id),
+            SupplierProductSort.StockHighToLow => query.OrderByDescending(p => p.StockLevel ?? -1).ThenBy(p => p.Id),
+            _ => query.OrderBy(p => p.Supplier).ThenBy(p => p.Title).ThenBy(p => p.Id)
         };
 
         var limit = Math.Clamp(q.Limit, 1, SupplierProductQuery.MaxLimit);
-        var products = await query.Take(limit).ToListAsync();
+        var products = await query.Skip(Math.Max(0, q.Offset)).Take(limit).ToListAsync();
 
         // Variant counts per group (visible products only), for the "N sizes" link.
         var groupKeys = products.Where(p => p.GroupKey != null).Select(p => p.GroupKey!).Distinct().ToList();

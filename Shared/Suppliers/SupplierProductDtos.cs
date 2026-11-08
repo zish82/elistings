@@ -64,6 +64,8 @@ public class SupplierProductQuery
     /// <summary>One of <see cref="SupplierProductSort"/>.</summary>
     public string? Sort { get; set; }
     public int Limit { get; set; } = DefaultLimit;
+    /// <summary>Products to skip (for "Load more").</summary>
+    public int Offset { get; set; }
 }
 
 public static class SupplierProductSort

@@ -107,6 +107,23 @@ public class CategorySummaryTests
     }
 
     [Fact]
+    public async Task LoadMore_ReturnsTheNextPage_WithoutRepeats()
+    {
+        using var ctx = Seed();
+        for (var i = 0; i < 7; i++)
+            ctx.SupplierProducts.Add(new SupplierProduct { Supplier = "DropShipMall", Title = $"Same price {i}", SupplierPrice = 5m, CategoryName = "Bulk" });
+        ctx.SaveChanges();
+
+        async Task<List<SupplierProductListItemDto>> Page(int offset) => Assert.IsType<List<SupplierProductListItemDto>>(Assert.IsType<OkObjectResult>(
+            (await Controller(ctx).GetProducts(new SupplierProductQuery { Supplier = "DropShipMall", Category = "Bulk", Limit = 3, Offset = offset, Sort = SupplierProductSort.PriceHighToLow })).Result).Value);
+
+        var all = (await Page(0)).Concat(await Page(3)).Concat(await Page(6)).ToList();
+        Assert.Equal(7, all.Count);
+        Assert.Equal(7, all.Select(p => p.Id).Distinct().Count());
+        Assert.Empty(await Page(9));
+    }
+
+    [Fact]
     public async Task DisabledSupplier_IsHiddenFromListers_ButNotFromManagersAndAdmins()
     {
         using var ctx = Seed();

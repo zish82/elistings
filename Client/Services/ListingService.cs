@@ -235,6 +235,7 @@ public class ListingService
         Add("tagId", q.TagId?.ToString(inv));
         Add("sort", q.Sort);
         Add("limit", q.Limit.ToString(inv));
+        if (q.Offset > 0) Add("offset", q.Offset.ToString(inv));
 
         return await GetAsync<List<SupplierProductListItemDto>>("api/supplierproducts?" + string.Join("&", query)) ?? new List<SupplierProductListItemDto>();
     }
