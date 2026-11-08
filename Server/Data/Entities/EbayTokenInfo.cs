@@ -18,4 +18,6 @@ public class EbayTokenInfo
     /// <summary>Orders have been imported from this date (sales report history); null = never.</summary>
     public DateTime? OrdersSyncedFromUtc { get; set; }
     public DateTime? OrdersLastSyncedAtUtc { get; set; }
+    /// <summary>The eBay shop's user ID (from GetUser), so the same user can't connect the same shop twice. Null = unknown.</summary>
+    public string? EbayUserId { get; set; }
 }

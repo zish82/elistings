@@ -660,6 +660,7 @@ public static class LegacySqliteSchema
 
                 // Managers manage assigned users; a listing can be published to several accounts (added Nov 2026).
                 EnsureColumn("Users", "ManagerUserId", "INTEGER NULL");
+                EnsureColumn("EbayTokens", "EbayUserId", "TEXT NULL");
                 db.Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS ""ListingPublications"" (
                         ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_ListingPublications"" PRIMARY KEY AUTOINCREMENT,

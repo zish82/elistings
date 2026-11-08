@@ -227,6 +227,20 @@ public class AuthController : ControllerBase
             accountName = $"eBay Account {n}";
         }
         var existingToken = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == pending.UserId && t.Name == accountName);
+
+        // The same eListings user can't connect the same eBay shop twice (other users may connect it too).
+        var ebayUserId = await EbayShopIdentity.GetEbayUserIdAsync(_httpClient, result.access_token, _settings.IsSandbox);
+        if (ebayUserId != null)
+        {
+            var sameShop = await EbayShopIdentity.FindSameShopAsync(_context, _httpClient, _settings.IsSandbox, pending.UserId, ebayUserId, existingToken?.Id);
+            if (sameShop != null)
+            {
+                await _context.SaveChangesAsync(); // keep shop IDs looked up for older accounts
+                return Redirect(BuildRedirect("error",
+                    $"The eBay shop '{ebayUserId}' is already connected as '{sameShop.Name}'. Use Reconnect on that account instead."));
+            }
+        }
+
         if (existingToken == null)
         {
             existingToken = new EbayTokenInfo 
@@ -237,6 +251,7 @@ public class AuthController : ControllerBase
             };
             _context.EbayTokens.Add(existingToken);
         }
+        existingToken.EbayUserId = ebayUserId ?? existingToken.EbayUserId;
 
         existingToken.AccessToken = result.access_token;
         existingToken.RefreshToken = result.refresh_token;
@@ -286,6 +301,19 @@ public class AuthController : ControllerBase
             var existingToken = !string.IsNullOrWhiteSpace(accountName)
                 ? await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value && t.Name == accountName)
                 : null;
+
+            // The same eListings user can't connect the same eBay shop twice.
+            var ebayUserId = await EbayShopIdentity.GetEbayUserIdAsync(_httpClient, request.Token, _settings.IsSandbox);
+            if (ebayUserId != null)
+            {
+                var sameShop = await EbayShopIdentity.FindSameShopAsync(_context, _httpClient, _settings.IsSandbox, userId.Value, ebayUserId, existingToken?.Id);
+                if (sameShop != null)
+                {
+                    await _context.SaveChangesAsync();
+                    return Conflict($"The eBay shop '{ebayUserId}' is already connected as '{sameShop.Name}'. Use Reconnect on that account instead.");
+                }
+            }
+
             if (existingToken == null)
             {
                 existingToken = new EbayTokenInfo 
@@ -297,6 +325,7 @@ public class AuthController : ControllerBase
                 _context.EbayTokens.Add(existingToken);
             }
 
+            existingToken.EbayUserId = ebayUserId ?? existingToken.EbayUserId;
             existingToken.AccessToken = request.Token;
             existingToken.RefreshToken = "MANUAL";
             existingToken.ExpiryTime = DateTime.UtcNow.AddHours(2); // Manually generated tokens usually last 2 hours or more
