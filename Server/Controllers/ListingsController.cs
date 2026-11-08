@@ -517,6 +517,29 @@ public class ListingsController : ControllerBase
     }
 
 
+    /// <summary>Bulk publish to chosen accounts (the current user's own or shared accounts).</summary>
+    [HttpPost("bulk-publish-to-accounts")]
+    public async Task<ActionResult<BulkJobStartedDto>> BulkPublishToAccounts([FromBody] BulkPublishRequest request, [FromServices] Server.Services.Jobs.BulkJobService jobs)
+    {
+        if (request?.ListingIds == null || !request.ListingIds.Any()) return BadRequest("No IDs provided");
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+
+        var accountIds = request.AccountIds?.Distinct().ToList() ?? new List<int>();
+        if (accountIds.Count == 0)
+        {
+            return Ok(new BulkJobStartedDto { JobId = await jobs.EnqueueBulkPublishAsync(userId.Value, request.ListingIds.Distinct().ToList()) });
+        }
+        var usable = await AccountAccess.AccountIdsForUserAsync(_context, userId.Value);
+        if (!_currentUserService.CanManageUsers && accountIds.Any(id => !usable.Contains(id)))
+        {
+            return BadRequest("You can only publish to your own accounts or accounts shared with you.");
+        }
+
+        var jobId = await jobs.EnqueueBulkPublishToAccountsAsync(userId.Value, request.ListingIds.Distinct().ToList(), accountIds);
+        return Ok(new BulkJobStartedDto { JobId = jobId });
+    }
+
     private static ListingDto ToListingDto(Listing listing, string? ebayAccountName, string? ownerEmail)
     {
         return new ListingDto

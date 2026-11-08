@@ -395,6 +395,26 @@ public class AccountsAndVisibilityTests
         Assert.Equal((old.Id, 10, "item-old", "offer-old"), (pub.ListingId, pub.AccountId, pub.ExternalListingId, pub.OfferId));
     }
 
+    [Fact]
+    public async Task BulkPublishToChosenAccounts_DraftGoesToChosenOnly_PublishedKeepsItsAccounts()
+    {
+        using var ctx = Seed();
+        var draft = NewListing(3, "draft", 10);
+        var live = NewListing(3, "live", 10);
+        ctx.Listings.AddRange(draft, live);
+        ctx.SaveChanges();
+        ctx.ListingPublications.Add(new ListingPublication { ListingId = live.Id, AccountId = 10, Status = PublicationStatuses.Published });
+        ctx.SaveChanges();
+
+        Assert.Equal(new[] { 11 }, await ListingPublisher.BulkTargetsAsync(ctx, draft, new[] { 11 }));
+        Assert.Equal(new[] { 10, 11 }, await ListingPublisher.BulkTargetsAsync(ctx, live, new[] { 11 }));
+
+        var ebay = EbayMock();
+        await Publisher(ctx, ebay.Object).PublishAsync(draft, await ListingPublisher.BulkTargetsAsync(ctx, draft, new[] { 11 }));
+        ebay.Verify(e => e.CreateListingAsync(It.Is<ListingDto>(d => d.EbayAccountId == 10)), Times.Never);
+        Assert.Equal(11, draft.EbayAccountId);
+    }
+
     // ------------------------------------------------------------------ "already posted on this account" warning
 
     private static SupplierProductsController Products(AppDbContext ctx, int userId)

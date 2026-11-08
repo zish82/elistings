@@ -30,6 +30,10 @@ public class BulkJobService
     public Task<string> EnqueueBulkPublishAsync(int userId, List<int> listingIds)
         => EnqueueAsync("publish", userId, tag: null, id => Job(j => j.BulkPublishAsync(id, userId, listingIds)));
 
+    /// <summary>Bulk publish to chosen accounts (listings already published keep their accounts too).</summary>
+    public Task<string> EnqueueBulkPublishToAccountsAsync(int userId, List<int> listingIds, List<int> accountIds)
+        => EnqueueAsync("publish", userId, tag: null, id => Job(j => j.BulkPublishToAccountsAsync(id, userId, listingIds, accountIds)));
+
     public Task<string> EnqueueEnrichAsync(int userId, List<int> listingIds)
         => EnqueueAsync("enrich", userId, tag: null, id => Job(j => j.EnrichListingsAsync(id, userId, listingIds)));
 

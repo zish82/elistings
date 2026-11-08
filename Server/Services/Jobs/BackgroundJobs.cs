@@ -51,6 +51,10 @@ public class BackgroundJobs
         => RunAsync(jobId, userId, progress => BulkPublishCoreAsync(progress, userId, listingIds));
 
     [Queue(DefaultQueue), AutomaticRetry(Attempts = 0)]
+    public Task BulkPublishToAccountsAsync(string jobId, int userId, List<int> listingIds, List<int> accountIds)
+        => RunAsync(jobId, userId, progress => BulkPublishCoreAsync(progress, userId, listingIds, accountIds));
+
+    [Queue(DefaultQueue), AutomaticRetry(Attempts = 0)]
     public Task EnrichListingsAsync(string jobId, int userId, List<int> listingIds)
         => RunAsync(jobId, userId, progress => EnrichCoreAsync(progress, listingIds));
 
@@ -206,7 +210,7 @@ public class BackgroundJobs
 
     // ------------------------------------------------------------------ bulk publish
 
-    private async Task<string?> BulkPublishCoreAsync(JobProgress progress, int userId, List<int> listingIds)
+    private async Task<string?> BulkPublishCoreAsync(JobProgress progress, int userId, List<int> listingIds, List<int>? accountIds = null)
     {
         var ebayService = Get<IEbayService>();
         var skuService = Get<SkuService>();
@@ -230,9 +234,10 @@ public class BackgroundJobs
                 }
                 label = $"#{id} {Truncate(listing.Title, 50)}";
 
-                // Every account it's already on (re-sync), else its own account.
+                // No accounts chosen: every account it's already on (re-sync), else its own account.
                 var publisher = new ListingPublisher(_context, ebayService, settings, skuService, Get<ICurrentUserService>());
-                var outcome = await publisher.PublishAsync(listing);
+                var targets = accountIds is { Count: > 0 } ? await ListingPublisher.BulkTargetsAsync(_context, listing, accountIds) : null;
+                var outcome = await publisher.PublishAsync(listing, targets);
                 var warnings = outcome.Warnings();
                 if (warnings.Count > 0)
                     progress.ItemSucceededWithWarning($"{label}: {string.Join(" | ", warnings)}");

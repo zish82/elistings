@@ -29,6 +29,14 @@ public class PublishRequest
     public List<int> AccountIds { get; set; } = new();
 }
 
+/// <summary>Body of POST api/listings/bulk-publish-to-accounts.</summary>
+public class BulkPublishRequest
+{
+    public List<int> ListingIds { get; set; } = new();
+    /// <summary>Accounts to publish every listing to. Listings already published keep their accounts too (re-synced).</summary>
+    public List<int> AccountIds { get; set; } = new();
+}
+
 /// <summary>Accounts overview: one user with their marketplace accounts and what's posted on each.</summary>
 public class UserAccountsOverviewDto
 {

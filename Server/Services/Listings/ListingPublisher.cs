@@ -80,6 +80,25 @@ public class ListingPublisher
         return listing.EbayAccountId.HasValue ? new List<int> { listing.EbayAccountId.Value } : new List<int>();
     }
 
+    /// <summary>
+    /// Bulk publish to chosen accounts: a published listing keeps the accounts it's on (main account first) plus the chosen
+    /// ones; a draft goes to the chosen accounts only (its main account becomes the first chosen one it can use).
+    /// </summary>
+    public static async Task<List<int>> BulkTargetsAsync(AppDbContext context, Listing listing, IReadOnlyCollection<int> chosen)
+    {
+        var current = await context.ListingPublications
+            .Where(p => p.ListingId == listing.Id && p.Marketplace == MarketplaceNames.Ebay && p.Status == PublicationStatuses.Published)
+            .OrderBy(p => p.Id)
+            .Select(p => p.AccountId)
+            .ToListAsync();
+        if (current.Count == 0) return chosen.Distinct().ToList();
+
+        var targets = new List<int>();
+        if (listing.EbayAccountId.HasValue && current.Contains(listing.EbayAccountId.Value)) targets.Add(listing.EbayAccountId.Value);
+        targets.AddRange(current.Concat(chosen).Where(id => !targets.Contains(id)).Distinct());
+        return targets;
+    }
+
     /// <summary>Publishes (or re-syncs). Throws when nothing could be published; otherwise returns per-account results.</summary>
     public async Task<ListingPublishOutcome> PublishAsync(Listing listing, IReadOnlyCollection<int>? requestedAccountIds = null)
     {

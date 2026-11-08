@@ -154,8 +154,25 @@ else
 
     @if (selectedIds.Any())
     {
-        <div class="alert alert-primary d-flex justify-content-between align-items-center mb-3">
-            <div><strong>@selectedIds.Count</strong> items selected</div>
+        <div class="alert alert-primary d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div>
+                <strong>@selectedIds.Count</strong> items selected
+                @if (ebayAccounts.Count > 1)
+                {
+                    <div class="small mt-1">
+                        <span class="me-2">Publish to:</span>
+                        @foreach (var account in ebayAccounts)
+                        {
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="bulk-acc-@account.Id" checked="@bulkAccountIds.Contains(account.Id)"
+                                       @onchange="e => ToggleBulkAccount(account.Id, e.Value is true)" />
+                                <label class="form-check-label" for="bulk-acc-@account.Id">@account.Name@(account.IsShared ? " (shared)" : "")</label>
+                            </div>
+                        }
+                        <span class="text-muted">@(bulkAccountIds.Any() ? "Already published listings stay on their accounts too." : "None ticked: each listing's own account(s).")</span>
+                    </div>
+                }
+            </div>
             <div>
                 <button class="btn btn-primary btn-sm" @onclick="BulkPublish" disabled="@isBulkPublishing">
                     @if (isBulkPublishing)
@@ -623,7 +640,7 @@ else
         try
         {
             // Runs in the background on the server; progress is shown by <BulkJobProgress>.
-            bulkPublishJobId = await ListingService.StartBulkPublishAsync(idsToProcess);
+            bulkPublishJobId = await ListingService.StartBulkPublishAsync(idsToProcess, bulkAccountIds.ToList());
             selectedIds.Clear();
         }
         catch (Exception ex)
@@ -634,6 +651,15 @@ else
     }
 
     private string? bulkPublishJobId;
+
+    // Bulk publish: accounts ticked in the selection bar (none = each listing's own accounts).
+    private HashSet<int> bulkAccountIds = new();
+
+    private void ToggleBulkAccount(int accountId, bool on)
+    {
+        if (on) bulkAccountIds.Add(accountId);
+        else bulkAccountIds.Remove(accountId);
+    }
 
     private async Task OnBulkPublishFinished(BulkJobDto job)
     {

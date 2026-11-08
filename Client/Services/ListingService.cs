@@ -559,6 +559,14 @@ public class ListingService
     public async Task<EnrichResultDto> FetchSupplierDetailsAsync(int listingId)
         => await SendAsync<EnrichResultDto>(HttpMethod.Post, $"api/listings/{listingId}/fetch-supplier-details") ?? new EnrichResultDto();
 
+    /// <summary>Bulk publish to chosen accounts (empty = where each listing already is, else its own account).</summary>
+    public async Task<string> StartBulkPublishAsync(List<int> ids, List<int> accountIds)
+    {
+        var result = await SendAsync<BulkJobStartedDto>(HttpMethod.Post, "api/listings/bulk-publish-to-accounts",
+            new BulkPublishRequest { ListingIds = ids, AccountIds = accountIds });
+        return result?.JobId ?? throw new Exception("Server did not return a job id.");
+    }
+
     public async Task<string> StartBulkPublishAsync(List<int> ids)
     {
         var result = await SendAsync<BulkJobStartedDto>(HttpMethod.Post, "api/listings/bulk-publish", ids);
