@@ -150,6 +150,23 @@
             }
         };
     </script>
+    <!-- "Back to top" button for long pages: appears after scrolling down, on every page. -->
+    <button type="button" id="back-to-top" aria-label="Back to top" title="Back to top"
+            style="position:fixed;right:calc(20px + env(safe-area-inset-right, 0px));bottom:calc(20px + env(safe-area-inset-bottom, 0px));z-index:1050;
+                   display:none;width:44px;height:44px;border-radius:50%;border:0;background:#0d6efd;color:#fff;
+                   font-size:22px;line-height:44px;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer;">&#8593;</button>
+    <script>
+        (function () {
+            var btn = document.getElementById('back-to-top');
+            function update() { btn.style.display = window.scrollY > 400 ? 'block' : 'none'; }
+            window.addEventListener('scroll', update, { passive: true });
+            btn.addEventListener('click', function () {
+                var smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                window.scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });
+            });
+            update();
+        })();
+    </script>
     <script src="_framework/blazor.webassembly.js"></script>
 </body>
 
