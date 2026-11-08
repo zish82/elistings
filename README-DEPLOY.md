@@ -236,6 +236,26 @@ If port 5434 is busy ("Address already in use"), use another (e.g. 5440) in both
 Other Safelincs website calls from the server (stock checks of published Safelincs listings, "fill from URL") also
 get 403 until Safelincs allows the server's IP.
 
+## Part 5c – Database backup to your Mac, and a local copy of the server data
+
+| Task (on your Mac, project folder) | Command |
+|---|---|
+| Back up the server database | `bash deploy/backup-server.sh zee@2.29.130.158` → `~/elistings-backups/elistings-DATE.dump` (newest 30 kept) |
+| Load the newest backup into a local PostgreSQL | `bash deploy/restore-local.sh` |
+| Back up **and** load in one go | `bash deploy/restore-local.sh --from zee@2.29.130.158` |
+
+`restore-local.sh` needs **Docker Desktop**. It runs PostgreSQL in a container (`elistings-local-pg`, port 5440),
+**replaces** its data with the backup, switches off every supplier's background sync in that copy, and prints the
+two lines to run the app on it:
+
+```bash
+export ConnectionStrings__DefaultConnection='Host=localhost;Port=5440;Database=elistings;Username=elistings;Password=local'
+dotnet run --project Server
+```
+
+Without those lines the app uses your normal local database (SQLite, `Server/app.db`).
+The copy holds your real eBay connections – publishing from the local app posts to real eBay.
+
 ## Part 6 – Manual reference (what the script does)
 
 Only needed if you prefer doing it by hand. Run as `zee` unless noted.

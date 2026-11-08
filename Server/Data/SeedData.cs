@@ -17,6 +17,7 @@ public static class SeedData
         EnsureFeeSettings(db);
         ReimportMisreadOrders(db);
         GrantSuppliersToExistingUsers(db);
+        Server.Services.PublicationQueries.BackfillFromListings(db); // listings published before multi-account publishing
         RecoverInterruptedJobs(db, hangfireIsPersistent);
         db.SaveChanges();
     }

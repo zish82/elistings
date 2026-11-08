@@ -341,6 +341,21 @@ Account → Business policies, otherwise listings can't be published.
 
 ---
 
+## 10b. Accounts overview (`/accounts-overview`) and shared accounts
+
+- **Who sees what:** Admin – every user; Manager – themselves and the users assigned to them (Users page → *Manager*);
+  Lister – themselves. The same rules apply to My Listings and Sales.
+- The page lists each user's marketplace accounts and how many of **their own** listings are published (or failed) on
+  each; click a number to see those listings.
+- **Shared accounts (Admin):** *Shared with → Change* lets other users post with an account. Each user still only sees
+  their own listings on it. When a user adds a product that another user already posted on a shared account, they see
+  *"You are about to post this listing which is already posted on this account and on this marketplace."* and can
+  choose **Add anyway** or **Don't add**.
+- **Posting to several accounts:** on the listing page tick *Also publish to*. Same price and quantity everywhere;
+  business policies are matched by name on each account. Re-sync updates every account the listing is on, and
+  supplier stock changes (quantity 0 / restore) apply to all of them. The My Listings *Account* column shows each
+  account (red = the last publish there failed – hover for the reason).
+
 ## 11. Users (`/users`) – admins only
 
 1. **Add User**: Email, password, role (Admin / Manager / Lister) → **Add**.

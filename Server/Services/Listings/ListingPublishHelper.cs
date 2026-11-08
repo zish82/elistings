@@ -18,14 +18,11 @@ public static class ListingPublishHelper
     public static async Task<ListingDto> PrepareAsync(Listing listing, AppDbContext context, IEbayService ebayService, EbaySettings settings, SkuService skuService,
         ICurrentUserService? publisher = null)
     {
-        // Listings are always published with their owner's eBay account (also when an Admin publishes someone else's).
+        // Listings are always published with an account their owner may use (also when an Admin publishes someone else's):
+        // one the owner connected, or one an Admin shared with them.
         if (!listing.EbayAccountId.HasValue)
         {
-            listing.EbayAccountId = context.EbayTokens
-                .Where(t => t.UserId == listing.OwnerUserId)
-                .OrderByDescending(t => t.IsDefault).ThenBy(t => t.Id)
-                .Select(t => (int?)t.Id)
-                .FirstOrDefault();
+            listing.EbayAccountId = AccountAccess.DefaultAccountId(context, listing.OwnerUserId);
         }
 
         // Drafts created before SKU generation existed get one now; published listings keep theirs.
@@ -61,9 +58,10 @@ public static class ListingPublishHelper
         }
         if (listing.EbayAccountId.HasValue)
         {
-            var accountOwner = context.EbayTokens.Where(t => t.Id == listing.EbayAccountId.Value).Select(t => (int?)t.UserId).FirstOrDefault();
-            if (accountOwner == null) problems.Add("its eBay account is no longer connected (choose another account)");
-            else if (accountOwner != listing.OwnerUserId) problems.Add("its eBay account doesn't belong to the listing's owner (choose one of the owner's accounts)");
+            var accountExists = context.EbayTokens.Any(t => t.Id == listing.EbayAccountId.Value);
+            if (!accountExists) problems.Add("its eBay account is no longer connected (choose another account)");
+            else if (!AccountAccess.CanUse(context, listing.OwnerUserId, listing.EbayAccountId.Value))
+                problems.Add("its eBay account doesn't belong to the listing's owner (choose one of the owner's accounts)");
         }
 
         var disabledSupplier = await new SupplierCatalogService(context).FindDisabledSupplierNameAsync(listing);

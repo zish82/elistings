@@ -27,8 +27,32 @@
     <div class="col-12 col-xl-6">
         <div class="card h-100">
             <div class="card-body">
-                <h5 class="card-title">Save Manual Token</h5>
+                <h5 class="card-title">
+                    Save Manual Token
+                    <button type="button" class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="How to get a token?"
+                            @onclick="() => showTokenHelp = !showTokenHelp" aria-expanded="@showTokenHelp">
+                        <i class="bi bi-info-circle"></i><span class="visually-hidden">How to get a token?</span>
+                    </button>
+                </h5>
                 <p class="card-text text-muted small">Use this only if you already generated a valid user token manually.</p>
+                @if (showTokenHelp)
+                {
+                    <div class="alert alert-light border small">
+                        <div class="fw-semibold mb-1">How to get a token</div>
+                        <div class="fw-semibold">eBay</div>
+                        <ol class="mb-2 ps-3">
+                            <li>Sign in at <a href="https://developer.ebay.com/my/keys" target="_blank" rel="noopener">developer.ebay.com → Application Keys</a> (Production keyset).</li>
+                            <li>Click <strong>User Tokens</strong> next to your App ID.</li>
+                            <li>Choose <strong>Get a Token from eBay via Your Application</strong> (OAuth), pick your RuName, click <strong>Sign in to Production</strong> and sign in with the eBay seller account.</li>
+                            <li>Copy the <strong>User Token</strong> shown and paste it here, with a label.</li>
+                        </ol>
+                        <div class="text-muted">
+                            A manual OAuth token lasts about <strong>2 hours</strong> and can't renew itself. For an account that stays
+                            connected, use <strong>Connect</strong> (left) instead.
+                        </div>
+                        <div class="text-muted mt-1">Other marketplaces: steps will appear here when they're added.</div>
+                    </div>
+                }
                 <div class="input-group mb-2">
                     <input type="password" class="form-control" @bind="manualToken" placeholder="Paste token" />
                     <button class="btn btn-outline-secondary" @onclick="SaveManualToken" disabled="@isBusy">Save</button>
@@ -71,7 +95,13 @@ else
                 {
                     var canDelete = account.LinkedListingCount == 0;
                     <tr>
-                        <td>@account.Name</td>
+                        <td>
+                            @account.Name
+                            @if (account.IsShared)
+                            {
+                                <div class="small text-muted">Shared with you by an Admin (connected by @account.OwnerEmail)</div>
+                            }
+                        </td>
                         <td>
                             <span class="badge @(account.IsConnected ? "bg-success" : "bg-warning text-dark")">
                                 @(account.IsConnected ? "Connected" : "Needs reconnect")
@@ -95,7 +125,11 @@ else
                             }
                         </td>
                         <td>
-                            @if (account.IsDefault)
+                            @if (account.IsShared)
+                            {
+                                <span class="text-muted small">–</span>
+                            }
+                            else if (account.IsDefault)
                             {
                                 <span class="badge bg-primary">Default</span>
                             }
@@ -105,11 +139,14 @@ else
                             }
                         </td>
                         <td class="text-end">
+                            @if (!account.IsShared)
+                            {
                             <div class="btn-group btn-group-sm" role="group">
                                 <button class="btn btn-outline-secondary" @onclick="() => RefreshAccountToken(account.Id, account.Name)" disabled="@isBusy">Refresh</button>
                                 <button class="btn btn-outline-info" @onclick="() => ConnectEbayAccount(account.Name)" disabled="@isBusy">Reconnect</button>
                                 <button class="btn btn-outline-danger" @onclick="() => DeleteAccount(account)" disabled="@(isBusy || !canDelete)" title="@(canDelete ? "Delete this account" : "Reassign linked listings before deleting")">Delete</button>
                             </div>
+                            }
                         </td>
                     </tr>
                 }
@@ -122,6 +159,7 @@ else
     private List<EbayAccountDto> ebayAccounts = new();
     private string? manualToken;
     private string? newAccountName;
+    private bool showTokenHelp;
     private bool isLoading = true;
     private bool isBusy;
     private string? statusMessage;

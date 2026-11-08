@@ -32,15 +32,7 @@ public class ListingsController : ControllerBase
         _currentUserService = currentUserService;
     }
 
-    private int? GetDefaultEbayAccountId(int userId)
-    {
-        return _context.EbayTokens
-            .Where(t => t.UserId == userId)
-            .OrderByDescending(t => t.IsDefault)
-            .ThenBy(t => t.Id)
-            .Select(t => (int?)t.Id)
-            .FirstOrDefault();
-    }
+    private int? GetDefaultEbayAccountId(int userId) => AccountAccess.DefaultAccountId(_context, userId);
 
     [HttpGet("extract")]
     public async Task<ActionResult<ExtractedDetailsDto>> ExtractFromUrl([FromQuery] string url)
@@ -60,14 +52,15 @@ public class ListingsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<ListingDto>>> GetListings([FromServices] EbayCategoryService? ebayCategories = null)
+    public async Task<ActionResult<List<ListingDto>>> GetListings([FromServices] EbayCategoryService? ebayCategories = null, [FromQuery] int? accountId = null)
     {
-        var query = _context.Listings.AsQueryable();
-        if (!_currentUserService.CanViewAllListings)
+        if (_currentUserService.UserId == null) return Unauthorized();
+        // Admin: everyone's; Manager: own + assigned users'; others: own.
+        var query = _context.Listings.VisibleTo(await UserScope.VisibleUserIdsAsync(_context, _currentUserService));
+        if (accountId.HasValue)
         {
-            var userId = _currentUserService.UserId;
-            if (userId == null) return Unauthorized();
-            query = query.Where(l => l.OwnerUserId == userId.Value);
+            var onAccount = _context.ListingPublications.Where(p => p.AccountId == accountId.Value).Select(p => p.ListingId);
+            query = query.Where(l => onAccount.Contains(l.Id) || l.EbayAccountId == accountId.Value);
         }
 
         var listings = await query
@@ -114,6 +107,9 @@ public class ListingsController : ControllerBase
             })
             .ToListAsync();
 
+        var publications = await PublicationQueries.ForListingsAsync(_context, listings.Select(l => l.Id).ToList());
+        foreach (var dto in listings) dto.Publications = publications.GetValueOrDefault(dto.Id) ?? new List<ListingPublicationDto>();
+
         // Estimated eBay fees and profit per sale.
         var feeSettings = await new MarketplaceFeeService(_context).GetSettingsAsync();
         var allSuppliers = await new SupplierCatalogService(_context).GetAllAsync();
@@ -158,7 +154,9 @@ public class ListingsController : ControllerBase
 
         var ebayAccountName = await _context.EbayTokens.Where(t => t.Id == l.EbayAccountId).Select(t => t.Name).FirstOrDefaultAsync();
         var ownerEmail = await _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefaultAsync();
-        return Ok(ToListingDto(l, ebayAccountName, ownerEmail));
+        var dto = ToListingDto(l, ebayAccountName, ownerEmail);
+        dto.Publications = (await PublicationQueries.ForListingsAsync(_context, new[] { l.Id })).GetValueOrDefault(l.Id) ?? new List<ListingPublicationDto>();
+        return Ok(dto);
     }
 
     /// <summary>
@@ -386,7 +384,7 @@ public class ListingsController : ControllerBase
         var job = await jobs.GetAsync(jobId);
         if (job == null) return NotFound("Job not found.");
         var owner = await _context.BulkJobs.Where(j => j.Id == jobId).Select(j => j.OwnerUserId).FirstAsync();
-        if (owner != _currentUserService.UserId && !_currentUserService.CanViewAllListings) return NotFound();
+        if (owner != _currentUserService.UserId && !await UserScope.CanSeeUserAsync(_context, _currentUserService, owner)) return NotFound();
         return Ok(job);
     }
 
@@ -397,13 +395,8 @@ public class ListingsController : ControllerBase
 
         try
         {
-            var query = _context.Listings.Where(l => ids.Contains(l.Id));
-            if (!_currentUserService.CanViewAllListings)
-            {
-                var userId = _currentUserService.UserId;
-                if (userId == null) return Unauthorized();
-                query = query.Where(l => l.OwnerUserId == userId.Value);
-            }
+            if (_currentUserService.UserId == null) return Unauthorized();
+            var query = _context.Listings.Where(l => ids.Contains(l.Id)).VisibleTo(await UserScope.VisibleUserIdsAsync(_context, _currentUserService));
 
             var toProcess = await query.ToListAsync();
             var marked = 0;
@@ -484,15 +477,10 @@ public class ListingsController : ControllerBase
 
     private async Task<Listing?> FindAccessibleListing(int id)
     {
-        var query = _context.Listings.Where(l => l.Id == id);
-        if (!_currentUserService.CanViewAllListings)
-        {
-            var userId = _currentUserService.UserId;
-            if (userId == null) return null;
-            query = query.Where(l => l.OwnerUserId == userId.Value);
-        }
-
-        return await query.FirstOrDefaultAsync();
+        if (_currentUserService.UserId == null) return null;
+        return await _context.Listings.Where(l => l.Id == id)
+            .VisibleTo(await UserScope.VisibleUserIdsAsync(_context, _currentUserService))
+            .FirstOrDefaultAsync();
     }
 
     private static string ResolveSupplierName(string? sourceUrl)

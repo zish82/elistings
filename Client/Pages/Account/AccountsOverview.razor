@@ -1,0 +1,211 @@
+@page "/accounts-overview"
+@using Shared
+@using Client.Services
+@inject AuthService AuthService
+@inject ListingService ListingService
+
+<PageTitle>Accounts overview</PageTitle>
+
+<h1>Accounts overview</h1>
+<p class="text-muted">
+    @if (isAdmin)
+    {
+        <span>Every user, the marketplace accounts they post with, and how many of their listings are on each. Share an account with other users below.</span>
+    }
+    else if (isManager)
+    {
+        <span>You and the users you manage: their marketplace accounts and how many of their listings are on each.</span>
+    }
+    else
+    {
+        <span>Your marketplace accounts and how many of your listings are on each.</span>
+    }
+    Users of a shared account only see their own listings.
+</p>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @(messageIsError ? "alert-danger" : "alert-success") py-2">@message</div>
+}
+
+@if (overview == null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (!overview.Any())
+{
+    <div class="alert alert-info">Nothing to show yet.</div>
+}
+else
+{
+    @foreach (var user in overview)
+    {
+        <div class="card mb-3">
+            <div class="card-header d-flex flex-wrap align-items-center gap-2">
+                <strong>@user.Email</strong>
+                <span class="badge bg-secondary">@user.Role</span>
+                @if (user.IsMe) { <span class="badge bg-primary">You</span> }
+                @if (user.ManagerEmail != null) { <span class="small text-muted">managed by @user.ManagerEmail</span> }
+                <span class="ms-auto small">
+                    <a href="/?owner=@user.UserId">All listings</a>
+                    @if (user.DraftCount > 0) { <span class="text-muted"> · @user.DraftCount not published yet</span> }
+                </span>
+            </div>
+            <div class="card-body p-0">
+                @if (!user.Accounts.Any())
+                {
+                    <div class="p-3 small text-muted">No marketplace accounts.</div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Marketplace</th>
+                                    <th>Account</th>
+                                    <th>Status</th>
+                                    <th class="text-end">Published</th>
+                                    <th class="text-end">Failed</th>
+                                    @if (isAdmin) { <th>Shared with</th> }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var account in user.Accounts)
+                                {
+                                    <tr>
+                                        <td>@account.Marketplace</td>
+                                        <td>
+                                            @account.Name
+                                            @if (account.IsDefault) { <span class="badge bg-primary ms-1">Default</span> }
+                                            @if (account.IsShared) { <span class="badge bg-light text-dark border ms-1" title="Connected by @account.OwnerEmail">Shared</span> }
+                                        </td>
+                                        <td>
+                                            <span class="badge @(account.IsConnected ? "bg-success" : "bg-warning text-dark")">@(account.IsConnected ? "Connected" : "Needs reconnect")</span>
+                                        </td>
+                                        <td class="text-end">
+                                            @if (account.PublishedCount > 0)
+                                            {
+                                                <a href="/?account=@account.AccountId&owner=@user.UserId">@account.PublishedCount</a>
+                                            }
+                                            else { <span class="text-muted">0</span> }
+                                        </td>
+                                        <td class="text-end">
+                                            @if (account.FailedCount > 0)
+                                            {
+                                                <a class="text-danger" href="/?account=@account.AccountId&owner=@user.UserId">@account.FailedCount</a>
+                                            }
+                                            else { <span class="text-muted">0</span> }
+                                        </td>
+                                        @if (isAdmin)
+                                        {
+                                            <td>
+                                                @if (account.IsShared)
+                                                {
+                                                    <span class="small text-muted">–</span>
+                                                }
+                                                else if (editingAccountId == account.AccountId)
+                                                {
+                                                    @foreach (var other in overview.Where(o => o.UserId != user.UserId).OrderBy(o => o.Email))
+                                                    {
+                                                        <div class="form-check form-check-inline">
+                                                            <input class="form-check-input" type="checkbox" id="share-@account.AccountId-@other.UserId"
+                                                                   checked="@shareSelection.Contains(other.UserId)"
+                                                                   @onchange="e => ToggleShare(other.UserId, e.Value is true)" />
+                                                            <label class="form-check-label small" for="share-@account.AccountId-@other.UserId">@other.Email</label>
+                                                        </div>
+                                                    }
+                                                    <div class="mt-1">
+                                                        <button class="btn btn-sm btn-primary me-1" @onclick="() => SaveShare(account.AccountId)" disabled="@isSaving">Save</button>
+                                                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => editingAccountId = null">Cancel</button>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <span class="small">@SharedNames(account)</span>
+                                                    <button class="btn btn-sm btn-link" @onclick="() => StartShare(account)">Change</button>
+                                                }
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<UserAccountsOverviewDto>? overview;
+    private bool isAdmin;
+    private bool isManager;
+    private string? message;
+    private bool messageIsError;
+    private bool isSaving;
+    private int? editingAccountId;
+    private HashSet<int> shareSelection = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.EnsureAuthenticatedAsync("/accounts-overview")) return;
+        var user = AuthService.CurrentUser;
+        isAdmin = user?.CanManageUsers == true;
+        isManager = user?.Role == AuthRoles.Manager;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        try { overview = await ListingService.GetAccountsOverviewAsync(); }
+        catch (Exception ex)
+        {
+            overview = new();
+            message = $"Could not load accounts: {ex.Message}";
+            messageIsError = true;
+        }
+    }
+
+    private string SharedNames(AccountOverviewDto account)
+    {
+        var names = (overview ?? new()).Where(u => account.SharedWithUserIds.Contains(u.UserId)).Select(u => u.Email).ToList();
+        return names.Any() ? string.Join(", ", names) : "Not shared";
+    }
+
+    private void StartShare(AccountOverviewDto account)
+    {
+        editingAccountId = account.AccountId;
+        shareSelection = account.SharedWithUserIds.ToHashSet();
+    }
+
+    private void ToggleShare(int userId, bool on)
+    {
+        if (on) shareSelection.Add(userId);
+        else shareSelection.Remove(userId);
+    }
+
+    private async Task SaveShare(int accountId)
+    {
+        isSaving = true;
+        message = null;
+        try
+        {
+            await ListingService.SetAccountUsersAsync(accountId, shareSelection.ToList());
+            editingAccountId = null;
+            message = "Sharing saved.";
+            messageIsError = false;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            messageIsError = true;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

@@ -8,4 +8,6 @@ public class CreateUserRequest
     public bool IsActive { get; set; } = true;
     /// <summary>Suppliers the user may see (Managers and Listers; Admins see all).</summary>
     public List<string> SupplierCodes { get; set; } = new();
+    /// <summary>The Manager who manages this user; null = none.</summary>
+    public int? ManagerUserId { get; set; }
 }

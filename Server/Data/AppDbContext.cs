@@ -27,6 +27,8 @@ public class AppDbContext : DbContext
     public DbSet<EbayOrderLine> EbayOrderLines { get; set; }
     public DbSet<ProductTag> ProductTags { get; set; }
     public DbSet<SupplierProductTag> SupplierProductTags { get; set; }
+    public DbSet<ListingPublication> ListingPublications { get; set; }
+    public DbSet<AccountUserAccess> AccountUserAccess { get; set; }
 
     /// <summary>
     /// Indexes (used when EF creates the schema, i.e. PostgreSQL and new databases; existing SQLite databases
@@ -60,5 +62,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<ProductTag>().HasIndex(t => new { t.Supplier, t.NormalizedName }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => new { t.SupplierProductId, t.ProductTagId }).IsUnique();
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => t.ProductTagId);
+        modelBuilder.Entity<ListingPublication>().HasIndex(p => new { p.ListingId, p.Marketplace, p.AccountId }).IsUnique();
+        modelBuilder.Entity<ListingPublication>().HasIndex(p => p.AccountId);
+        modelBuilder.Entity<AccountUserAccess>().HasIndex(a => new { a.Marketplace, a.AccountId, a.UserId }).IsUnique();
     }
 }

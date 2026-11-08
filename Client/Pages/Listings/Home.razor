@@ -116,10 +116,18 @@ else
                 {
                     <option value="@account.Id">@account.Name</option>
                 }
+                @foreach (var other in OtherUsersAccounts)
+                {
+                    <option value="@other.AccountId">@other.AccountName</option>
+                }
             </select>
         </div>
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="small text-muted">Showing @FilteredListings.Count of @listings.Count listing(s)</div>
+            @if (OwnerFromUrl.HasValue)
+            {
+                <div class="small">Only @(listings.FirstOrDefault(l => l.OwnerUserId == OwnerFromUrl)?.OwnerEmail ?? "this user")'s listings · <a href="/">show all</a></div>
+            }
             @if (DisabledSupplierCount > 0)
             {
                 <div class="form-check small">
@@ -264,9 +272,19 @@ else
                         <td>@listing.OwnerEmail</td>
                     }
                     <td>
-                        @if (!string.IsNullOrWhiteSpace(listing.EbayAccountName))
+                        @if (listing.Publications.Any())
                         {
-                            <span class="badge bg-info text-dark">@listing.EbayAccountName</span>
+                            @foreach (var pub in listing.Publications)
+                            {
+                                <span class="badge @(pub.Status == PublicationStatuses.Published ? "bg-info text-dark" : "bg-danger") me-1"
+                                      title="@(pub.Marketplace)@(pub.ExternalListingId != null ? $" item {pub.ExternalListingId}" : "")@(pub.LastError != null ? $" – last error: {pub.LastError}" : "")">
+                                    @pub.AccountName@(pub.Status == PublicationStatuses.Published ? "" : " ✖")
+                                </span>
+                            }
+                        }
+                        else if (!string.IsNullOrWhiteSpace(listing.EbayAccountName))
+                        {
+                            <span class="badge bg-light text-dark border" title="Not published yet">@listing.EbayAccountName</span>
                         }
                         else
                         {
@@ -340,8 +358,10 @@ else
             .Where(listing =>
                 !selectedEbayAccountFilterId.HasValue
                     || (selectedEbayAccountFilterId.Value == 0
-                        ? !listing.EbayAccountId.HasValue
-                        : listing.EbayAccountId == selectedEbayAccountFilterId.Value))
+                        ? !listing.EbayAccountId.HasValue && listing.Publications.Count == 0
+                        : listing.EbayAccountId == selectedEbayAccountFilterId.Value
+                          || listing.Publications.Any(p => p.AccountId == selectedEbayAccountFilterId.Value)))
+            .Where(listing => !OwnerFromUrl.HasValue || listing.OwnerUserId == OwnerFromUrl.Value)
             .Where(listing => groupFilter == null || listing.SupplierGroupKey == groupFilter)
             .Where(listing => showDisabledSuppliers || !listing.SupplierDisabled)
             .ToList()
@@ -393,12 +413,26 @@ else
         }
     }
 
+    /// <summary>?account=ID (from the Accounts overview): show only listings on that account.</summary>
+    [SupplyParameterFromQuery(Name = "account")] public int? AccountFromUrl { get; set; }
+    /// <summary>?owner=ID (from the Accounts overview): only that user's listings.</summary>
+    [SupplyParameterFromQuery(Name = "owner")] public int? OwnerFromUrl { get; set; }
+
+    /// <summary>Accounts that appear on visible listings but aren't this user's (Admins/Managers see other users' listings).</summary>
+    private IEnumerable<ListingPublicationDto> OtherUsersAccounts => (listings ?? new List<ListingDto>())
+        .SelectMany(l => l.Publications)
+        .Where(p => ebayAccounts.All(a => a.Id != p.AccountId))
+        .GroupBy(p => p.AccountId)
+        .Select(g => g.First())
+        .OrderBy(p => p.AccountName);
+
     protected override async Task OnInitializedAsync()
     {
         if (!await AuthService.EnsureAuthenticatedAsync("/"))
         {
             return;
         }
+        if (AccountFromUrl.HasValue) selectedEbayAccountFilterId = AccountFromUrl;
 
         currentUser = (await AuthService.GetSessionAsync()).User;
         // Managers and Admins see listings of disabled suppliers by default (Listers can tick to show them).
@@ -496,7 +530,7 @@ else
             publishWarnings = published.PublishWarnings ?? new();
             await LoadListings();
             bulkPublishStatus = publishWarnings.Count > 0
-                ? $"Listing #{id} published to eBay, but {publishWarnings.Count} picture(s) were left out (see below)."
+                ? $"Listing #{id} published to eBay, with warnings: {string.Join(" | ", publishWarnings)}"
                 : $"Listing #{id} published to eBay.";
         }
         catch (Exception ex)

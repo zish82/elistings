@@ -26,20 +26,18 @@ public class EbayController : ControllerBase
         _currentUserService = currentUserService;
     }
 
-    /// <summary>Listings this user may publish / see progress for: their own; Managers/Admins everyone's.</summary>
-    private IQueryable<Listing>? AccessibleListings()
+    /// <summary>Listings this user may see: Admin everyone's; Manager own + assigned users'; others own. Null when signed out.</summary>
+    private async Task<IQueryable<Listing>?> AccessibleListings()
     {
-        var query = _context.Listings.AsQueryable();
-        if (_currentUserService.CanViewAllListings) return query;
-        var userId = _currentUserService.UserId;
-        return userId == null ? null : query.Where(l => l.OwnerUserId == userId.Value);
+        if (_currentUserService.UserId == null) return null;
+        return _context.Listings.VisibleTo(await UserScope.VisibleUserIdsAsync(_context, _currentUserService));
     }
 
     /// <summary>Live status of a publish that is running (picture by picture). 204 when there is none.</summary>
     [HttpGet("publish/{id}/progress")]
     public async Task<ActionResult<PublishProgressDto>> GetPublishProgress(int id, [FromServices] PublishProgressStore progressStore)
     {
-        var query = AccessibleListings();
+        var query = await AccessibleListings();
         if (query == null) return Unauthorized();
         if (!await query.AnyAsync(l => l.Id == id)) return NotFound();
 
@@ -47,35 +45,35 @@ public class EbayController : ControllerBase
         return progress == null ? NoContent() : Ok(progress);
     }
 
+    /// <summary>
+    /// Publishes (or re-syncs) a listing. Body (optional): { "accountIds": [..] } – the owner's accounts to publish to.
+    /// Without it: every account the listing is already on, else its own account.
+    /// </summary>
     [HttpPost("publish/{id}")]
-    public async Task<ActionResult<ListingDto>> PublishListing(int id, [FromServices] SkuService skuService, [FromServices] PublishProgressStore progressStore)
+    public async Task<ActionResult<ListingDto>> PublishListing(int id, [FromServices] SkuService skuService, [FromServices] PublishProgressStore progressStore,
+        [FromBody] PublishRequest? request = null)
     {
         try
         {
-            var query = AccessibleListings();
+            var query = await AccessibleListings();
             if (query == null) return Unauthorized();
 
             var listing = await query.FirstOrDefaultAsync(l => l.Id == id);
             if (listing == null) return NotFound();
             progressStore.Start(id, "Checking the listing");
 
-            ListingDto dto;
+            ListingPublishOutcome outcome;
             try
             {
-                dto = await ListingPublishHelper.PrepareAsync(listing, _context, _ebayService, _ebaySettings.Value, skuService, _currentUserService);
+                var publisher = new ListingPublisher(_context, _ebayService, _ebaySettings.Value, skuService, _currentUserService);
+                outcome = await publisher.PublishAsync(listing, request?.AccountIds);
             }
             catch (InvalidOperationException validationError)
             {
                 return BadRequest(validationError.Message);
             }
-
-            // Persist an auto-selected category / defaulted policies even if eBay rejects the listing.
-            await _context.SaveChangesAsync();
-
-            var result = await _ebayService.CreateListingAsync(dto);
-            ListingPublishHelper.ApplyPublishResult(listing, result);
-            await _context.SaveChangesAsync();
             progressStore.SetStage(id, "Published");
+            var publications = await PublicationQueries.ForListingsAsync(_context, new[] { listing.Id });
 
             return Ok(new ListingDto
             {
@@ -88,7 +86,8 @@ public class EbayController : ControllerBase
                 EbayItemId = listing.EbayItemId,
                 Sku = listing.Sku,
                 EbayOfferId = listing.EbayOfferId,
-                PublishWarnings = result.ImageWarnings
+                PublishWarnings = outcome.Warnings(),
+                Publications = publications.GetValueOrDefault(listing.Id) ?? new List<ListingPublicationDto>()
             });
         }
         catch (Exception ex)

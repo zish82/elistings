@@ -20,6 +20,9 @@ public class ListingDto
     /// <summary>Only in the publish response: pictures that were left out, with the reason. Not stored.</summary>
     public List<string> PublishWarnings { get; set; } = new();
 
+    /// <summary>Every marketplace account the listing is published to (or failed to publish to).</summary>
+    public List<ListingPublicationDto> Publications { get; set; } = new();
+
     // eBay Specifics
     public string? CategoryId { get; set; }
     public string? CategoryName { get; set; }

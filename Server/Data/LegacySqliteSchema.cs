@@ -658,6 +658,33 @@ public static class LegacySqliteSchema
                 db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SupplierProductTags_SupplierProductId_ProductTagId"" ON ""SupplierProductTags"" (""SupplierProductId"", ""ProductTagId"");");
                 db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_SupplierProductTags_ProductTagId"" ON ""SupplierProductTags"" (""ProductTagId"");");
 
+                // Managers manage assigned users; a listing can be published to several accounts (added Nov 2026).
+                EnsureColumn("Users", "ManagerUserId", "INTEGER NULL");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""ListingPublications"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_ListingPublications"" PRIMARY KEY AUTOINCREMENT,
+                        ""ListingId"" INTEGER NOT NULL,
+                        ""Marketplace"" TEXT NOT NULL,
+                        ""AccountId"" INTEGER NOT NULL,
+                        ""Status"" TEXT NOT NULL,
+                        ""ExternalListingId"" TEXT NULL,
+                        ""OfferId"" TEXT NULL,
+                        ""Sku"" TEXT NULL,
+                        ""LastError"" TEXT NULL,
+                        ""PublishedAtUtc"" TEXT NULL,
+                        ""UpdatedAtUtc"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_ListingPublications_ListingId_Marketplace_AccountId"" ON ""ListingPublications"" (""ListingId"", ""Marketplace"", ""AccountId"");");
+                db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_ListingPublications_AccountId"" ON ""ListingPublications"" (""AccountId"");");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""AccountUserAccess"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_AccountUserAccess"" PRIMARY KEY AUTOINCREMENT,
+                        ""Marketplace"" TEXT NOT NULL,
+                        ""AccountId"" INTEGER NOT NULL,
+                        ""UserId"" INTEGER NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AccountUserAccess_Marketplace_AccountId_UserId"" ON ""AccountUserAccess"" (""Marketplace"", ""AccountId"", ""UserId"");");
+
                 db.Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS ""SupplierPriceListItems"" (
                         ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_SupplierPriceListItems"" PRIMARY KEY AUTOINCREMENT,

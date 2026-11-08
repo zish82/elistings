@@ -419,12 +419,22 @@ public class SupplierProductsController : ControllerBase
         var existingSet = existing.ToHashSet();
 
         var result = new AddSupplierProductsResult();
+        // Another user already posted the product on an account this user also posts to (a shared account)?
+        var conflicts = request?.AllowSharedAccountDuplicates == true
+            ? new List<SharedAccountConflictDto>()
+            : await SharedAccountConflictsAsync(userId.Value, products);
         var created = new List<Listing>();
         foreach (var product in products)
         {
             if (existingSet.Contains(product.Id) && !allowDuplicates)
             {
                 result.SkippedAlreadyAdded++;
+                continue;
+            }
+            var productConflicts = conflicts.Where(c => c.ProductId == product.Id).ToList();
+            if (productConflicts.Count > 0)
+            {
+                result.SharedAccountConflicts.AddRange(productConflicts);
                 continue;
             }
 
@@ -455,6 +465,40 @@ public class SupplierProductsController : ControllerBase
         }
 
         return Ok(result);
+    }
+
+    /// <summary>
+    /// Products already published by another user on an account this user can post with (accounts are shared by an Admin).
+    /// Only the account and marketplace are reported – not the other user's listing.
+    /// </summary>
+    private async Task<List<SharedAccountConflictDto>> SharedAccountConflictsAsync(int userId, List<SupplierProduct> products)
+    {
+        var accountIds = await AccountAccess.AccountIdsForUserAsync(_context, userId);
+        if (accountIds.Count == 0 || products.Count == 0) return new List<SharedAccountConflictDto>();
+        var productIds = products.Select(p => p.Id).ToList();
+
+        var rows = await (
+                from l in _context.Listings
+                join p in _context.ListingPublications on l.Id equals p.ListingId
+                where l.OwnerUserId != userId
+                      && l.Status != "Deleted"
+                      && l.SupplierProductId != null && productIds.Contains(l.SupplierProductId.Value)
+                      && p.Status == PublicationStatuses.Published
+                      && accountIds.Contains(p.AccountId)
+                select new { ProductId = l.SupplierProductId!.Value, p.Marketplace, p.AccountId })
+            .Distinct()
+            .ToListAsync();
+        if (rows.Count == 0) return new List<SharedAccountConflictDto>();
+
+        var conflictAccountIds = rows.Select(r => r.AccountId).Distinct().ToList();
+        var names = await _context.EbayTokens.Where(t => conflictAccountIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, t => t.Name);
+        return rows.Select(r => new SharedAccountConflictDto
+        {
+            ProductId = r.ProductId,
+            ProductTitle = products.First(p => p.Id == r.ProductId).Title,
+            Marketplace = r.Marketplace,
+            AccountName = names.GetValueOrDefault(r.AccountId) ?? $"Account {r.AccountId}"
+        }).ToList();
     }
 
     [HttpPost("sync/catalogue")]

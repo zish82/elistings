@@ -26,19 +26,14 @@ public class SalesController : ControllerBase
     }
 
     /// <summary>Orders this user may see: their own; Managers/Admins see everyone's.</summary>
-    private IQueryable<EbayOrder> VisibleOrders()
-    {
-        var query = _context.EbayOrders.AsQueryable();
-        if (_currentUserService.CanViewAllListings) return query;
-        var userId = _currentUserService.UserId ?? -1;
-        return query.Where(o => o.OwnerUserId == userId);
-    }
+    private async Task<IQueryable<EbayOrder>> VisibleOrders()
+        => _context.EbayOrders.VisibleTo(await UserScope.VisibleUserIdsAsync(_context, _currentUserService));
 
     [HttpGet]
     public async Task<ActionResult<SalesReportDto>> Get([FromQuery] string? month, [FromServices] EbayOrderSyncService sync)
     {
         if (_currentUserService.UserId == null) return Unauthorized();
-        var orders = await VisibleOrders().AsNoTracking().OrderByDescending(o => o.CreatedAtUtc).ToListAsync();
+        var orders = await (await VisibleOrders()).AsNoTracking().OrderByDescending(o => o.CreatedAtUtc).ToListAsync();
 
         var report = new SalesReportDto
         {
@@ -63,7 +58,7 @@ public class SalesController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<ActionResult<SalesOrderDto>> Update(int id, [FromBody] UpdateSalesOrderRequest request)
     {
-        var order = await VisibleOrders().FirstOrDefaultAsync(o => o.Id == id);
+        var order = await (await VisibleOrders()).FirstOrDefaultAsync(o => o.Id == id);
         if (order == null) return NotFound();
         if (request.SupplierPrice is < 0m) return BadRequest("The supplier price can't be negative.");
 
@@ -102,7 +97,7 @@ public class SalesController : ControllerBase
     [HttpGet("export")]
     public async Task<IActionResult> Export([FromQuery] string? month)
     {
-        var orders = await VisibleOrders().AsNoTracking().OrderBy(o => o.CreatedAtUtc).ToListAsync();
+        var orders = await (await VisibleOrders()).AsNoTracking().OrderBy(o => o.CreatedAtUtc).ToListAsync();
         if (!string.IsNullOrWhiteSpace(month)) orders = orders.Where(o => SalesReport.MonthOf(o.CreatedAtUtc) == month).ToList();
         var rows = await ToDtosAsync(orders);
 

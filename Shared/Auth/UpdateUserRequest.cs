@@ -8,4 +8,6 @@ public class UpdateUserRequest
     public string? Password { get; set; }
     /// <summary>Suppliers the user may see; null = leave unchanged.</summary>
     public List<string>? SupplierCodes { get; set; }
+    /// <summary>The Manager who manages this user; null = none.</summary>
+    public int? ManagerUserId { get; set; }
 }

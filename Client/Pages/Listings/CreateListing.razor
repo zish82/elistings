@@ -257,9 +257,24 @@
                 <option value="">-- Select eBay Account --</option>
                 @foreach (var account in ebayAccounts)
                 {
-                    <option value="@account.Id">@account.Name@(account.IsDefault ? " (Default)" : string.Empty)</option>
+                    <option value="@account.Id">@account.Name@(account.IsDefault ? " (Default)" : string.Empty)@(account.IsShared ? " (shared)" : string.Empty)</option>
                 }
             </select>
+            @if (ebayAccounts.Count > 1 && listing.EbayAccountId.HasValue)
+            {
+                <div class="mt-2">
+                    <span class="small me-2">Also publish to:</span>
+                    @foreach (var account in ebayAccounts.Where(a => a.Id != listing.EbayAccountId))
+                    {
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" id="also-@account.Id" checked="@alsoPublishTo.Contains(account.Id)"
+                                   @onchange="e => ToggleAlsoPublish(account.Id, e.Value is true)" />
+                            <label class="form-check-label small" for="also-@account.Id">@account.Name@(account.IsShared ? " (shared)" : string.Empty)</label>
+                        </div>
+                    }
+                    <div class="small text-muted">Same price and quantity on every account. Business policies are matched by name on each account.</div>
+                </div>
+            }
             @if (ownerEmail != null)
             {
                 <div class="small text-info mt-1">
@@ -601,6 +616,23 @@
     private List<EbayPolicyDto> returnPolicies = new();
     private string? policiesError;
     private List<EbayAccountDto> ebayAccounts = new();
+    // Extra accounts to publish to besides the main eBay Account.
+    private HashSet<int> alsoPublishTo = new();
+
+    private void ToggleAlsoPublish(int accountId, bool on)
+    {
+        if (on) alsoPublishTo.Add(accountId);
+        else alsoPublishTo.Remove(accountId);
+    }
+
+    /// <summary>Main account first, then the ticked extra accounts (that still exist).</summary>
+    private List<int> PublishAccountIds()
+    {
+        var ids = new List<int>();
+        if (listing.EbayAccountId.HasValue) ids.Add(listing.EbayAccountId.Value);
+        ids.AddRange(alsoPublishTo.Where(id => id != listing.EbayAccountId && ebayAccounts.Any(a => a.Id == id)));
+        return ids;
+    }
 
     private string listingStatus = "Draft";
     private bool IsPublished => Id.HasValue && listingStatus == "Published";
@@ -785,6 +817,11 @@
                 var existing = await ListingService.GetListingAsync(Id.Value);
                 // Populate the existing listing instance rather than replacing it (preserve editor DOM)
                 listing.EbayAccountId = existing.EbayAccountId;
+                // Accounts it's already published to (besides its main account) stay ticked for re-sync.
+                alsoPublishTo = existing.Publications
+                    .Where(p => p.Status == PublicationStatuses.Published && p.AccountId != existing.EbayAccountId)
+                    .Select(p => p.AccountId)
+                    .ToHashSet();
                 listing.SupplierProductId = existing.SupplierProductId;
                 listing.Title = existing.Title;
                 listing.Description = existing.Description;
@@ -1430,14 +1467,14 @@
             {
                 publishProgress = progress;
                 await InvokeAsync(StateHasChanged);
-            });
+            }, PublishAccountIds());
             publishProgress = await ListingService.GetPublishProgressAsync(listingId) ?? publishProgress;
             publishWarnings = published.PublishWarnings ?? new();
 
             if (publishWarnings.Count > 0)
             {
                 // Stay on the page so the missing pictures can be read.
-                publishStatus = "Success! Listing published on eBay, but some pictures were left out (see below). ✅";
+                publishStatus = "Success! Listing published on eBay, with warnings (see below). ✅";
                 StateHasChanged();
                 return;
             }

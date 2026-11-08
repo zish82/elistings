@@ -50,7 +50,7 @@ public class SuppliersController : ControllerBase
     {
         var listing = await _context.Listings.FirstOrDefaultAsync(l => l.Id == listingId);
         if (listing == null) return NotFound();
-        if (!_currentUserService.CanViewAllListings && listing.OwnerUserId != _currentUserService.UserId) return NotFound();
+        if (!await UserScope.CanSeeUserAsync(_context, _currentUserService, listing.OwnerUserId)) return NotFound();
 
         var context = await _catalog.GetContextForListingAsync(listing);
         context.SupportsStockCheck = await stockService.CanCheckListingAsync(listing);

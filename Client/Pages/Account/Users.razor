@@ -41,6 +41,18 @@
                     </div>
                     <button class="btn btn-primary" @onclick="CreateUser" disabled="@isSaving">Add</button>
                 </div>
+                @if (newUser.Role != AuthRoles.Admin && newUser.Role != AuthRoles.Manager)
+                {
+                    <div class="col-md-4">
+                        <select class="form-select" @bind="newUser.ManagerUserId" title="The Manager sees this user's accounts, listings and sales">
+                            <option value="">No manager</option>
+                            @foreach (var m in Managers(null))
+                            {
+                                <option value="@m.Id">Managed by @m.Email</option>
+                            }
+                        </select>
+                    </div>
+                }
                 <div class="col-12">
                     @if (newUser.Role == AuthRoles.Admin)
                     {
@@ -77,6 +89,7 @@
                         <tr>
                             <th>Email</th>
                             <th>Role</th>
+                            <th title="The Manager sees this user's accounts, listings and sales">Manager</th>
                             <th>Active</th>
                             <th title="Managers and Listers only see (and work with) these suppliers">Suppliers</th>
                             <th>Created</th>
@@ -96,6 +109,22 @@
                                             <option value="@role">@role</option>
                                         }
                                     </select>
+                                </td>
+                                <td>
+                                    @if (edit.Role == AuthRoles.Admin || edit.Role == AuthRoles.Manager)
+                                    {
+                                        <span class="small text-muted">–</span>
+                                    }
+                                    else
+                                    {
+                                        <select class="form-select form-select-sm" @bind="edit.ManagerUserId">
+                                            <option value="">None</option>
+                                            @foreach (var m in Managers(user.Id))
+                                            {
+                                                <option value="@m.Id">@m.Email</option>
+                                            }
+                                        </select>
+                                    }
                                 </td>
                                 <td><input class="form-check-input" type="checkbox" @bind="edit.IsActive" /></td>
                                 <td>
@@ -174,12 +203,17 @@
                 Email = user.Email,
                 Role = user.Role,
                 IsActive = user.IsActive,
-                SupplierCodes = user.SupplierCodes.ToList()
+                SupplierCodes = user.SupplierCodes.ToList(),
+                ManagerUserId = user.ManagerUserId
             };
         }
     }
 
     private UpdateUserRequest GetEditModel(UserDto user) => editModels[user.Id];
+
+    /// <summary>Users with the Manager role (saved role), except <paramref name="excludeUserId"/>.</summary>
+    private IEnumerable<UserDto> Managers(int? excludeUserId)
+        => (users ?? new()).Where(u => u.Role == AuthRoles.Manager && u.Id != excludeUserId).OrderBy(u => u.Email);
 
     private async Task CreateUser()
     {
@@ -188,12 +222,14 @@
         isSaving = true;
         try
         {
+            if (newUser.Role == AuthRoles.Admin || newUser.Role == AuthRoles.Manager) newUser.ManagerUserId = null;
             await AuthService.CreateUserAsync(newUser);
             newUser.Email = string.Empty;
             newUser.Password = string.Empty;
             newUser.Role = AuthRoles.Lister;
             newUser.IsActive = true;
             newUser.SupplierCodes = new List<string>();
+            newUser.ManagerUserId = null;
             await LoadUsers();
             message = "User created.";
         }
@@ -215,7 +251,9 @@
         isSaving = true;
         try
         {
-            await AuthService.UpdateUserAsync(id, editModels[id]);
+            var model = editModels[id];
+            if (model.Role == AuthRoles.Admin || model.Role == AuthRoles.Manager) model.ManagerUserId = null; // only Listers are managed
+            await AuthService.UpdateUserAsync(id, model);
             editModels[id].Password = null;
             await LoadUsers();
             message = "User updated.";

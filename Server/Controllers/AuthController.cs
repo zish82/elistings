@@ -325,21 +325,28 @@ public class AuthController : ControllerBase
             userId = ownerUserId;
         }
 
+        // Accounts the user connected, plus accounts an Admin shared with them.
+        var sharedIds = _context.AccountUserAccess.Where(a => a.UserId == userId.Value && a.Marketplace == MarketplaceNames.Ebay).Select(a => a.AccountId);
         var accounts = await _context.EbayTokens
-            .Where(t => t.UserId == userId.Value)
-            .OrderByDescending(t => t.IsDefault)
+            .Where(t => t.UserId == userId.Value || sharedIds.Contains(t.Id))
+            .OrderByDescending(t => t.UserId == userId.Value)
+            .ThenByDescending(t => t.IsDefault)
             .ThenBy(t => t.Name)
             .Select(t => new EbayAccountDto
             {
                 Id = t.Id,
                 Name = t.Name,
-                IsDefault = t.IsDefault,
+                IsDefault = t.IsDefault && t.UserId == userId.Value,
+                IsShared = t.UserId != userId.Value,
+                OwnerEmail = _context.Users.Where(u => u.Id == t.UserId).Select(u => u.Email).FirstOrDefault(),
                 // eBay access tokens last 2 hours and are renewed automatically from the refresh token (~18 months),
                 // so an account stays connected until the refresh token expires. Manual tokens can't be renewed.
                 IsConnected = t.RefreshToken == "MANUAL" ? t.ExpiryTime > DateTime.UtcNow : t.RefreshTokenExpiryTime > DateTime.UtcNow,
                 ExpiresAtUtc = t.RefreshToken == "MANUAL" ? t.ExpiryTime : t.RefreshTokenExpiryTime,
                 CanReadOrders = t.RefreshToken == "MANUAL" || (t.Scopes != null && t.Scopes.Contains("sell.fulfillment")),
-                LinkedListingCount = _context.Listings.Count(l => l.OwnerUserId == userId.Value && l.EbayAccountId == t.Id)
+                // Only this user's own listings on the account (other users of a shared account don't see each other's).
+                LinkedListingCount = _context.Listings.Count(l => l.OwnerUserId == userId.Value
+                    && (l.EbayAccountId == t.Id || _context.ListingPublications.Any(p => p.ListingId == l.Id && p.AccountId == t.Id)))
             })
             .ToListAsync();
 
@@ -356,8 +363,9 @@ public class AuthController : ControllerBase
         var account = await _context.EbayTokens.FirstOrDefaultAsync(t => t.UserId == userId.Value && t.Id == id);
         if (account == null) return NotFound();
 
+        // Any user's listings (the account may be shared), on it as their main account or published to it.
         var linkedListingCount = await _context.Listings
-            .CountAsync(l => l.OwnerUserId == userId.Value && l.EbayAccountId == id);
+            .CountAsync(l => l.EbayAccountId == id || _context.ListingPublications.Any(p => p.ListingId == l.Id && p.AccountId == id));
 
         if (linkedListingCount > 0)
         {
@@ -365,6 +373,7 @@ public class AuthController : ControllerBase
         }
 
         _context.EbayTokens.Remove(account);
+        _context.AccountUserAccess.RemoveRange(_context.AccountUserAccess.Where(a => a.AccountId == id));
 
         if (account.IsDefault)
         {

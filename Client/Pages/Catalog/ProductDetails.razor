@@ -13,6 +13,8 @@
     <div class="alert @statusCss">@statusMessage</div>
 }
 
+<SharedAccountWarning Conflicts="sharedConflicts" Busy="isBusy" OnAddAnyway="AddAnyway" OnCancel="() => sharedConflicts = new()" />
+
 @if (isLoading)
 {
     <p><em>Loading product...</em></p>
@@ -160,15 +162,24 @@ else
         }
     }
 
-    private async Task Add(bool allowDuplicate)
+    private List<SharedAccountConflictDto> sharedConflicts = new();
+    private bool lastAllowDuplicate;
+
+    private Task AddAnyway() => Add(lastAllowDuplicate, forceShared: true);
+
+    private async Task Add(bool allowDuplicate, bool forceShared = false)
     {
         isBusy = true;
         statusMessage = null;
         try
         {
-            var result = await ListingService.AddSupplierProductsToMyListingsAsync(new List<int> { Id }, allowDuplicate);
-            statusCss = "alert-success";
-            statusMessage = $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
+            var result = await ListingService.AddSupplierProductsToMyListingsAsync(new List<int> { Id }, allowDuplicate, allowSharedAccountDuplicates: forceShared);
+            sharedConflicts = result.SharedAccountConflicts;
+            lastAllowDuplicate = allowDuplicate;
+            statusCss = sharedConflicts.Count > 0 ? "alert-warning" : "alert-success";
+            statusMessage = sharedConflicts.Count > 0
+                ? "Not added yet – please confirm below."
+                : $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
             await LoadProduct();
         }
         catch (Exception ex)

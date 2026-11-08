@@ -648,7 +648,9 @@ public class EbayService : IEbayService
     {
         if (accountId.HasValue)
         {
-            return await context.EbayTokens.FirstOrDefaultAsync(t => (anyUser || t.UserId == userId) && t.Id == accountId.Value);
+            // Own accounts, accounts an Admin shared with this user, or any account for Admins.
+            var shared = context.AccountUserAccess.Where(a => a.UserId == userId && a.Marketplace == Shared.MarketplaceNames.Ebay).Select(a => a.AccountId);
+            return await context.EbayTokens.FirstOrDefaultAsync(t => (anyUser || t.UserId == userId || shared.Contains(t.Id)) && t.Id == accountId.Value);
         }
 
         return await context.EbayTokens

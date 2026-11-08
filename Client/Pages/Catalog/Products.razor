@@ -73,6 +73,8 @@
     <div class="alert @statusCss">@statusMessage</div>
 }
 
+<SharedAccountWarning Conflicts="sharedConflicts" Busy="isBusy" OnAddAnyway="AddAnywayOnSharedAccount" OnCancel="() => sharedConflicts = new()" />
+
 @if (!string.IsNullOrEmpty(importJobId))
 {
     <div class="mb-3">
@@ -899,6 +901,38 @@ else
         }
     }
 
+    // "Already posted on a shared account" warning: the products waiting for "Add anyway".
+    private List<SharedAccountConflictDto> sharedConflicts = new();
+    private bool sharedConflictAllowDuplicate;
+
+    private string AddedMessage(AddSupplierProductsResult result)
+        => $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}."
+           + (result.SharedAccountConflicts.Count > 0 ? $" {result.SharedAccountConflicts.Select(c => c.ProductId).Distinct().Count()} need your confirmation (below)." : "");
+
+    private async Task AddAnywayOnSharedAccount()
+    {
+        var ids = sharedConflicts.Select(c => c.ProductId).Distinct().ToList();
+        isBusy = true;
+        try
+        {
+            var result = await ListingService.AddSupplierProductsToMyListingsAsync(ids, sharedConflictAllowDuplicate, allowSharedAccountDuplicates: true);
+            sharedConflicts = new();
+            statusCss = "alert-success";
+            statusMessage = AddedMessage(result);
+            enrichJobId = result.EnrichmentJobId;
+            await ReloadCurrentView();
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Add failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
     private async Task AddSingle(int productId, bool allowDuplicate)
     {
         isBusy = true;
@@ -906,8 +940,10 @@ else
         try
         {
             var result = await ListingService.AddSupplierProductsToMyListingsAsync(new List<int> { productId }, allowDuplicate);
-            statusCss = "alert-success";
-            statusMessage = $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
+            sharedConflicts = result.SharedAccountConflicts;
+            sharedConflictAllowDuplicate = allowDuplicate;
+            statusCss = result.SharedAccountConflicts.Count > 0 && result.Added == 0 ? "alert-warning" : "alert-success";
+            statusMessage = AddedMessage(result);
             enrichJobId = result.EnrichmentJobId;
             await ReloadCurrentView();
         }
@@ -931,8 +967,10 @@ else
         try
         {
             var result = await ListingService.AddSupplierProductsToMyListingsAsync(selectedIds.ToList(), false);
-            statusCss = "alert-success";
-            statusMessage = $"Added {result.Added} listing(s). Skipped {result.SkippedAlreadyAdded}.";
+            sharedConflicts = result.SharedAccountConflicts;
+            sharedConflictAllowDuplicate = false;
+            statusCss = result.SharedAccountConflicts.Count > 0 && result.Added == 0 ? "alert-warning" : "alert-success";
+            statusMessage = AddedMessage(result);
             enrichJobId = result.EnrichmentJobId;
             selectedIds.Clear();
             await ReloadCurrentView();

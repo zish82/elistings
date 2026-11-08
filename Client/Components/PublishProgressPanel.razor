@@ -58,7 +58,7 @@
 @if (Warnings.Count > 0)
 {
     <div class="alert alert-warning small mt-2 mb-0">
-        <div class="fw-semibold mb-1">Published without @Warnings.Count picture(s):</div>
+        <div class="fw-semibold mb-1">Published, with @Warnings.Count warning(s):</div>
         <ul class="mb-0 ps-3">
             @foreach (var w in Warnings)
             {

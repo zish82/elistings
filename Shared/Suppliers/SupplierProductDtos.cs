@@ -87,12 +87,27 @@ public class AddSupplierProductsRequest
 {
     public List<int> ProductIds { get; set; } = new();
     public bool AllowDuplicates { get; set; }
+    /// <summary>Add even when another user already posted the product on an account this user also posts to.</summary>
+    public bool AllowSharedAccountDuplicates { get; set; }
+}
+
+/// <summary>A product another user already posted on a (shared) account this user can also post to.</summary>
+public class SharedAccountConflictDto
+{
+    public int ProductId { get; set; }
+    public string ProductTitle { get; set; } = string.Empty;
+    public string Marketplace { get; set; } = MarketplaceNames.Ebay;
+    public string AccountName { get; set; } = string.Empty;
+
+    public string Message => $"You are about to post this listing which is already posted on this account and on this marketplace ({AccountName}, {Marketplace}).";
 }
 
 public class AddSupplierProductsResult
 {
     public int Added { get; set; }
     public int SkippedAlreadyAdded { get; set; }
+    /// <summary>Not added: already posted on the same account by another user. Repeat with AllowSharedAccountDuplicates to add anyway.</summary>
+    public List<SharedAccountConflictDto> SharedAccountConflicts { get; set; } = new();
     public List<int> AddedListingIds { get; set; } = new();
     /// <summary>Background job fetching descriptions/specifics for the new listings (null if nothing to fetch).</summary>
     public string? EnrichmentJobId { get; set; }

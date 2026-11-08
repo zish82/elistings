@@ -48,6 +48,14 @@ public class ListingService
         return await response.Content.ReadFromJsonAsync<T>();
     }
 
+    /// <summary>Users (Admin: all; Manager: self + their users; others: self) with their accounts and listing counts.</summary>
+    public async Task<List<UserAccountsOverviewDto>> GetAccountsOverviewAsync()
+        => await GetAsync<List<UserAccountsOverviewDto>>("api/marketplace-accounts/overview") ?? new List<UserAccountsOverviewDto>();
+
+    /// <summary>Admin: who (besides its owner) may post with an account.</summary>
+    public async Task SetAccountUsersAsync(int accountId, List<int> userIds)
+        => await SendAsync<object>(HttpMethod.Put, $"api/marketplace-accounts/{accountId}/users", userIds);
+
     private static async Task<string> ExtractErrorMessageAsync(HttpResponseMessage response)
     {
         var fallback = $"Request failed: {(int)response.StatusCode} {response.ReasonPhrase}";
@@ -251,12 +259,13 @@ public class ListingService
                ?? throw new Exception("Supplier product not found.");
     }
 
-    public async Task<AddSupplierProductsResult> AddSupplierProductsToMyListingsAsync(List<int> productIds, bool allowDuplicates = false)
+    public async Task<AddSupplierProductsResult> AddSupplierProductsToMyListingsAsync(List<int> productIds, bool allowDuplicates = false, bool allowSharedAccountDuplicates = false)
     {
         return await SendAsync<AddSupplierProductsResult>(HttpMethod.Post, "api/supplierproducts/add-to-my-listings", new AddSupplierProductsRequest
         {
             ProductIds = productIds,
-            AllowDuplicates = allowDuplicates
+            AllowDuplicates = allowDuplicates,
+            AllowSharedAccountDuplicates = allowSharedAccountDuplicates
         }) ?? new AddSupplierProductsResult();
     }
 
@@ -367,11 +376,12 @@ public class ListingService
         return await GetAsync<AuthStatusResponse>("api/auth/status") ?? new AuthStatusResponse();
     }
 
-    public async Task<ListingDto> PublishListingAsync(int id)
+    /// <param name="accountIds">The owner's accounts to publish to; null/empty = where it's already published, else its own account.</param>
+    public async Task<ListingDto> PublishListingAsync(int id, IReadOnlyCollection<int>? accountIds = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, $"api/ebay/publish/{id}")
         {
-            Content = JsonContent.Create(new { })
+            Content = JsonContent.Create(new PublishRequest { AccountIds = accountIds?.ToList() ?? new List<int>() })
         };
         request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
         using var response = await _http.SendAsync(request);
@@ -396,9 +406,9 @@ public class ListingService
     /// Publishes and, while that runs, polls the progress about once a second and passes it to <paramref name="onProgress"/>
     /// (also once more at the end so the final picture states are shown).
     /// </summary>
-    public async Task<ListingDto> PublishListingWithProgressAsync(int id, Func<PublishProgressDto, Task> onProgress)
+    public async Task<ListingDto> PublishListingWithProgressAsync(int id, Func<PublishProgressDto, Task> onProgress, IReadOnlyCollection<int>? accountIds = null)
     {
-        var publish = PublishListingAsync(id);
+        var publish = PublishListingAsync(id, accountIds);
         while (!publish.IsCompleted)
         {
             await Task.WhenAny(publish, Task.Delay(900));

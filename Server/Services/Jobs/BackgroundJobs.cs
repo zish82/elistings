@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Server.Configuration;
 using Server.Data;
+using Shared;
 
 namespace Server.Services.Jobs;
 
@@ -210,7 +211,7 @@ public class BackgroundJobs
         var ebayService = Get<IEbayService>();
         var skuService = Get<SkuService>();
         var settings = Get<IOptions<EbaySettings>>().Value;
-        var canViewAll = Get<ICurrentUserService>().CanViewAllListings;
+        var visibleUsers = await UserScope.VisibleUserIdsAsync(_context, Get<ICurrentUserService>());
 
         var ids = listingIds.Distinct().ToList();
         progress.Total = ids.Count;
@@ -221,8 +222,7 @@ public class BackgroundJobs
             var label = $"#{id}";
             try
             {
-                var listing = await _context.Listings
-                    .FirstOrDefaultAsync(l => l.Id == id && (canViewAll || l.OwnerUserId == userId));
+                var listing = await _context.Listings.Where(l => l.Id == id).VisibleTo(visibleUsers).FirstOrDefaultAsync();
                 if (listing == null)
                 {
                     progress.ItemFailed($"{label}: not found or access denied");
@@ -230,14 +230,12 @@ public class BackgroundJobs
                 }
                 label = $"#{id} {Truncate(listing.Title, 50)}";
 
-                var dto = await ListingPublishHelper.PrepareAsync(listing, _context, ebayService, settings, skuService, Get<ICurrentUserService>());
-                await _context.SaveChangesAsync(); // keep auto-selected category even if eBay rejects
-
-                var result = await ebayService.CreateListingAsync(dto);
-                ListingPublishHelper.ApplyPublishResult(listing, result);
-                await _context.SaveChangesAsync();
-                if (result.ImageWarnings.Count > 0)
-                    progress.ItemSucceededWithWarning($"{label}: published without {result.ImageWarnings.Count} picture(s). {string.Join(" | ", result.ImageWarnings)}");
+                // Every account it's already on (re-sync), else its own account.
+                var publisher = new ListingPublisher(_context, ebayService, settings, skuService, Get<ICurrentUserService>());
+                var outcome = await publisher.PublishAsync(listing);
+                var warnings = outcome.Warnings();
+                if (warnings.Count > 0)
+                    progress.ItemSucceededWithWarning($"{label}: {string.Join(" | ", warnings)}");
                 else
                     progress.ItemSucceeded();
             }
@@ -344,11 +342,27 @@ public class BackgroundJobs
             ? $"Restoring eBay quantity for {listings.Count} {supplier.Name} listings..."
             : $"Setting eBay quantity to 0 for {listings.Count} {supplier.Name} listings...";
 
-        foreach (var account in listings.GroupBy(l => l.EbayAccountId))
+        // Every account each listing is published to (a listing can be on several accounts).
+        var listingIds = listings.Select(l => l.Id).ToList();
+        var targets = (await _context.ListingPublications.AsNoTracking()
+                .Where(p => listingIds.Contains(p.ListingId) && p.Marketplace == MarketplaceNames.Ebay
+                            && p.Status == PublicationStatuses.Published && p.OfferId != null)
+                .Select(p => new { p.ListingId, p.AccountId, p.OfferId, p.Sku })
+                .ToListAsync())
+            .Select(p => (p.ListingId, AccountId: (int?)p.AccountId, OfferId: p.OfferId!, Sku: p.Sku))
+            .ToList();
+        // Listings without publication rows: their own account (as before).
+        foreach (var l in listings.Where(l => targets.All(t => t.ListingId != l.Id)))
+            targets.Add((l.Id, l.EbayAccountId, l.EbayOfferId!, l.Sku));
+
+        var byId = listings.ToDictionary(l => l.Id);
+        var failed = new Dictionary<int, string>();
+        foreach (var account in targets.GroupBy(t => t.AccountId))
         {
             foreach (var batch in account.Chunk(25))
             {
-                var updates = batch.Select(l => new MarketplaceQuantityUpdate(l.Sku!, l.EbayOfferId!, restore ? Math.Max(1, l.Quantity) : 0)).ToList();
+                var updates = batch.Select(t => new MarketplaceQuantityUpdate(t.Sku ?? byId[t.ListingId].Sku!, t.OfferId,
+                    restore ? Math.Max(1, byId[t.ListingId].Quantity) : 0)).ToList();
                 Dictionary<string, string> failures;
                 try
                 {
@@ -356,22 +370,28 @@ public class BackgroundJobs
                 }
                 catch (Exception ex)
                 {
-                    failures = batch.ToDictionary(l => l.Sku!, _ => ex.Message, StringComparer.OrdinalIgnoreCase);
+                    failures = updates.Select(u => u.Sku).Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(s => s, _ => ex.Message, StringComparer.OrdinalIgnoreCase);
                 }
 
-                foreach (var listing in batch)
+                foreach (var t in batch)
                 {
-                    if (failures.TryGetValue(listing.Sku!, out var error))
-                    {
-                        progress.ItemFailed($"#{listing.Id} {Truncate(listing.Title, 50)}: {error}");
-                        continue;
-                    }
-                    listing.QuantityZeroedAtUtc = restore ? null : DateTime.UtcNow;
-                    progress.ItemSucceeded();
+                    var sku = t.Sku ?? byId[t.ListingId].Sku!;
+                    if (failures.TryGetValue(sku, out var error) && !failed.ContainsKey(t.ListingId)) failed[t.ListingId] = error;
                 }
-                await _context.SaveChangesAsync();
             }
         }
+
+        foreach (var listing in listings)
+        {
+            if (failed.TryGetValue(listing.Id, out var error))
+            {
+                progress.ItemFailed($"#{listing.Id} {Truncate(listing.Title, 50)}: {error}");
+                continue;
+            }
+            listing.QuantityZeroedAtUtc = restore ? null : DateTime.UtcNow;
+            progress.ItemSucceeded();
+        }
+        await _context.SaveChangesAsync();
 
         return restore
             ? $"eBay quantity restored for {progress.Succeeded} listing(s), {progress.Failed} failed."

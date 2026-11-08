@@ -17,4 +17,6 @@ public class AppUser
     /// existed before supplier access was introduced). Admins always see every supplier.
     /// </summary>
     public bool SupplierAccessConfigured { get; set; }
+    /// <summary>The Manager who manages this user (sees their accounts, listings and sales). Null = none.</summary>
+    public int? ManagerUserId { get; set; }
 }
