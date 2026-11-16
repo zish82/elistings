@@ -73,7 +73,7 @@ public class EbayController : ControllerBase
                 return BadRequest(validationError.Message);
             }
             progressStore.SetStage(id, "Published");
-            var publications = await PublicationQueries.ForListingsAsync(_context, new[] { listing.Id });
+            var publications = await PublicationQueries.ForListingsAsync(_context, new[] { listing.Id }, _ebaySettings.Value.IsSandbox);
 
             return Ok(new ListingDto
             {

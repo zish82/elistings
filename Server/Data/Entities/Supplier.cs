@@ -32,4 +32,8 @@ public class Supplier
     /// Off = no scheduled calls to the supplier; manual imports and publishing still work.
     /// </summary>
     public bool BackgroundSyncEnabled { get; set; } = true;
+    /// <summary>Suggested price = the supplier's website (retail) price when known, otherwise cost + <see cref="DefaultMarginPercent"/>.</summary>
+    public bool UseSupplierSuggestedPrice { get; set; }
+    /// <summary>The supplier's pictures can't be downloaded by this server (blocked): listings must carry uploaded pictures, which are the only ones published.</summary>
+    public bool RequireUploadedPictures { get; set; }
 }

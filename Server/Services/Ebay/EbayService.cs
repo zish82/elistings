@@ -110,7 +110,84 @@ public class EbayService : IEbayService
         return node;
     }
 
+    /// <summary>
+    /// The listing's pictures as eBay-hosted URLs (eBay requires them) and the reasons for any that failed. Pictures already
+    /// uploaded for this eBay account are reused (see <see cref="EbayPictureCache"/>); <paramref name="reusedSources"/>
+    /// collects the ones that were, so a rejection by eBay can upload them again. Throws when none worked.
+    /// </summary>
+    private async Task<(List<string> Urls, List<string> Errors)> UploadListingImagesAsync(ListingDto listing, bool useCache, List<string> reusedSources)
+    {
+        var imageService = _serviceProvider.GetRequiredService<IMarketplaceImageService>();
+        var progress = _serviceProvider.GetService<PublishProgressStore>(); // live status for the page (optional)
+        var urls = listing.ImageUrls ?? new List<string>();
+
+        Console.WriteLine($"[Listing: {listing.Id}] Processing {urls.Count} images...");
+        progress?.SetImages(listing.Id, urls);
+
+        using var scope = _serviceProvider.CreateScope();
+        var cache = new EbayPictureCache(scope.ServiceProvider.GetRequiredService<Server.Data.AppDbContext>());
+        var result = await cache.ResolveAsync(listing.EbayAccountId ?? 0, urls, useCache,
+            upload: async (index, url) =>
+            {
+                progress?.SetStage(listing.Id, $"Pictures: {index + 1} of {urls.Count}");
+                try
+                {
+                    progress?.SetImage(listing.Id, index, PublishImageStates.Working, "Starting");
+                    var ebayUrl = await imageService.UploadImageFromUrlAsync(url, listing.EbayAccountId,
+                        step => progress?.SetImage(listing.Id, index, PublishImageStates.Working, step));
+                    progress?.SetImage(listing.Id, index, PublishImageStates.Uploaded);
+                    return ebayUrl;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Listing: {listing.Id}] Image upload failed for picture {index + 1}: {ex.Message}");
+                    progress?.SetImage(listing.Id, index, PublishImageStates.Failed, ex.Message);
+                    throw;
+                }
+            },
+            reused: index => progress?.SetImage(listing.Id, index, PublishImageStates.OnEbay));
+        reusedSources.AddRange(result.ReusedSources);
+        if (result.ReusedSources.Count > 0)
+            Console.WriteLine($"[Listing: {listing.Id}] Reused {result.ReusedSources.Count} picture(s) already on eBay.");
+
+        // eBay requires at least one image; fail clearly instead of publishing a placeholder.
+        if (!result.Urls.Any())
+        {
+            throw new Exception(result.Errors.Any()
+                ? "None of the pictures could be uploaded to eBay. " + string.Join(" | ", result.Errors)
+                : "At least one image is required to publish on eBay.");
+        }
+        progress?.SetStage(listing.Id, result.Errors.Any()
+            ? $"Publishing on eBay with {result.Urls.Count} of {urls.Count} pictures"
+            : "Publishing on eBay");
+
+        return (result.Urls, result.Errors);
+    }
+
     public async Task<EbayListingResponse> CreateListingAsync(ListingDto listing)
+    {
+        var reused = new List<string>();
+        try
+        {
+            return await CreateListingCoreAsync(listing, useCachedPictures: true, reused);
+        }
+        catch (Exception ex) when (reused.Count > 0 && IsPictureProblem(ex))
+        {
+            // A reused eBay picture may have expired (e.g. the listing ended long ago): upload those again, once.
+            Console.WriteLine($"[Listing: {listing.Id}] eBay rejected the listing with reused pictures ({ex.Message}); uploading them again.");
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                await new EbayPictureCache(scope.ServiceProvider.GetRequiredService<Server.Data.AppDbContext>())
+                    .ForgetAsync(listing.EbayAccountId ?? 0, reused);
+            }
+            return await CreateListingCoreAsync(listing, useCachedPictures: false, new List<string>());
+        }
+    }
+
+    private static bool IsPictureProblem(Exception ex)
+        => ex.Message.Contains("picture", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("image", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<EbayListingResponse> CreateListingCoreAsync(ListingDto listing, bool useCachedPictures, List<string> reusedPictures)
     {
         var token = await GetOAuthTokenAsync(listing.EbayAccountId);
         
@@ -122,56 +199,11 @@ public class EbayService : IEbayService
 
         Console.WriteLine($"[Listing: {listing.Id}] Using SKU: {sku}, Quantity: {quantity}");
         
-        // 0. Handle Images (Convert external URLs to eBay URLs if needed)
-        var finalImageUrls = new List<string>();
-        var imageErrors = new List<string>();
-        var imageService = _serviceProvider.GetRequiredService<IMarketplaceImageService>();
-        var progress = _serviceProvider.GetService<PublishProgressStore>(); // live status for the page (optional)
-
-        if (listing.ImageUrls != null && listing.ImageUrls.Any())
+        var (finalImageUrls, imageErrors) = await UploadListingImagesAsync(listing, useCachedPictures, reusedPictures);
+        if (listing.Variants.Count > 0)
         {
-            var urls = listing.ImageUrls;
-            Console.WriteLine($"[Listing: {listing.Id}] Processing {urls.Count} images...");
-            progress?.SetImages(listing.Id, urls);
-            for (var i = 0; i < urls.Count; i++)
-            {
-                var url = urls[i];
-                var index = i;
-                progress?.SetStage(listing.Id, $"Pictures: {i + 1} of {urls.Count}");
-                if (url.Contains("ebayimg.com"))
-                {
-                    finalImageUrls.Add(url);
-                    progress?.SetImage(listing.Id, index, PublishImageStates.OnEbay);
-                    continue;
-                }
-
-                var label = url.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? "Uploaded image" : url;
-                try
-                {
-                    progress?.SetImage(listing.Id, index, PublishImageStates.Working, "Starting");
-                    var ebayUrl = await imageService.UploadImageFromUrlAsync(url, listing.EbayAccountId,
-                        step => progress?.SetImage(listing.Id, index, PublishImageStates.Working, step));
-                    finalImageUrls.Add(ebayUrl);
-                    progress?.SetImage(listing.Id, index, PublishImageStates.Uploaded);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Listing: {listing.Id}] Image upload failed for {label}: {ex.Message}");
-                    imageErrors.Add($"Picture {i + 1} ({label}): {ex.Message}");
-                    progress?.SetImage(listing.Id, index, PublishImageStates.Failed, ex.Message);
-                }
-            }
+            return await CreateVariationListingAsync(listing, token, baseUrl, finalImageUrls, imageErrors);
         }
-        // eBay requires at least one image; fail clearly instead of publishing a placeholder.
-        if (!finalImageUrls.Any())
-        {
-            throw new Exception(imageErrors.Any()
-                ? "None of the pictures could be uploaded to eBay. " + string.Join(" | ", imageErrors)
-                : "At least one image is required to publish on eBay.");
-        }
-        progress?.SetStage(listing.Id, imageErrors.Any()
-            ? $"Publishing on eBay with {finalImageUrls.Count} of {listing.ImageUrls!.Count} pictures"
-            : "Publishing on eBay");
 
         var inventoryItem = new
         {
@@ -356,6 +388,165 @@ public class EbayService : IEbayService
             ListingId = publishData?.listingId ?? $"LISTING-SUCCESS-{offerId}",
             ImageWarnings = imageErrors
         };
+    }
+
+    /// <summary>
+    /// Publishes a multi-variation listing: one inventory item + offer per variant, an inventory item group that says what varies,
+    /// then publish_by_inventory_item_group. The listing's SKU is the group key.
+    /// </summary>
+    private async Task<EbayListingResponse> CreateVariationListingAsync(ListingDto listing, string token, string baseUrl,
+        List<string> imageUrls, List<string> imageErrors)
+    {
+        var variants = listing.Variants;
+        if (string.IsNullOrWhiteSpace(listing.CategoryId)) throw new Exception("An eBay category is required to publish.");
+        var groupKey = !string.IsNullOrEmpty(listing.Sku) ? listing.Sku : $"SKU_{listing.Id}";
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var optionNames = variants.SelectMany(v => v.Options.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        var locationKey = "main-warehouse";
+        await CreateDefaultLocationAsync(locationKey, token, baseUrl);
+
+        var offerIds = new Dictionary<string, string>();
+        foreach (var variant in variants)
+        {
+            // Inventory item: the shared product details plus this variant's option values as aspects.
+            var itemListing = new ListingDto
+            {
+                Title = listing.Title, Description = listing.Description, Brand = listing.Brand, Type = listing.Type, Colour = listing.Colour,
+                Barcode = null, ItemSpecifics = new Dictionary<string, string>(listing.ItemSpecifics)
+            };
+            foreach (var o in variant.Options) itemListing.ItemSpecifics[o.Key] = o.Value;
+            var variantImages = string.IsNullOrWhiteSpace(variant.ImageUrl) ? imageUrls : new List<string> { variant.ImageUrl! }.Concat(imageUrls).Distinct().ToList();
+            var itemJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                availability = new { shipToLocationAvailability = new { quantity = variant.Quantity < 1 ? 1 : variant.Quantity } },
+                condition = "NEW",
+                product = BuildProduct(itemListing, variantImages)
+            });
+            using (var itemResponse = await SendWithRetryAsync(() =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Put, $"{baseUrl}/sell/inventory/v1/inventory_item/{Uri.EscapeDataString(variant.Sku!)}");
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                request.Content = new StringContent(itemJson, System.Text.Encoding.UTF8, "application/json");
+                request.Content.Headers.Add("Content-Language", "en-GB");
+                return request;
+            }, $"inventory item {variant.Sku}"))
+            {
+                if (!itemResponse.IsSuccessStatusCode)
+                    throw await EbayApiException.FromResponseAsync(itemResponse, $"Creating eBay inventory item {variant.Sku}");
+            }
+
+            // Offer: reuse the stored one, else one already on eBay for this SKU, else create.
+            var offerId = variant.OfferId;
+            if (string.IsNullOrEmpty(offerId))
+            {
+                var find = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/sell/inventory/v1/offer?sku={Uri.EscapeDataString(variant.Sku!)}&marketplace_id=EBAY_GB");
+                find.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var found = await _httpClient.SendAsync(find);
+                if (found.IsSuccessStatusCode)
+                {
+                    var existing = await found.Content.ReadFromJsonAsync<JsonNode>();
+                    offerId = existing?["offers"]?.AsArray()?.FirstOrDefault()?["offerId"]?.GetValue<string>();
+                }
+            }
+            var offerBody = new
+            {
+                sku = variant.Sku,
+                marketplaceId = "EBAY_GB",
+                format = "FIXED_PRICE",
+                availableQuantity = variant.Quantity < 1 ? 1 : variant.Quantity,
+                categoryId = listing.CategoryId.Trim(),
+                listingDescription = listing.Description,
+                listingPolicies = new
+                {
+                    fulfillmentPolicyId = listing.FulfillmentPolicyId,
+                    paymentPolicyId = listing.PaymentPolicyId,
+                    returnPolicyId = listing.ReturnPolicyId
+                },
+                pricingSummary = new { price = new { value = variant.Price.ToString("F2", culture), currency = "GBP" } },
+                merchantLocationKey = locationKey
+            };
+            var create = string.IsNullOrEmpty(offerId);
+            var offerRequest = new HttpRequestMessage(create ? HttpMethod.Post : HttpMethod.Put,
+                create ? $"{baseUrl}/sell/inventory/v1/offer" : $"{baseUrl}/sell/inventory/v1/offer/{offerId}");
+            offerRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            offerRequest.Content = JsonContent.Create(offerBody);
+            offerRequest.Content.Headers.Add("Content-Language", "en-GB");
+            var offerResponse = await _httpClient.SendAsync(offerRequest);
+            if (!offerResponse.IsSuccessStatusCode)
+                throw new Exception($"eBay offer for {variant.Sku} failed: {await offerResponse.Content.ReadAsStringAsync()}");
+            if (create)
+                offerId = (await offerResponse.Content.ReadFromJsonAsync<EbayOfferResponse>())?.offerId ?? throw new Exception($"No offerId returned for {variant.Sku}");
+            offerIds[variant.Sku!] = offerId!;
+        }
+
+        // Group: the shared details, and which aspects vary (with all their values).
+        var sharedAspects = BuildAspects(new ListingDto
+        {
+            Brand = listing.Brand, Type = listing.Type, Colour = listing.Colour,
+            ItemSpecifics = listing.ItemSpecifics.Where(kv => !optionNames.Contains(kv.Key, StringComparer.OrdinalIgnoreCase)).ToDictionary(kv => kv.Key, kv => kv.Value)
+        });
+        foreach (var name in optionNames) sharedAspects.Remove(name);
+        var groupJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            inventoryItemGroupKey = groupKey,
+            title = listing.Title,
+            description = listing.Description,
+            imageUrls = imageUrls.ToArray(),
+            aspects = sharedAspects,
+            variantSKUs = variants.Select(v => v.Sku).ToArray(),
+            variesBy = new
+            {
+                specifications = optionNames.Select(n => new
+                {
+                    name = n,
+                    values = variants.Select(v => v.Options.FirstOrDefault(o => o.Key.Equals(n, StringComparison.OrdinalIgnoreCase)).Value)
+                        .Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToArray()
+                }).ToArray()
+            }
+        });
+        using (var groupResponse = await SendWithRetryAsync(() =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Put, $"{baseUrl}/sell/inventory/v1/inventory_item_group/{Uri.EscapeDataString(groupKey)}");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            request.Content = new StringContent(groupJson, System.Text.Encoding.UTF8, "application/json");
+            request.Content.Headers.Add("Content-Language", "en-GB");
+            return request;
+        }, $"inventory item group {groupKey}"))
+        {
+            if (!groupResponse.IsSuccessStatusCode)
+            {
+                var error = await EbayApiException.FromResponseAsync(groupResponse, $"Creating eBay variation group {groupKey}");
+                Console.WriteLine($"[eBay] {error.Message}\n[eBay] Group payload: {groupJson}");
+                throw error;
+            }
+        }
+
+        // Publish the group (same indexing delay / 25604 retry as single listings).
+        await Task.Delay(5000);
+        for (var attempt = 0; ; attempt++)
+        {
+            var publishRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/sell/inventory/v1/offer/publish_by_inventory_item_group");
+            publishRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            publishRequest.Content = JsonContent.Create(new { inventoryItemGroupKey = groupKey, marketplaceId = "EBAY_GB" });
+            publishRequest.Content.Headers.Add("Content-Language", "en-GB");
+            using var publishResponse = await _httpClient.SendAsync(publishRequest);
+            if (publishResponse.IsSuccessStatusCode)
+            {
+                var data = await publishResponse.Content.ReadFromJsonAsync<EbayPublishResponse>();
+                return new EbayListingResponse
+                {
+                    Sku = groupKey,
+                    OfferId = offerIds.Values.First(),
+                    ListingId = data?.listingId ?? $"LISTING-SUCCESS-{groupKey}",
+                    ImageWarnings = imageErrors,
+                    VariantOfferIds = offerIds
+                };
+            }
+            var body = await publishResponse.Content.ReadAsStringAsync();
+            if (body.Contains("25604") && attempt < 3) { await Task.Delay(4000); continue; }
+            throw new Exception($"eBay variation listing publication failed: {body}");
+        }
     }
 
     // Brand defaults to "Unbranded" (accepted by eBay). Type/Colour are only sent when known:

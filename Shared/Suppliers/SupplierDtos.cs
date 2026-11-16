@@ -15,6 +15,10 @@ public class SupplierDto
     public string? FeeCategoryId { get; set; }
     /// <summary>Scheduled imports/stock checks for this supplier (off = only manual imports; publishing unaffected).</summary>
     public bool BackgroundSyncEnabled { get; set; } = true;
+    /// <summary>Use the supplier's website price as the suggested price where known; otherwise cost + default margin.</summary>
+    public bool UseSupplierSuggestedPrice { get; set; }
+    /// <summary>Pictures must be uploaded by hand (the supplier blocks this server); supplier-hosted pictures are not used when publishing.</summary>
+    public bool RequireUploadedPictures { get; set; }
     public List<SupplierDeliveryOptionDto> DeliveryOptions { get; set; } = new();
     /// <summary>Postage classes found in this supplier's imported products (e.g. "Standard Parcel"). Read-only.</summary>
     public List<string> KnownPostageCategories { get; set; } = new();
@@ -38,6 +42,8 @@ public class SupplierDeliveryOptionDto
 public class ListingSupplierContextDto
 {
     public SupplierDto? Supplier { get; set; }
+    /// <summary>The product's price on the supplier's website (inc VAT), when known.</summary>
+    public decimal? WebsitePrice { get; set; }
     public string? PostageCategory { get; set; }
     public int? SuggestedDeliveryOptionId { get; set; }
     /// <summary>True when the server can run a live stock check for this listing's supplier.</summary>
@@ -75,6 +81,21 @@ public static class PricingMath
         var rounded = Math.Floor(target) + 0.99m;
         if (rounded < target) rounded += 1m;
         return rounded;
+    }
+
+    public const string SourceWebsite = "Website";
+    public const string SourceMargin = "Margin";
+
+    /// <summary>
+    /// Suggested item price and where it came from: the supplier's website price (inc VAT) when the supplier is set to use it and
+    /// it is known, otherwise cost (inc VAT) plus the default margin.
+    /// </summary>
+    public static (decimal? Price, string? Source) SuggestPrice(decimal? supplierPrice, decimal? websitePrice, SupplierDto? supplier)
+    {
+        if ((supplier?.UseSupplierSuggestedPrice ?? false) && websitePrice is > 0)
+            return (websitePrice, SourceWebsite);
+        var margin = SuggestItemPrice(CostIncVat(supplierPrice, supplier), supplier?.DefaultMarginPercent ?? 20m);
+        return (margin, margin.HasValue ? SourceMargin : null);
     }
 
     /// <summary>The price sent to the marketplace.</summary>

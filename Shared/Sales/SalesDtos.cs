@@ -20,6 +20,10 @@ public class SalesOrderDto
     public decimal? RoiPercent { get; set; }
     public string? Tracking { get; set; }
     public string? DeliveryCompany { get; set; }
+    /// <summary>Links to the sold items at the supplier, found in our catalogue (one per item; empty when not ours).</summary>
+    public List<SalesSourceLinkDto> SourceLinks { get; set; } = new();
+    /// <summary>Supplier link typed in for orders whose item isn't in our catalogue.</summary>
+    public string? SourceUrl { get; set; }
 
     // extra detail
     public string? Items { get; set; }
@@ -32,6 +36,14 @@ public class SalesOrderDto
     public string? Buyer { get; set; }
     public string? AccountName { get; set; }
     public string? OwnerEmail { get; set; }
+}
+
+/// <summary>Where to order one sold item from.</summary>
+public class SalesSourceLinkDto
+{
+    /// <summary>The eBay line's title.</summary>
+    public string Title { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
 }
 
 /// <summary>Totals for one month (orders' local date).</summary>
@@ -67,6 +79,8 @@ public class UpdateSalesOrderRequest
 {
     public string? Mail { get; set; }
     public string? SourceOrderId { get; set; }
+    /// <summary>Supplier link for an item that isn't in our catalogue (http/https; blank clears it).</summary>
+    public string? SourceUrl { get; set; }
     /// <summary>Set to enter the supplier price yourself; with <see cref="ResetSupplierPrice"/> it goes back to automatic.</summary>
     public decimal? SupplierPrice { get; set; }
     public bool ResetSupplierPrice { get; set; }

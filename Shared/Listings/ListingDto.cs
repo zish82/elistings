@@ -48,6 +48,8 @@ public class ListingDto
     public decimal? DeliveryCost { get; set; }
     public bool IncludeDeliveryInPrice { get; set; } = true;
     public Dictionary<string, string> ItemSpecifics { get; set; } = new();
+    /// <summary>When not empty this is a multi-variation listing: price, quantity and SKU come from each variant instead of the listing.</summary>
+    public List<ListingVariantDto> Variants { get; set; } = new();
     public string? Barcode { get; set; }
     public string? SourceTitle { get; set; }
     /// <summary>Group of the linked supplier product (variants of the same product share it). Read-only.</summary>

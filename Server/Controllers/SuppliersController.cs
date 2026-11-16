@@ -63,6 +63,8 @@ public class SuppliersController : ControllerBase
     {
         var supplier = await _catalog.FindAsync(null, sourceUrl);
         var context = _catalog.BuildContext(supplier, null);
+        if (!string.IsNullOrWhiteSpace(sourceUrl))
+            context.WebsitePrice = await _context.SupplierProducts.Where(p => p.ProductUrl == sourceUrl).Select(p => p.RrpPrice).FirstOrDefaultAsync();
         context.SupportsStockCheck = stockService.CanCheck(new SupplierStockQuery(sourceUrl, null, null));
         return Ok(context);
     }
@@ -170,6 +172,8 @@ public class SuppliersController : ControllerBase
         entity.IsActive = dto.IsActive;
         entity.FeeCategoryId = string.IsNullOrWhiteSpace(dto.FeeCategoryId) ? null : dto.FeeCategoryId.Trim();
         entity.BackgroundSyncEnabled = dto.BackgroundSyncEnabled;
+        entity.UseSupplierSuggestedPrice = dto.UseSupplierSuggestedPrice;
+        entity.RequireUploadedPictures = dto.RequireUploadedPictures;
     }
 
     private static void Apply(SupplierDeliveryOption entity, SupplierDeliveryOptionDto dto)

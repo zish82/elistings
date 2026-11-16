@@ -11,6 +11,7 @@
 <p class="text-muted">
     Your eBay orders with cost of sales. eBay fields fill in when you click <em>Sync now</em>;
     <strong>Mail</strong>, <strong>Source Order ID</strong> and (when it isn't matched) <strong>Supplier Price</strong> are yours to type in.
+    <strong>Source Item</strong> links to the item at the supplier when it's in our catalogue; otherwise paste the link yourself.
 </p>
 
 @if (!string.IsNullOrWhiteSpace(message))
@@ -117,6 +118,7 @@ else
                     <th>Date</th>
                     <th>Mail</th>
                     <th>eBay Order ID</th>
+                    <th title="Where to order the item: from our catalogue, or typed in">Source Item</th>
                     <th>Source Order ID</th>
                     <th class="text-end" title="What the buyer paid (item + postage)">Sold Price</th>
                     <th class="text-end">Supplier Price</th>
@@ -141,6 +143,29 @@ else
                                    @oninput="e => Edit(o).Mail = e.Value?.ToString() ?? string.Empty" />
                         </td>
                         <td class="font-monospace small">@o.EbayOrderId</td>
+                        <td class="small" style="min-width: 170px;">
+                            @if (o.SourceLinks.Any())
+                            {
+                                @foreach (var link in o.SourceLinks)
+                                {
+                                    <div>
+                                        <a href="@link.Url" target="_blank" rel="noopener noreferrer" title="@link.Title">
+                                            @(o.SourceLinks.Count > 1 ? Shorten(link.Title) : HostOf(link.Url)) ↗
+                                        </a>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                var typed = edit?.SourceUrl ?? o.SourceUrl;
+                                <input class="form-control form-control-sm" value="@typed" placeholder="paste supplier link"
+                                       @oninput="e => Edit(o).SourceUrl = e.Value?.ToString() ?? string.Empty" />
+                                @if (IsWebLink(typed))
+                                {
+                                    <a href="@(typed!.Trim())" target="_blank" rel="noopener noreferrer">@(HostOf(typed!)) ↗</a>
+                                }
+                            }
+                        </td>
                         <td style="min-width: 140px;">
                             <input class="form-control form-control-sm" value="@(edit?.SourceOrderId ?? o.SourceOrderId)" placeholder="supplier order no."
                                    @oninput="e => Edit(o).SourceOrderId = e.Value?.ToString() ?? string.Empty" />
@@ -255,8 +280,17 @@ else
     {
         public string Mail = string.Empty;
         public string SourceOrderId = string.Empty;
+        public string SourceUrl = string.Empty;
         public string SupplierPrice = string.Empty;
     }
+
+    private static bool IsWebLink(string? url)
+        => Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static string HostOf(string url)
+        => Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) ? uri.Host.Replace("www.", "") : url;
+
+    private static string Shorten(string title) => title.Length <= 28 ? title : title[..27] + "…";
 
     private readonly Dictionary<int, RowEdit> edits = new();
     private bool saving;
@@ -268,7 +302,7 @@ else
     {
         if (!edits.TryGetValue(o.Id, out var edit))
         {
-            edit = new RowEdit { Mail = o.Mail ?? string.Empty, SourceOrderId = o.SourceOrderId ?? string.Empty, SupplierPrice = PriceText(o.SupplierPrice) };
+            edit = new RowEdit { Mail = o.Mail ?? string.Empty, SourceOrderId = o.SourceOrderId ?? string.Empty, SourceUrl = o.SourceUrl ?? string.Empty, SupplierPrice = PriceText(o.SupplierPrice) };
             edits[o.Id] = edit;
         }
         return edit;
@@ -315,7 +349,12 @@ else
     private async Task<bool> SaveEditAsync(SalesOrderDto o)
     {
         if (!edits.TryGetValue(o.Id, out var edit)) return true;
-        var request = new UpdateSalesOrderRequest { Mail = edit.Mail, SourceOrderId = edit.SourceOrderId };
+        if (!string.IsNullOrWhiteSpace(edit.SourceUrl) && !IsWebLink(edit.SourceUrl))
+        {
+            Show($"Order {o.EbayOrderId}: the source link must start with http:// or https://.", false);
+            return false;
+        }
+        var request = new UpdateSalesOrderRequest { Mail = edit.Mail, SourceOrderId = edit.SourceOrderId, SourceUrl = edit.SourceUrl };
 
         if (edit.SupplierPrice.Trim() != PriceText(o.SupplierPrice))
         {
@@ -348,7 +387,11 @@ else
     private async Task ResetSupplierPrice(SalesOrderDto o)
     {
         var edit = edits.GetValueOrDefault(o.Id);
-        if (await Update(o, new UpdateSalesOrderRequest { Mail = edit?.Mail ?? o.Mail, SourceOrderId = edit?.SourceOrderId ?? o.SourceOrderId, ResetSupplierPrice = true }))
+        if (await Update(o, new UpdateSalesOrderRequest
+            {
+                Mail = edit?.Mail ?? o.Mail, SourceOrderId = edit?.SourceOrderId ?? o.SourceOrderId,
+                SourceUrl = IsWebLink(edit?.SourceUrl) ? edit!.SourceUrl : o.SourceUrl, ResetSupplierPrice = true
+            }))
         {
             edits.Remove(o.Id);
             await RefreshTotalsAsync();

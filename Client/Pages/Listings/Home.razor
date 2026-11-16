@@ -293,10 +293,20 @@ else
                         {
                             @foreach (var pub in listing.Publications)
                             {
-                                <span class="badge @(pub.Status == PublicationStatuses.Published ? "bg-info text-dark" : "bg-danger") me-1"
-                                      title="@PublicationTitle(pub)">
-                                    @pub.AccountName@(pub.Status == PublicationStatuses.Published ? "" : " ✖")
-                                </span>
+                                @if (pub.Status == PublicationStatuses.Published && !string.IsNullOrEmpty(pub.ListingUrl))
+                                {
+                                    <a class="badge bg-info text-dark me-1 text-decoration-none" href="@pub.ListingUrl" target="_blank" rel="noopener"
+                                       title="@PublicationTitle(pub) – open on @pub.Marketplace">
+                                        @pub.AccountName <i class="bi bi-box-arrow-up-right"></i>
+                                    </a>
+                                }
+                                else
+                                {
+                                    <span class="badge @(pub.Status == PublicationStatuses.Published ? "bg-info text-dark" : "bg-danger") me-1"
+                                          title="@PublicationTitle(pub)">
+                                        @pub.AccountName@(pub.Status == PublicationStatuses.Published ? "" : " ✖")
+                                    </span>
+                                }
                             }
                         }
                         else if (!string.IsNullOrWhiteSpace(listing.EbayAccountName))

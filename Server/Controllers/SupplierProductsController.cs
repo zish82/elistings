@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
 using Server.Configuration;
 using Server.Data;
 using Server.Services;
@@ -110,7 +111,8 @@ public class SupplierProductsController : ControllerBase
         if (q.HideAdded)
         {
             var uid = userId.Value;
-            query = query.Where(p => !_context.Listings.Any(l => l.OwnerUserId == uid && l.SupplierProductId == p.Id));
+            query = query.Where(p => !_context.Listings.Any(l => l.OwnerUserId == uid && l.SupplierProductId == p.Id)
+                && !_context.ListingVariants.Any(v => v.SupplierProductId == p.Id && _context.Listings.Any(l => l.Id == v.ListingId && l.OwnerUserId == uid)));
         }
 
         query = q.Sort switch
@@ -118,10 +120,9 @@ public class SupplierProductsController : ControllerBase
             // Id last everywhere, so "Load more" pages never repeat or skip products with equal values.
             SupplierProductSort.PriceHighToLow => query.OrderByDescending(p => p.SupplierPrice != null).ThenByDescending(p => (double?)p.SupplierPrice).ThenBy(p => p.Id),
             SupplierProductSort.PriceLowToHigh => query.OrderByDescending(p => p.SupplierPrice != null).ThenBy(p => (double?)p.SupplierPrice).ThenBy(p => p.Id),
-            SupplierProductSort.ProfitHighToLow => query
-                .OrderByDescending(p => p.SuggestedPrice != null && p.SupplierPrice != null)
-                .ThenByDescending(p => (double?)p.SuggestedPrice - (double?)p.SupplierPrice)
-                .ThenBy(p => p.Id),
+            // The suggested price is worked out on demand, so the database can only use cost as a proxy for profit;
+            // the rows loaded are then put in true estimated-profit order below.
+            SupplierProductSort.ProfitHighToLow => query.OrderByDescending(p => p.SupplierPrice != null).ThenByDescending(p => (double?)p.SupplierPrice).ThenBy(p => p.Id),
             SupplierProductSort.StockHighToLow => query.OrderByDescending(p => p.StockLevel ?? -1).ThenBy(p => p.Id),
             _ => query.OrderBy(p => p.Supplier).ThenBy(p => p.Title).ThenBy(p => p.Id)
         };
@@ -148,11 +149,8 @@ public class SupplierProductsController : ControllerBase
                                select new { l.SupplierProductId, t.Name }).ToListAsync())
             .ToLookup(x => x.SupplierProductId, x => x.Name);
 
-        var existingMap = await _context.Listings
-            .Where(l => l.OwnerUserId == userId.Value && l.SupplierProductId.HasValue && productIds.Contains(l.SupplierProductId.Value))
-            .GroupBy(l => l.SupplierProductId!.Value)
-            .Select(g => new { ProductId = g.Key, ListingId = g.OrderBy(x => x.Id).Select(x => x.Id).FirstOrDefault() })
-            .ToDictionaryAsync(x => x.ProductId, x => x.ListingId);
+        var owned = await OwnedListingsAsync(userId.Value, productIds);
+        var existingMap = owned.ToDictionary(x => x.Key, x => x.Value.ListingId);
 
         // Estimated eBay fees and profit (suggested price + default delivery).
         var feeSettings = await new MarketplaceFeeService(_context).GetSettingsAsync();
@@ -171,9 +169,11 @@ public class SupplierProductsController : ControllerBase
             ImageUrl = p.ImageUrl,
             SupplierPrice = p.SupplierPrice,
             StockLevel = p.StockLevel,
-            SuggestedPrice = p.SuggestedPrice,
+            SuggestedPrice = SuggestedPricing.For(p, suppliersByCode.GetValueOrDefault(p.Supplier)).Price,
+            SuggestedPriceSource = SuggestedPricing.For(p, suppliersByCode.GetValueOrDefault(p.Supplier)).Source,
             AlreadyAdded = existingMap.ContainsKey(p.Id),
             ExistingListingId = existingMap.GetValueOrDefault(p.Id),
+            InVariationListing = owned.TryGetValue(p.Id, out var ownedInfo) && ownedInfo.Variation,
             CategoryName = p.CategoryName,
             ImageUrlsJson = p.ImageUrlsJson,
             RrpPrice = p.RrpPrice,
@@ -343,6 +343,7 @@ public class SupplierProductsController : ControllerBase
                 ? "Eden RRP – trade price not confirmed yet"
                 : "Eden trade price (logged-in)" + fetched,
             "DropShipMall" => "DropShipMall trade feed",
+            "Godropship" => "Godropship website price (incl. UK delivery)" + fetched,
             _ => p.PriceIsEstimate ? "Estimate" : "Supplier"
         };
     }
@@ -367,11 +368,9 @@ public class SupplierProductsController : ControllerBase
         var supplierSettings = (await new SupplierCatalogService(_context).GetAllAsync())
             .FirstOrDefault(s => s.Code.Equals(product.Supplier, StringComparison.OrdinalIgnoreCase));
 
-        var existingListingId = await _context.Listings
-            .Where(l => l.OwnerUserId == userId.Value && l.SupplierProductId == id)
-            .OrderBy(l => l.Id)
-            .Select(l => (int?)l.Id)
-            .FirstOrDefaultAsync();
+        var ownedForProduct = await OwnedListingsAsync(userId.Value, new List<int> { id });
+        int? existingListingId = ownedForProduct.TryGetValue(id, out var ownedHere) ? ownedHere.ListingId : null;
+        var variationListing = ownedHere.Variation ? await VariationListingInfoAsync(ownedHere.ListingId) : null;
 
         return Ok(new SupplierProductDetailDto
         {
@@ -383,20 +382,25 @@ public class SupplierProductsController : ControllerBase
             ImageUrl = product.ImageUrl,
             SupplierPrice = product.SupplierPrice,
             StockLevel = product.StockLevel,
-            SuggestedPrice = product.SuggestedPrice,
+            SuggestedPrice = SuggestedPricing.For(product, supplierSettings).Price,
+            SuggestedPriceSource = SuggestedPricing.For(product, supplierSettings).Source,
             Description = product.Description,
             Brand = product.Brand,
             Currency = product.Currency,
             UpdatedAtUtc = product.UpdatedAtUtc,
             AlreadyAdded = existingListingId.HasValue,
             ExistingListingId = existingListingId,
+            InVariationListing = ownedHere.Variation,
+            VariationListing = variationListing,
             CategoryName = product.CategoryName,
             ImageUrlsJson = product.ImageUrlsJson,
             RrpPrice = product.RrpPrice,
             PriceIsEstimate = product.PriceIsEstimate,
             PriceIncludesVat = supplierSettings?.PricesIncludeVat ?? false,
             PriceSource = PriceSource(product),
-            CostIncVat = PricingMath.CostIncVat(product.SupplierPrice, supplierSettings)
+            CostIncVat = PricingMath.CostIncVat(product.SupplierPrice, supplierSettings),
+            DeliveryIncVat = SupplierCatalogService.ProductDelivery(product, supplierSettings).IncVat,
+            DeliverySource = SupplierCatalogService.ProductDelivery(product, supplierSettings).Source
         });
     }
 
@@ -414,11 +418,7 @@ public class SupplierProductsController : ControllerBase
             .Where(p => productIds.Contains(p.Id))
             .ToListAsync();
 
-        var existing = await _context.Listings
-            .Where(l => l.OwnerUserId == userId.Value && l.SupplierProductId.HasValue && productIds.Contains(l.SupplierProductId.Value))
-            .Select(l => l.SupplierProductId!.Value)
-            .ToListAsync();
-        var existingSet = existing.ToHashSet();
+        var existingSet = (await OwnedListingsAsync(userId.Value, productIds)).Keys.ToHashSet();
 
         var result = new AddSupplierProductsResult();
         // Another user already posted the product on an account this user also posts to (a shared account)?
@@ -586,6 +586,119 @@ public class SupplierProductsController : ControllerBase
         await _context.SaveChangesAsync();
 
         return Ok(new BulkProductDeleteResult { Deleted = products.Count });
+    }
+
+    /// <summary>The user's listing for each product: its own listing, else the variation listing it is one variation of.</summary>
+    private async Task<Dictionary<int, (int ListingId, bool Variation)>> OwnedListingsAsync(int userId, IReadOnlyCollection<int> productIds)
+    {
+        var map = new Dictionary<int, (int, bool)>();
+        var direct = await _context.Listings
+            .Where(l => l.OwnerUserId == userId && l.SupplierProductId.HasValue && productIds.Contains(l.SupplierProductId.Value))
+            .Select(l => new { ProductId = l.SupplierProductId!.Value, l.Id }).ToListAsync();
+        var directIds = direct.Select(x => x.Id).ToList();
+        var withVariants = (await _context.ListingVariants.Where(v => directIds.Contains(v.ListingId)).Select(v => v.ListingId).Distinct().ToListAsync()).ToHashSet();
+        foreach (var g in direct.GroupBy(x => x.ProductId))
+        {
+            var listingId = g.Min(x => x.Id);
+            map[g.Key] = (listingId, withVariants.Contains(listingId)); // the base listing of a variation listing counts as a variation too
+        }
+
+        var viaVariants = await (from v in _context.ListingVariants
+                                 join l in _context.Listings on v.ListingId equals l.Id
+                                 where l.OwnerUserId == userId && v.SupplierProductId.HasValue && productIds.Contains(v.SupplierProductId.Value)
+                                 select new { ProductId = v.SupplierProductId!.Value, ListingId = l.Id }).ToListAsync();
+        foreach (var g in viaVariants.GroupBy(x => x.ProductId))
+            if (!map.ContainsKey(g.Key)) map[g.Key] = (g.Min(x => x.ListingId), true);
+        return map;
+    }
+
+    private async Task<VariationListingInfoDto?> VariationListingInfoAsync(int listingId)
+    {
+        var listing = await _context.Listings.AsNoTracking().FirstOrDefaultAsync(l => l.Id == listingId);
+        if (listing == null) return null;
+        var variants = await Server.Services.ListingVariants.LoadAsync(_context, listingId);
+        return new VariationListingInfoDto
+        {
+            ListingId = listing.Id, Title = listing.Title, Status = listing.Status,
+            Variations = variants.Select(v => new VariationListingItemDto
+            {
+                SupplierProductId = v.SupplierProductId, Sku = v.Sku ?? string.Empty,
+                Options = string.Join(", ", v.Options.Select(o => $"{o.Key}: {o.Value}")), Price = v.Price, Quantity = v.Quantity
+            }).ToList()
+        };
+    }
+
+    /// <summary>
+    /// Creates ONE draft listing with a variation per selected product (e.g. the sizes of the same product).
+    /// The listing's title, description, pictures and specifics come from the first selected product.
+    /// </summary>
+    [HttpPost("variation-listing")]
+    public async Task<ActionResult<AddSupplierProductsResult>> CreateVariationListing([FromBody] CreateVariationListingRequest request)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) return Unauthorized();
+        var ids = request?.ProductIds?.Distinct().ToList() ?? new List<int>();
+        if (ids.Count < 2) return BadRequest("Select at least 2 products to make a variation listing.");
+
+        var products = await VisibleProducts().Where(p => ids.Contains(p.Id)).ToListAsync();
+        products = ids.Select(i => products.FirstOrDefault(p => p.Id == i)).Where(p => p != null).Select(p => p!).ToList(); // keep the selection order
+        if (products.Count != ids.Count) return BadRequest("Some selected products are no longer available.");
+        if (products.Select(p => p.Supplier).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1) return BadRequest("Variations must all come from the same supplier.");
+
+        var already = await OwnedListingsAsync(userId.Value, ids);
+        if (already.Count > 0)
+            return BadRequest($"{already.Count} of the selected products already have a listing (or are part of a variation listing): {string.Join(", ", products.Where(p => already.ContainsKey(p.Id)).Select(p => p.SupplierSku ?? p.Title).Take(5))}.");
+
+        var supplier = (await new SupplierCatalogService(_context).GetAllAsync())
+            .FirstOrDefault(s => s.Code.Equals(products[0].Supplier, StringComparison.OrdinalIgnoreCase));
+
+        var first = products[0];
+        var listing = CreateListingFromProduct(userId.Value, first);
+        listing.SupplierProductId = null; // the listing is not one product; each variation links its own
+        await _enrichment.FillListingFromProductAsync(listing, first);
+        listing.SupplierProductId = first.Id; // keeps supplier/context (delivery, enrichment) working
+        _context.Listings.Add(listing);
+        await _context.SaveChangesAsync();
+        await _skuService.EnsureSkuAsync(listing);
+        await _context.SaveChangesAsync();
+
+        var optionName = string.IsNullOrWhiteSpace(request!.OptionName) ? OptionNameFor(first) : request.OptionName.Trim();
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var order = 0;
+        foreach (var product in products)
+        {
+            var value = ValueFor(product, optionName);
+            if (!used.Add(value)) { value = $"{value} ({product.SupplierSku ?? product.Id.ToString()})"; used.Add(value); }
+            var price = SuggestedPricing.For(product, supplier).Price ?? listing.Price;
+            var n = ++order;
+            var sku = $"{listing.Sku}-V{n}";
+            while (await _skuService.IsInUseAsync(sku, null) || await _context.ListingVariants.AnyAsync(v => v.Sku == sku)) sku = $"{listing.Sku}-V{++n}";
+            _context.ListingVariants.Add(new ListingVariant
+            {
+                ListingId = listing.Id, SortOrder = order, Sku = sku,
+                OptionsJson = JsonSerializer.Serialize(new Dictionary<string, string> { [optionName] = value.Length > 65 ? value[..65] : value }),
+                Price = price, Quantity = Math.Clamp(product.StockLevel ?? 1, 1, 100000), ImageUrl = product.ImageUrl,
+                SourcePrice = product.SupplierPrice, SupplierProductId = product.Id
+            });
+        }
+        listing.Price = await _context.ListingVariants.Where(v => v.ListingId == listing.Id).Select(v => (decimal?)v.Price).MinAsync() ?? listing.Price;
+        await _context.SaveChangesAsync();
+
+        var result = new AddSupplierProductsResult { Added = 1, AddedListingIds = new List<int> { listing.Id } };
+        if (_enrichment.HasEnricherFor(first.Supplier)) result.EnrichmentJobId = await _jobs.EnqueueEnrichAsync(userId.Value, new List<int> { listing.Id });
+        return Ok(result);
+    }
+
+    private static string OptionNameFor(SupplierProduct product)
+        => Server.Services.ListingVariants.ReadOptions(product.VariantOptionsJson).Keys.FirstOrDefault() ?? "Option";
+
+    private static string ValueFor(SupplierProduct product, string optionName)
+    {
+        var options = Server.Services.ListingVariants.ReadOptions(product.VariantOptionsJson);
+        var match = options.FirstOrDefault(o => o.Key.Equals(optionName, StringComparison.OrdinalIgnoreCase)).Value;
+        if (!string.IsNullOrWhiteSpace(match)) return match.Trim();
+        if (!string.IsNullOrWhiteSpace(product.VariantName)) return product.VariantName.Trim();
+        return product.SupplierSku ?? product.Title;
     }
 
     private Listing CreateListingFromProduct(int userId, SupplierProduct product)

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Moq;
 using Server.Controllers;
@@ -264,5 +265,66 @@ public class SalesReportTests
 
         Assert.Equal(6m, lines[0].UnitCost);       // £5 + VAT
         Assert.Equal(16.80m, order.SupplierPrice); // 2 × £6 + £4.80 delivery
+    }
+
+    [Fact]
+    public async Task SourceLinks_ComeFromTheCatalogue_AndOnlyForOurItems()
+    {
+        using var ctx = TestHelpers.NewContext();
+        TestHelpers.AddSupplier(ctx); // prefix DSM
+        ctx.SupplierProducts.Add(new SupplierProduct { Id = 7, Supplier = "DropShipMall", SupplierSku = "S99", Title = "Vase", ProductUrl = "https://www.dropshipmall.co.uk/vase" });
+        ctx.SupplierProducts.Add(new SupplierProduct { Id = 8, Supplier = "DropShipMall", SupplierSku = "S1", Title = "Lamp", ProductUrl = "https://www.dropshipmall.co.uk/lamp" });
+        ctx.Listings.Add(new Listing { Id = 50, OwnerUserId = 1, Sku = "MY-CANDLE", Title = "Candle", SourceUrl = "https://www.dropshipmall.co.uk/candle", Status = "Published" });
+        ctx.Listings.Add(new Listing { Id = 51, OwnerUserId = 2, Sku = "OTHER", Title = "Not yours", SourceUrl = "https://example.com/not-yours", Status = "Published" });
+        ctx.Listings.Add(new Listing { Id = 52, OwnerUserId = 1, Sku = "MULTI", Title = "Lamps", Status = "Published" });
+        ctx.ListingVariants.Add(new ListingVariant { ListingId = 52, Sku = "MULTI-RED", OptionsJson = "{}", SupplierProductId = 8 });
+        ctx.Listings.Add(new Listing { Id = 53, OwnerUserId = 1, Sku = "BAD", Title = "Bad link", SourceUrl = "javascript:alert(1)", Status = "Published" });
+        var orders = new List<EbayOrder>
+        {
+            new() { Id = 1, OrderId = "a", OwnerUserId = 1 }, // matched supplier product
+            new() { Id = 2, OrderId = "b", OwnerUserId = 1 }, // listing by SKU
+            new() { Id = 3, OrderId = "c", OwnerUserId = 1 }, // SKU names a supplier product
+            new() { Id = 4, OrderId = "d", OwnerUserId = 1 }, // someone else's SKU, unknown SKU, non-web link: nothing
+            new() { Id = 5, OrderId = "e", OwnerUserId = 1 }  // variation SKU
+        };
+        ctx.SaveChanges();
+        var lines = new List<EbayOrderLine>
+        {
+            new() { EbayOrderId = 1, Title = "Vase", Sku = "whatever", SupplierProductId = 7 },
+            new() { EbayOrderId = 2, Title = "Candle", Sku = "MY-CANDLE" },
+            new() { EbayOrderId = 3, Title = "Vase again", Sku = "DSM-S99" },
+            new() { EbayOrderId = 4, Title = "x", Sku = "OTHER" },
+            new() { EbayOrderId = 4, Title = "y", Sku = "MAN-L77" },
+            new() { EbayOrderId = 4, Title = "z", Sku = "BAD" },
+            new() { EbayOrderId = 5, Title = "Red lamp", Sku = "MULTI-RED" }
+        }.ToLookup(l => l.EbayOrderId);
+
+        var links = await OrderSourceLinks.FindAsync(ctx, orders, lines);
+
+        Assert.Equal("https://www.dropshipmall.co.uk/vase", links[1].Single().Url);
+        Assert.Equal("https://www.dropshipmall.co.uk/candle", links[2].Single().Url);
+        Assert.Equal("https://www.dropshipmall.co.uk/vase", links[3].Single().Url);
+        Assert.False(links.ContainsKey(4));
+        Assert.Equal("https://www.dropshipmall.co.uk/lamp", links[5].Single().Url);
+        Assert.Equal("Red lamp", links[5].Single().Title);
+    }
+
+    [Fact]
+    public async Task Update_SavesTypedInSourceLink_AndRefusesNonWebLinks()
+    {
+        using var ctx = TestHelpers.NewContext();
+        ctx.EbayOrders.Add(new EbayOrder { Id = 1, OrderId = "a", OwnerUserId = 1 });
+        ctx.SaveChanges();
+        var controller = new SalesController(ctx, TestHelpers.User(1)).WithHttpContext(1);
+
+        await controller.Update(1, new UpdateSalesOrderRequest { SourceUrl = "  https://www.amazon.co.uk/dp/B000  " });
+        Assert.Equal("https://www.amazon.co.uk/dp/B000", ctx.EbayOrders.Single().SourceUrl);
+
+        var bad = await controller.Update(1, new UpdateSalesOrderRequest { SourceUrl = "javascript:alert(1)" });
+        Assert.IsType<BadRequestObjectResult>(bad.Result);
+        Assert.Equal("https://www.amazon.co.uk/dp/B000", ctx.EbayOrders.Single().SourceUrl);
+
+        await controller.Update(1, new UpdateSalesOrderRequest { SourceUrl = "" });
+        Assert.Null(ctx.EbayOrders.Single().SourceUrl);
     }
 }

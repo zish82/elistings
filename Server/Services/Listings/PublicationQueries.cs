@@ -8,7 +8,7 @@ namespace Server.Services;
 public static class PublicationQueries
 {
     /// <summary>Listing id → its publications (with account names), newest account last.</summary>
-    public static async Task<Dictionary<int, List<ListingPublicationDto>>> ForListingsAsync(AppDbContext context, IReadOnlyCollection<int> listingIds)
+    public static async Task<Dictionary<int, List<ListingPublicationDto>>> ForListingsAsync(AppDbContext context, IReadOnlyCollection<int> listingIds, bool sandbox = false)
     {
         if (listingIds.Count == 0) return new Dictionary<int, List<ListingPublicationDto>>();
         var rows = await context.ListingPublications.AsNoTracking()
@@ -29,6 +29,7 @@ public static class PublicationQueries
                 }
             })
             .ToListAsync();
+        foreach (var r in rows) r.Dto.ListingUrl = MarketplaceLinks.ListingUrl(r.Dto.Marketplace, r.Dto.ExternalListingId, sandbox);
         return rows.GroupBy(r => r.ListingId).ToDictionary(g => g.Key, g => g.Select(r => r.Dto).ToList());
     }
 

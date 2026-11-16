@@ -143,7 +143,9 @@ public class SupplierCatalogService
         }
 
         var supplier = await FindAsync(product?.Supplier, listing.SourceUrl);
-        return BuildContext(supplier, product?.PostageCategory);
+        var context = BuildContext(supplier, product?.PostageCategory);
+        context.WebsitePrice = product?.RrpPrice;
+        return context;
     }
 
     public ListingSupplierContextDto BuildContext(SupplierDto? supplier, string? postageCategory)
@@ -154,6 +156,19 @@ public class SupplierCatalogService
             PostageCategory = postageCategory,
             SuggestedDeliveryOptionId = SuggestDeliveryOption(supplier, postageCategory)?.Id
         };
+    }
+
+    /// <summary>
+    /// Delivery inc VAT for a product, the same one the fee estimate and "Add to my listings" use: its own charge (ex VAT) if the supplier
+    /// gives one, else the supplier's option for its postage class, else the supplier's default option.
+    /// </summary>
+    public static (decimal? IncVat, string? Source) ProductDelivery(SupplierProduct product, SupplierDto? supplier)
+    {
+        if (supplier == null) return (null, null);
+        if (product.DeliveryCost.HasValue)
+            return (PricingMath.AddVat(product.DeliveryCost.Value, includesVat: false, supplier.VatRatePercent), "Supplier charge for this product");
+        var option = SuggestDeliveryOption(supplier, product.PostageCategory);
+        return option == null ? (null, null) : (PricingMath.DeliveryIncVat(option, supplier), $"{option.Name} (supplier's delivery option for this product)");
     }
 
     /// <summary>Option whose PostageCategories contains the product's category, else the supplier default.</summary>
@@ -186,6 +201,8 @@ public class SupplierCatalogService
         IsActive = s.IsActive,
         FeeCategoryId = s.FeeCategoryId,
         BackgroundSyncEnabled = s.BackgroundSyncEnabled,
+        UseSupplierSuggestedPrice = s.UseSupplierSuggestedPrice,
+        RequireUploadedPictures = s.RequireUploadedPictures,
         DeliveryOptions = options.Select(ToDto).ToList()
     };
 

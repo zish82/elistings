@@ -336,6 +336,30 @@ public class AccountsAndVisibilityTests
     }
 
     [Fact]
+    public async Task SupplierNeedingUploadedPictures_PublishesOnlyUploadedOnes_AndRefusesWithoutAny()
+    {
+        using var ctx = Seed();
+        var supplier = TestHelpers.AddSupplier(ctx);
+        supplier.RequireUploadedPictures = true;
+        var product = new SupplierProduct { Supplier = supplier.Code, Title = "P" };
+        ctx.SupplierProducts.Add(product);
+        ctx.SaveChanges();
+
+        var withoutUpload = NewListing(3, "nopics", 10, product.Id); // only a supplier-hosted picture
+        ctx.Listings.Add(withoutUpload);
+        ctx.SaveChanges();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Publisher(ctx, EbayMock().Object).PublishAsync(withoutUpload));
+
+        var withUpload = NewListing(3, "pics", 10, product.Id);
+        withUpload.ImageUrlsJson = JsonSerializer.Serialize(new[] { "https://x/a.jpg", "data:image/jpeg;base64,AAAA" });
+        ctx.Listings.Add(withUpload);
+        ctx.SaveChanges();
+        var ebay = EbayMock();
+        await Publisher(ctx, ebay.Object).PublishAsync(withUpload);
+        ebay.Verify(e => e.CreateListingAsync(It.Is<ListingDto>(d => d.ImageUrls.Count == 1 && d.ImageUrls[0].StartsWith("data:image"))), Times.Once);
+    }
+
+    [Fact]
     public async Task EveryAccountFailing_Throws()
     {
         using var ctx = Seed();

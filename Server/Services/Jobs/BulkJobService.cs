@@ -43,7 +43,9 @@ public class BulkJobService
                 ? Job(j => j.ImportEdenCatalogueAsync(id, userId))
                 : supplierCode.Equals(SafelincsCatalogImportService.Code, StringComparison.OrdinalIgnoreCase)
                     ? Job(j => j.ImportSafelincsCatalogueAsync(id, userId))
-                    : Job(j => j.ImportSupplierCatalogueAsync(id, userId, supplierCode)));
+                    : supplierCode.Equals(GodropshipCatalogImportService.Code, StringComparison.OrdinalIgnoreCase)
+                        ? Job(j => j.ImportGodropshipCatalogueAsync(id, userId))
+                        : Job(j => j.ImportSupplierCatalogueAsync(id, userId, supplierCode)));
 
     /// <summary>Sets the eBay quantity of a supplier's published listings to 0 (restore = back to their own quantity).</summary>
     public Task<string> EnqueueSupplierQuantityAsync(int userId, string supplierCode, bool restore)

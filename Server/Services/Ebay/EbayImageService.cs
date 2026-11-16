@@ -41,9 +41,7 @@ public class EbayImageService : IMarketplaceImageService
             return await UploadImageAsync(Convert.FromBase64String(parts[1]), "uploaded_image.jpg", accountId);
         }
 
-        // 1) Download the picture ourselves and send the bytes.
-        //    Supplier sites can refuse this server (e.g. Safelincs returns a block page instead of the picture),
-        // 2) …so if we don't get a real image, let eBay fetch the URL itself (createImageFromUrl).
+        // Download the picture ourselves and send the bytes to eBay. eBay is never asked to fetch the supplier's URL.
         step?.Invoke("Downloading from the supplier");
         string? downloadProblem;
         try
@@ -67,16 +65,8 @@ public class EbayImageService : IMarketplaceImageService
             downloadProblem = "Download timed out";
         }
 
-        Console.WriteLine($"[ImageService] {downloadProblem} – asking eBay to fetch {imageUrl} itself");
-        step?.Invoke("Couldn't download it here – asking eBay to fetch it");
-        try
-        {
-            return await UploadExternalUrlAsync(imageUrl, accountId);
-        }
-        catch (Exception ex)
-        {
-            throw new Exception($"{downloadProblem}; eBay couldn't fetch it either: {ex.Message}", ex);
-        }
+        Console.WriteLine($"[ImageService] {downloadProblem} ({imageUrl})");
+        throw new Exception(downloadProblem);
     }
 
     /// <summary>The image bytes, or null plus the reason when the site didn't return a picture.</summary>
@@ -122,18 +112,6 @@ public class EbayImageService : IMarketplaceImageService
         form.Add(image);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{MediaBaseUrl}/image/create_image_from_file") { Content = form };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        return await SendAsync(request, token);
-    }
-
-    /// <summary>eBay downloads the picture from <paramref name="imageUrl"/> itself (no bytes sent from here).</summary>
-    private async Task<string> UploadExternalUrlAsync(string imageUrl, int? accountId)
-    {
-        var token = await _ebayService.GetOAuthTokenAsync(accountId);
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{MediaBaseUrl}/image/create_image_from_url")
-        {
-            Content = new StringContent(JsonSerializer.Serialize(new { imageUrl }), Encoding.UTF8, "application/json")
-        };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return await SendAsync(request, token);
     }

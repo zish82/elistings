@@ -287,6 +287,5 @@ public class SupplierPriceListService
         product.TradePriceFetchedAtUtc = item.UploadedAtUtc;
         if (item.DeliveryCost.HasValue) product.DeliveryCost = item.DeliveryCost;
         if (string.IsNullOrWhiteSpace(product.CategoryName) && !string.IsNullOrWhiteSpace(item.Category)) product.CategoryName = item.Category;
-        product.SuggestedPrice = PricingMath.SuggestItemPrice(PricingMath.CostIncVat(product.SupplierPrice, supplier), supplier?.DefaultMarginPercent ?? 20m);
     }
 }

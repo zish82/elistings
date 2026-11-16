@@ -10,7 +10,15 @@
 
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h3>@(Id.HasValue ? "Edit Listing" : "Create New Listing")</h3>
+        <div>
+            <h3 class="mb-1">@(Id.HasValue ? "Edit Listing" : "Create New Listing")</h3>
+            @foreach (var pub in publicationLinks.Where(p => p.Status == PublicationStatuses.Published && !string.IsNullOrEmpty(p.ListingUrl)))
+            {
+                <a class="badge bg-info text-dark text-decoration-none me-1" href="@pub.ListingUrl" target="_blank" rel="noopener">
+                    View on @pub.Marketplace (@pub.AccountName) <i class="bi bi-box-arrow-up-right"></i>
+                </a>
+            }
+        </div>
         <div class="d-flex gap-2">
             @if (Id.HasValue && listing.SupplierProductId.HasValue)
             {
@@ -146,10 +154,28 @@
                     }
                 </div>
 
+                @if (Id.HasValue)
+                {
+                    <ListingVariantsEditor ListingId="Id.Value" DefaultPrice="listing.Price" DefaultQuantity="listing.Quantity"
+                                           @bind-Selected="selectedVariant" RowsChanged="OnVariantRowsChanged" />
+                }
+
                 <div class="row g-3">
                     <div class="col-md-3">
-                        <label for="price" class="form-label">Item Price (inc VAT)</label>
-                        <InputNumber id="price" class="form-control" @bind-Value="listing.Price" step="0.01" />
+                        @if (selectedVariant != null)
+                        {
+                            <label for="variantPrice" class="form-label">Item Price (inc VAT) · <span class="text-primary">@(string.IsNullOrWhiteSpace(selectedVariant.Value) ? "(unnamed)" : selectedVariant.Value)</span></label>
+                            <input id="variantPrice" type="number" step="0.01" class="form-control" @bind="selectedVariant.Price" />
+                            <div class="small text-muted mt-1">
+                                Variation price; keep it with <em>Save variations</em>.
+                                <a href="javascript:void(0)" @onclick="() => selectedVariant = null">Back to listing price</a>
+                            </div>
+                        }
+                        else
+                        {
+                            <label for="price" class="form-label">Item Price (inc VAT)</label>
+                            <InputNumber id="price" class="form-control" @bind-Value="listing.Price" step="0.01" />
+                        }
                         @if (extractedIncVat > 0 || extractedExVat > 0)
                         {
                             <div class="small mt-1 text-muted">
@@ -160,8 +186,8 @@
                         @if (SuggestedItemPrice.HasValue)
                         {
                             <div class="small mt-1">
-                                <a href="javascript:void(0)" @onclick="() => listing.Price = SuggestedItemPrice.Value">Use suggested £@SuggestedItemPrice.Value.ToString("F2")</a>
-                                <span class="text-muted">(cost + @(supplierContext?.Supplier?.DefaultMarginPercent.ToString("0.#") ?? "20")% margin)</span>
+                                <a href="javascript:void(0)" @onclick="() => SetDisplayedPrice(SuggestedItemPrice.Value)">Use suggested £@SuggestedItemPrice.Value.ToString("F2")</a>
+                                <span class="text-muted">(@(SuggestedPick.Source == PricingMath.SourceWebsite ? "supplier website price" : $"cost + {supplierContext?.Supplier?.DefaultMarginPercent.ToString("0.#") ?? "20"}% margin"))</span>
                             </div>
                         }
                         <ValidationMessage For="@(() => listing.Price)" />
@@ -206,7 +232,7 @@
                 {
                     var est = FeeEstimate;
                     <div class="border rounded p-2 small bg-light">
-                        <div class="fw-semibold mb-1">Estimated profit per sale</div>
+                        <div class="fw-semibold mb-1">Estimated profit per sale@(selectedVariant != null ? $" · {(string.IsNullOrWhiteSpace(selectedVariant.Value) ? "(unnamed)" : selectedVariant.Value)}" : "")</div>
                         <table class="table table-sm table-borderless mb-1" style="max-width: 460px;">
                             <tbody>
                                 <tr><td>Buyer pays (item + delivery)</td><td class="text-end">£@est.SaleTotal.ToString("F2")</td></tr>
@@ -535,8 +561,11 @@
         </div>
 
         <div class="col-12 mt-4 mb-5">
-            <button type="submit" class="btn btn-success btn-lg px-4 shadow-sm">
+            <button type="submit" class="btn btn-success btn-lg px-4 shadow-sm" disabled="@isSaving" @onclick="() => closeAfterSave = false">
                 @(Id.HasValue ? "Save Changes" : "Save as Draft")
+            </button>
+            <button type="submit" class="btn btn-outline-success btn-lg px-4 shadow-sm ms-2" disabled="@isSaving" @onclick="() => closeAfterSave = true">
+                Save and Close
             </button>
             <button type="button" class="btn btn-primary btn-lg px-4 shadow-sm ms-2" 
                     @onclick="HandleSaveAndPublish" disabled="@isPublishing">
@@ -555,6 +584,10 @@
             @if (!string.IsNullOrEmpty(saveError))
             {
                 <div class="mt-3 text-danger fw-bold">@saveError</div>
+            }
+            else if (!string.IsNullOrEmpty(saveMessage))
+            {
+                <div class="mt-3 text-success fw-bold">@saveMessage</div>
             }
 
             @if (!string.IsNullOrEmpty(publishStatus))
@@ -635,10 +668,15 @@
     }
 
     private string listingStatus = "Draft";
+    private List<ListingPublicationDto> publicationLinks = new();
     private bool IsPublished => Id.HasValue && listingStatus == "Published";
     private const int TitleMaxLength = 80; // eBay limit
     private int TitleLength => listing.Title?.Length ?? 0;
     private string? saveError;
+    private string? saveMessage;
+    private bool isSaving;
+    // Set by the button that submitted the form: "Save and Close" leaves the page, "Save Changes" stays on it.
+    private bool closeAfterSave;
     private string? imageUploadError;
 
     private string publishStatus = "";
@@ -664,16 +702,40 @@
     private decimal DeliveryGross(SupplierDeliveryOptionDto o)
         => supplierContext?.Supplier == null ? o.Cost : PricingMath.DeliveryIncVat(o, supplierContext.Supplier);
 
-    private decimal ListingTotal => PricingMath.ListingTotal(listing.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice);
+    // Variations (edit page): the one picked drives the item price, listing total and profit shown in Price & Delivery.
+    private IReadOnlyList<ListingVariantsEditor.Row> variantRows = Array.Empty<ListingVariantsEditor.Row>();
+    private ListingVariantsEditor.Row? selectedVariant;
+
+    private void OnVariantRowsChanged(IReadOnlyList<ListingVariantsEditor.Row> rows)
+    {
+        variantRows = rows.ToList();
+        if (selectedVariant != null && !variantRows.Contains(selectedVariant)) selectedVariant = null;
+    }
+
+    private decimal DisplayedPrice => selectedVariant?.Price ?? listing.Price;
+    // A variation without its own supplier cost uses the listing's.
+    private decimal? DisplayedSourcePrice => selectedVariant?.SourcePrice ?? listing.SourcePrice;
+
+    private void SetDisplayedPrice(decimal price)
+    {
+        if (selectedVariant != null) selectedVariant.Price = price;
+        else listing.Price = price;
+    }
+
+    private decimal ListingTotal => PricingMath.ListingTotal(DisplayedPrice, listing.DeliveryCost, listing.IncludeDeliveryInPrice);
 
     private decimal? CostIncVat => PricingMath.CostIncVat(listing.SourcePrice, supplierContext?.Supplier);
 
-    private decimal? SuggestedItemPrice => PricingMath.SuggestItemPrice(CostIncVat, supplierContext?.Supplier?.DefaultMarginPercent ?? 20m);
+    // The supplier website price belongs to the listing's product, so it isn't suggested for a variation with its own cost.
+    private (decimal? Price, string? Source) SuggestedPick => PricingMath.SuggestPrice(DisplayedSourcePrice,
+        selectedVariant?.SourcePrice != null ? null : supplierContext?.WebsitePrice, supplierContext?.Supplier);
+    private decimal? SuggestedItemPrice => SuggestedPick.Price;
 
     // eBay fee estimate (settings on /suppliers), recalculated as the price/delivery/category change.
     private MarketplaceFeeSettingsDto? feeSettings;
-    private FeeEstimate FeeEstimate => FeeMath.EstimateSale(listing.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice,
-        listing.SourcePrice, CategoryChain, supplierContext?.Supplier, feeSettings ?? new MarketplaceFeeSettingsDto());
+    private FeeEstimate FeeEstimate => EstimateFor(DisplayedPrice, DisplayedSourcePrice);
+    private FeeEstimate EstimateFor(decimal price, decimal? sourcePrice) => FeeMath.EstimateSale(price, listing.DeliveryCost, listing.IncludeDeliveryInPrice,
+        sourcePrice, CategoryChain, supplierContext?.Supplier, feeSettings ?? new MarketplaceFeeSettingsDto());
 
     // The eBay category and its parents (fee rates are set on top-level categories); loaded when the category changes.
     private List<string>? categoryChain;
@@ -839,6 +901,7 @@
                 listing.Colour = existing.Colour;
                 listing.ImageUrls = existing.ImageUrls ?? new List<string>();
                 listingStatus = existing.Status;
+                publicationLinks = existing.Publications;
                 extractionUrl = existing.SourceUrl ?? "";
 
                 // If the editor was already initialized, set its content now
@@ -1395,21 +1458,30 @@
         }
 
         saveError = null;
+        saveMessage = null;
+        isSaving = true;
         try
         {
             if (Id.HasValue)
             {
                 await ListingService.UpdateListingAsync(Id.Value, listing);
+                if (closeAfterSave) { Navigation.NavigateTo("/"); return; }
+                saveMessage = $"Saved at {DateTime.Now:HH:mm}.";
             }
             else
             {
-                await ListingService.CreateListingAsync(listing);
+                var created = await ListingService.CreateListingAsync(listing);
+                // A new draft continues on its edit page (full load: this component loads the listing on initialisation).
+                Navigation.NavigateTo(closeAfterSave ? "/" : $"/edit-listing/{created.Id}", forceLoad: !closeAfterSave);
             }
-            Navigation.NavigateTo("/");
         }
         catch (Exception ex)
         {
             saveError = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
         }
     }
 
@@ -1431,7 +1503,7 @@
         }
 
         // Warn when the estimated profit is below the minimum set in the eBay fee settings.
-        var estimate = FeeEstimate;
+        var estimate = EstimateFor(listing.Price, listing.SourcePrice);
         if (feeSettings != null && estimate.Profit.HasValue && estimate.Profit.Value < feeSettings.MinProfit
             && !await JS.InvokeAsync<bool>("confirm", $"Estimated profit is £{estimate.Profit.Value:F2} per sale, below your minimum of £{feeSettings.MinProfit:F2}. Publish anyway?"))
         {
@@ -1470,6 +1542,7 @@
             }, PublishAccountIds());
             publishProgress = await ListingService.GetPublishProgressAsync(listingId) ?? publishProgress;
             publishWarnings = published.PublishWarnings ?? new();
+            publicationLinks = published.Publications ?? new();
 
             if (publishWarnings.Count > 0)
             {

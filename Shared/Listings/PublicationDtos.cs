@@ -19,8 +19,21 @@ public class ListingPublicationDto
     public string AccountName { get; set; } = string.Empty;
     public string Status { get; set; } = PublicationStatuses.Published;
     public string? ExternalListingId { get; set; }
+    /// <summary>Link to the live listing on the marketplace (null when not published or unknown). Read-only.</summary>
+    public string? ListingUrl { get; set; }
     public string? LastError { get; set; }
     public DateTime? PublishedAtUtc { get; set; }
+}
+
+public static class MarketplaceLinks
+{
+    /// <summary>Public page of a published listing, or null when there is no item number yet.</summary>
+    public static string? ListingUrl(string marketplace, string? externalListingId, bool sandbox)
+    {
+        if (string.IsNullOrWhiteSpace(externalListingId) || externalListingId.StartsWith("LISTING-SUCCESS", StringComparison.Ordinal)) return null;
+        if (!string.Equals(marketplace, MarketplaceNames.Ebay, StringComparison.OrdinalIgnoreCase)) return null;
+        return $"https://{(sandbox ? "www.sandbox.ebay.co.uk" : "www.ebay.co.uk")}/itm/{Uri.EscapeDataString(externalListingId.Trim())}";
+    }
 }
 
 /// <summary>Body of POST api/ebay/publish/{id}: which of the owner's accounts to publish to (empty = where it's already published, else the listing's account).</summary>

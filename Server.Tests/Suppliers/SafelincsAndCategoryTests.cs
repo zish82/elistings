@@ -234,7 +234,7 @@ public class SafelincsAndCategoryTests
         Assert.False(product.PriceIsEstimate);
         Assert.Equal(4m, product.DeliveryCost);
         Assert.Equal("Signs", product.CategoryName);
-        Assert.Equal(14.99m, product.SuggestedPrice); // 10 + VAT = 12, +20% = 14.40 → 14.99
+        Assert.Equal(14.99m, PricingMath.SuggestPrice(product.SupplierPrice, product.RrpPrice, supplier).Price); // 10 + VAT = 12, +20% = 14.40 → 14.99
     }
 
     // ------------------------------------------------------------------ categories

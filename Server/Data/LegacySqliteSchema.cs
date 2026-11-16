@@ -568,6 +568,8 @@ public static class LegacySqliteSchema
                 EnsureColumn("MarketplaceFeeCategoryRates", "PerOrderFeeSmall", "TEXT NULL");
                 EnsureColumn("Suppliers", "FeeCategoryId", "TEXT NULL");
                 EnsureColumn("Suppliers", "BackgroundSyncEnabled", "INTEGER NOT NULL DEFAULT 1");
+                EnsureColumn("Suppliers", "UseSupplierSuggestedPrice", "INTEGER NOT NULL DEFAULT 0");
+                EnsureColumn("Suppliers", "RequireUploadedPictures", "INTEGER NOT NULL DEFAULT 0");
                 EnsureColumn("EbayTokens", "Scopes", "TEXT NULL");
                 EnsureColumn("Users", "SupplierAccessConfigured", "INTEGER NOT NULL DEFAULT 0");
                 db.Database.ExecuteSqlRaw(@"
@@ -678,6 +680,22 @@ public static class LegacySqliteSchema
                 db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_ListingPublications_ListingId_Marketplace_AccountId"" ON ""ListingPublications"" (""ListingId"", ""Marketplace"", ""AccountId"");");
                 db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_ListingPublications_AccountId"" ON ""ListingPublications"" (""AccountId"");");
                 db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""ListingVariants"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_ListingVariants"" PRIMARY KEY AUTOINCREMENT,
+                        ""ListingId"" INTEGER NOT NULL,
+                        ""SortOrder"" INTEGER NOT NULL,
+                        ""Sku"" TEXT NOT NULL,
+                        ""OptionsJson"" TEXT NOT NULL,
+                        ""Price"" TEXT NOT NULL,
+                        ""Quantity"" INTEGER NOT NULL,
+                        ""ImageUrl"" TEXT NULL,
+                        ""SourcePrice"" TEXT NULL,
+                        ""SupplierProductId"" INTEGER NULL,
+                        ""OfferId"" TEXT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS ""IX_ListingVariants_ListingId"" ON ""ListingVariants"" (""ListingId"");");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_ListingVariants_Sku"" ON ""ListingVariants"" (""Sku"");");
+                db.Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS ""AccountUserAccess"" (
                         ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_AccountUserAccess"" PRIMARY KEY AUTOINCREMENT,
                         ""Marketplace"" TEXT NOT NULL,
@@ -685,6 +703,18 @@ public static class LegacySqliteSchema
                         ""UserId"" INTEGER NOT NULL
                     );");
                 db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AccountUserAccess_Marketplace_AccountId_UserId"" ON ""AccountUserAccess"" (""Marketplace"", ""AccountId"", ""UserId"");");
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""EbayPictureUploads"" (
+                        ""Id"" INTEGER NOT NULL CONSTRAINT ""PK_EbayPictureUploads"" PRIMARY KEY AUTOINCREMENT,
+                        ""AccountId"" INTEGER NOT NULL,
+                        ""SourceHash"" TEXT NOT NULL,
+                        ""SourceUrl"" TEXT NULL,
+                        ""EbayUrl"" TEXT NOT NULL,
+                        ""UploadedAtUtc"" TEXT NOT NULL,
+                        ""LastUsedAtUtc"" TEXT NOT NULL
+                    );");
+                db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_EbayPictureUploads_AccountId_SourceHash"" ON ""EbayPictureUploads"" (""AccountId"", ""SourceHash"");");
+                EnsureColumn("EbayOrders", "SourceUrl", "TEXT NULL"); // Sales page: typed-in supplier link (Nov 2026)
 
                 db.Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS ""SupplierPriceListItems"" (

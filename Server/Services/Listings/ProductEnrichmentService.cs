@@ -131,8 +131,7 @@ public class ProductEnrichmentService
 
         if (listing.Price <= 0m || listing.Price == 0.99m)
         {
-            var cost = PricingMath.CostIncVat(product.SupplierPrice, supplier);
-            var suggested = PricingMath.SuggestItemPrice(cost, supplier?.DefaultMarginPercent ?? 20m);
+            var suggested = PricingMath.SuggestPrice(product.SupplierPrice, product.RrpPrice, supplier).Price;
             if (suggested.HasValue) listing.Price = suggested.Value;
         }
     }

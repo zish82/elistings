@@ -147,20 +147,19 @@ public class MarketplaceFeeService
     /// </summary>
     public static FeeEstimate? EstimateProduct(SupplierProduct product, SupplierDto? supplier, MarketplaceFeeSettingsDto settings)
     {
-        if (!product.SuggestedPrice.HasValue) return null;
+        var suggested = Server.Services.SuggestedPricing.For(product, supplier).Price;
+        if (!suggested.HasValue) return null;
         var delivery = DefaultDeliveryIncVat(product, supplier);
         var (incVat, exVat) = FeeMath.SupplierCosts(product.SupplierPrice, supplier);
         // Products have no eBay category yet: use the supplier's fee category (e.g. Garden & Patio for Eden).
-        return FeeMath.Estimate(product.SuggestedPrice.Value + (delivery ?? 0m), incVat, exVat, delivery, settings, supplier?.FeeCategoryId);
+        return FeeMath.Estimate(suggested.Value + (delivery ?? 0m), incVat, exVat, delivery, settings, supplier?.FeeCategoryId);
     }
 
     /// <summary>Per-product delivery (ex VAT, e.g. Safelincs) when known, else the supplier's suggested option.</summary>
     public static decimal? DefaultDeliveryIncVat(SupplierProduct product, SupplierDto? supplier)
     {
         if (supplier == null) return null;
-        if (product.DeliveryCost.HasValue) return PricingMath.AddVat(product.DeliveryCost.Value, includesVat: false, supplier.VatRatePercent);
-        var option = SupplierCatalogService.SuggestDeliveryOption(supplier, product.PostageCategory);
-        return option == null ? null : PricingMath.DeliveryIncVat(option, supplier);
+        return SupplierCatalogService.ProductDelivery(product, supplier).IncVat;
     }
 
     private static string? Validate(MarketplaceFeeSettingsDto dto)

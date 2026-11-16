@@ -186,6 +186,10 @@
                         <div class="col-md-2">
                             <label class="form-label small">Default margin %</label>
                             <input type="number" step="1" class="form-control form-control-sm" @bind="s.DefaultMarginPercent" />
+                            <div class="form-check mt-1">
+                                <input class="form-check-input" type="checkbox" id="usesup-@s.Id" @bind="s.UseSupplierSuggestedPrice" />
+                                <label class="form-check-label small" for="usesup-@s.Id" title="Suggested price = the price on the supplier's website when known; products without one use cost + default margin.">Use website price</label>
+                            </div>
                         </div>
                         <div class="col-md-2 d-flex flex-column justify-content-end">
                             <div class="form-check">
@@ -199,6 +203,10 @@
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" id="bgsync-@s.Id" @bind="s.BackgroundSyncEnabled" />
                                 <label class="form-check-label small" for="bgsync-@s.Id" title="Scheduled imports and stock checks. Off = only manual imports; publishing still works.">Enable background sync</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="uploadpics-@s.Id" @bind="s.RequireUploadedPictures" />
+                                <label class="form-check-label small" for="uploadpics-@s.Id" title="Use when the supplier's website blocks this server's picture downloads (e.g. Safelincs on the live server). Listings can then only be published with pictures you upload yourself; the supplier's own pictures are ignored. Leave off locally to download them automatically.">Upload pictures manually</label>
                             </div>
                         </div>
                         <div class="col-md-4">

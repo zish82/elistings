@@ -65,6 +65,8 @@
 </div>
 <div class="mb-3 d-flex gap-2 flex-wrap">
     <button class="btn btn-success" @onclick="AddSelected" disabled="@(!selectedIds.Any() || isBusy)">Add all selected to my listings</button>
+    <button class="btn btn-outline-primary" @onclick="CreateVariationFromSelected" disabled="@(selectedIds.Count < 2 || isBusy)"
+            title="One eBay listing with each selected product as a variation (e.g. sizes). Select products from the same supplier.">Create one variation listing from selected</button>
     <button class="btn btn-outline-danger" @onclick="DeleteSelected" disabled="@(!selectedIds.Any() || isBusy)">Delete selected products</button>
 </div>
 
@@ -380,7 +382,13 @@ else
                                     <div class="small text-muted">RRP £@product.RrpPrice.Value.ToString("F2")</div>
                                 }
                             </td>
-                            <td>@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</td>
+                            <td>
+                                @(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")
+                                @if (product.SuggestedPrice.HasValue)
+                                {
+                                    <span class="text-muted" style="cursor:help" title="@product.SuggestedPriceInfo"><i class="bi bi-info-circle"></i></span>
+                                }
+                            </td>
                             <td>
                                 @if (product.EstimatedProfit.HasValue)
                                 {
@@ -398,7 +406,7 @@ else
                             <td>
                                 @if (product.AlreadyAdded)
                                 {
-                                    <span class="badge bg-info text-dark">Already added</span>
+                                    <span class="badge bg-info text-dark">@(product.InVariationListing ? "In a variation listing" : "Already added")</span>
                                 }
                                 else
                                 {
@@ -1005,6 +1013,28 @@ else
         {
             statusCss = "alert-danger";
             statusMessage = $"Add failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task CreateVariationFromSelected()
+    {
+        if (selectedIds.Count < 2) return;
+        isBusy = true;
+        statusMessage = null;
+        try
+        {
+            var result = await ListingService.CreateVariationListingAsync(selectedIds.ToList());
+            selectedIds.Clear();
+            if (result.AddedListingIds.Count > 0) Navigation.NavigateTo($"/edit-listing/{result.AddedListingIds[0]}");
+        }
+        catch (Exception ex)
+        {
+            statusCss = "alert-danger";
+            statusMessage = $"Could not create the variation listing: {ex.Message}";
         }
         finally
         {

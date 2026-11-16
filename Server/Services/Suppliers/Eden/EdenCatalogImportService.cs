@@ -167,7 +167,6 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
                     entity.SupplierPrice = entity.RrpPrice;
                     entity.PriceIsEstimate = true;
                 }
-                entity.SuggestedPrice = Suggest(entity.SupplierPrice, supplier);
                 byVariant[variant.Id] = entity;
                 tagsByVariant[variant.Id] = product.Tags;
             }
@@ -340,7 +339,6 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
                     if (!TryGetLong(p, "price", out var pence) || pence <= 0) continue;
 
                     entity.SupplierPrice = pence / 100m;
-                    entity.SuggestedPrice = Suggest(entity.SupplierPrice, supplier);
                     entity.PriceIsEstimate = false;
                     entity.TradePriceFetchedAtUtc = DateTime.UtcNow;
                     priced++;
@@ -456,9 +454,6 @@ public class EdenCatalogImportService : ISupplierCatalogImporter
         if (p.ValueKind == JsonValueKind.Number) return p.TryGetInt64(out value);
         return p.ValueKind == JsonValueKind.String && long.TryParse(p.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
-
-    private static decimal? Suggest(decimal? supplierPrice, SupplierDto? supplier)
-        => PricingMath.SuggestItemPrice(PricingMath.CostIncVat(supplierPrice, supplier), supplier?.DefaultMarginPercent ?? 20m);
 
     private static string CleanText(string? value)
         => Regex.Replace(WebUtility.HtmlDecode(WebUtility.HtmlDecode(value ?? string.Empty)), @"\s+", " ").Trim();

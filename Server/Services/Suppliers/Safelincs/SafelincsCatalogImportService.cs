@@ -362,7 +362,6 @@ public class SafelincsCatalogImportService : ISupplierCatalogImporter
             // No trade price: the retail price ex VAT is the best estimate of cost (trade is usually lower).
             entity.SupplierPrice = page.PriceExVat ?? (page.PriceIncVat.HasValue ? Math.Round(page.PriceIncVat.Value / 1.2m, 2) : entity.SupplierPrice);
             entity.PriceIsEstimate = true;
-            entity.SuggestedPrice = PricingMath.SuggestItemPrice(PricingMath.CostIncVat(entity.SupplierPrice, supplier), supplier?.DefaultMarginPercent ?? 20m);
         }
 
         // Delivery: the price list's per-product charge wins; otherwise the website's standard delivery (ex VAT).

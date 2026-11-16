@@ -105,6 +105,7 @@ public static class EbayUkRateCard
     {
         ["DropShipMall"] = "11700",      // Home, Furniture & DIY (gifts, floristry, décor)
         ["EdenHorticulture"] = "159912", // Garden & Patio
-        ["Safelincs"] = "12576"          // Business, Office & Industrial (fire safety)
+        ["Safelincs"] = "12576",         // Business, Office & Industrial (fire safety)
+        ["Godropship"] = "11700"         // Home, Furniture & DIY (mixed general merchandise)
     };
 }

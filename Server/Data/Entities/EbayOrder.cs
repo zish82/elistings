@@ -42,5 +42,7 @@ public class EbayOrder
     public string? SourceOrderId { get; set; }
     /// <summary>Email account used to place the supplier order.</summary>
     public string? SourceEmail { get; set; }
+    /// <summary>Link to the item at the supplier, typed in for sales whose item isn't in our catalogue.</summary>
+    public string? SourceUrl { get; set; }
     public DateTime SyncedAtUtc { get; set; } = DateTime.UtcNow;
 }

@@ -54,16 +54,19 @@ public class SalesController : ControllerBase
         return Ok(report);
     }
 
-    /// <summary>Saves what you type in: mail, supplier order number, supplier price (or back to automatic).</summary>
+    /// <summary>Saves what you type in: mail, supplier order number, supplier link, supplier price (or back to automatic).</summary>
     [HttpPut("{id:int}")]
     public async Task<ActionResult<SalesOrderDto>> Update(int id, [FromBody] UpdateSalesOrderRequest request)
     {
         var order = await (await VisibleOrders()).FirstOrDefaultAsync(o => o.Id == id);
         if (order == null) return NotFound();
         if (request.SupplierPrice is < 0m) return BadRequest("The supplier price can't be negative.");
+        var sourceUrl = Clean(request.SourceUrl, 1000);
+        if (sourceUrl != null && !SalesReport.IsWebLink(sourceUrl)) return BadRequest("The source link must be a web address starting with http:// or https://.");
 
         order.SourceEmail = Clean(request.Mail, 200);
         order.SourceOrderId = Clean(request.SourceOrderId, 100);
+        order.SourceUrl = sourceUrl;
         if (request.ResetSupplierPrice)
         {
             order.SupplierPriceIsManual = false;
@@ -102,7 +105,7 @@ public class SalesController : ControllerBase
         var rows = await ToDtosAsync(orders);
 
         var csv = new StringBuilder();
-        csv.AppendLine("Date,Mail,eBay Order ID,Source Order ID,Sold Price,Supplier Price,Earning,Profit,ROI,Items,Status,Tracking,Delivery Company,Refunded,eBay Fees,Fees,Supplier,Buyer");
+        csv.AppendLine("Date,Mail,eBay Order ID,Source Order ID,Sold Price,Supplier Price,Earning,Profit,ROI,Items,Status,Tracking,Delivery Company,Refunded,eBay Fees,Fees,Supplier,Buyer,Source Item");
         foreach (var r in rows)
         {
             csv.AppendLine(string.Join(",", new[]
@@ -112,7 +115,8 @@ public class SalesController : ControllerBase
                 Money(r.SaleTotal), Money(r.SupplierPrice), Money(r.Earning), Money(r.Profit),
                 r.RoiPercent.HasValue ? r.RoiPercent.Value.ToString("0.0", CultureInfo.InvariantCulture) + "%" : "",
                 Csv(r.Items), Csv(r.Status), Csv(r.Tracking), Csv(r.DeliveryCompany),
-                Money(r.Refunded), Money(r.Fees), r.FeesAreActual ? "actual" : "estimated", Csv(r.Supplier), Csv(r.Buyer)
+                Money(r.Refunded), Money(r.Fees), r.FeesAreActual ? "actual" : "estimated", Csv(r.Supplier), Csv(r.Buyer),
+                Csv(string.Join(" ", r.SourceLinks.Select(l => l.Url).DefaultIfEmpty(r.SourceUrl ?? "")))
             }));
         }
         var name = $"ebay-sales-{(string.IsNullOrWhiteSpace(month) ? "all" : month)}.csv";
@@ -127,7 +131,13 @@ public class SalesController : ControllerBase
         var accounts = await _context.EbayTokens.AsNoTracking().Where(t => accountIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id, t => t.Name);
         var ownerIds = orders.Select(o => o.OwnerUserId).Distinct().ToList();
         var owners = await _context.Users.AsNoTracking().Where(u => ownerIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.Email);
-        return orders.Select(o => SalesReport.ToDto(o, lines[o.Id].ToList(), accounts.GetValueOrDefault(o.EbayAccountId), owners.GetValueOrDefault(o.OwnerUserId))).ToList();
+        var links = await OrderSourceLinks.FindAsync(_context, orders, lines);
+        return orders.Select(o =>
+        {
+            var dto = SalesReport.ToDto(o, lines[o.Id].ToList(), accounts.GetValueOrDefault(o.EbayAccountId), owners.GetValueOrDefault(o.OwnerUserId));
+            dto.SourceLinks = links.GetValueOrDefault(o.Id) ?? new List<SalesSourceLinkDto>();
+            return dto;
+        }).ToList();
     }
 
     private static string? Clean(string? value, int max)
@@ -193,6 +203,7 @@ public static class SalesReport
             RoiPercent = RoiPercent(profit, o.SupplierPrice),
             Tracking = o.TrackingNumber,
             DeliveryCompany = o.DeliveryCompany,
+            SourceUrl = o.SourceUrl,
             Items = string.Join("; ", lines.Select(l => (l.Quantity > 1 ? $"{l.Quantity} × " : "") + l.Title + (string.IsNullOrWhiteSpace(l.Sku) ? "" : $" [{l.Sku}]"))),
             Supplier = o.Supplier,
             SaleTotal = o.SaleTotal,
@@ -205,6 +216,10 @@ public static class SalesReport
             OwnerEmail = ownerEmail
         };
     }
+
+    /// <summary>An absolute http(s) address (anything else is never shown as a link).</summary>
+    public static bool IsWebLink(string? url)
+        => Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     public static string Status(EbayOrder o)
     {
@@ -243,4 +258,106 @@ public static class SalesReport
             })
             .OrderByDescending(m => m.Month)
             .ToList();
+}
+
+/// <summary>
+/// Where to re-order each sold item: the supplier's product page from our catalogue. Per order line, first match wins:
+/// the line's matched supplier product → its matched listing's source URL → the owner's listing or variation with the
+/// line's SKU → the supplier product named by the SKU ("DSM-S16301"). Lines that match nothing get no link (the Sales
+/// page then offers a box to type one in).
+/// </summary>
+public static class OrderSourceLinks
+{
+    public static async Task<Dictionary<int, List<SalesSourceLinkDto>>> FindAsync(AppDbContext context, List<EbayOrder> orders,
+        ILookup<int, EbayOrderLine> lines, CancellationToken ct = default)
+    {
+        var result = new Dictionary<int, List<SalesSourceLinkDto>>();
+        var allLines = orders.SelectMany(o => lines[o.Id]).ToList();
+        if (allLines.Count == 0) return result;
+
+        var ownerIds = orders.Select(o => o.OwnerUserId).Distinct().ToList();
+        var skus = allLines.Where(l => !string.IsNullOrWhiteSpace(l.Sku)).Select(l => l.Sku!.Trim()).Distinct().ToList();
+        var lineListingIds = allLines.Where(l => l.ListingId.HasValue).Select(l => l.ListingId!.Value).Distinct().ToList();
+
+        // Listings: the ones lines were matched to, plus the owners' listings with these SKUs.
+        var listings = await context.Listings.AsNoTracking()
+            .Where(l => lineListingIds.Contains(l.Id) || (l.Sku != null && skus.Contains(l.Sku) && ownerIds.Contains(l.OwnerUserId)))
+            .Select(l => new { l.Id, l.Sku, l.OwnerUserId, l.Status, l.SourceUrl, l.SupplierProductId })
+            .ToListAsync(ct);
+        var variants = await context.ListingVariants.AsNoTracking()
+            .Where(v => skus.Contains(v.Sku))
+            .Select(v => new { v.Sku, v.ListingId, v.SupplierProductId })
+            .ToListAsync(ct);
+        var variantListingIds = variants.Select(v => v.ListingId).Where(id => listings.All(l => l.Id != id)).Distinct().ToList();
+        if (variantListingIds.Count > 0)
+        {
+            listings.AddRange(await context.Listings.AsNoTracking().Where(l => variantListingIds.Contains(l.Id))
+                .Select(l => new { l.Id, l.Sku, l.OwnerUserId, l.Status, l.SourceUrl, l.SupplierProductId }).ToListAsync(ct));
+        }
+        var listingById = listings.GroupBy(l => l.Id).ToDictionary(g => g.Key, g => g.First());
+
+        // Supplier products named by a SKU prefix ("DSM-S16301" → DropShipMall S16301).
+        var prefixes = await context.Suppliers.AsNoTracking().Where(s => s.SkuPrefix != null && s.SkuPrefix != "")
+            .Select(s => new { s.Code, s.SkuPrefix }).ToListAsync(ct);
+        var skuProducts = new Dictionary<string, (string Code, string SupplierSku)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sku in skus)
+        {
+            var dash = sku.IndexOf('-');
+            if (dash <= 0 || dash == sku.Length - 1) continue;
+            var supplier = prefixes.FirstOrDefault(s => string.Equals(s.SkuPrefix, sku[..dash], StringComparison.OrdinalIgnoreCase));
+            if (supplier != null) skuProducts[sku] = (supplier.Code, sku[(dash + 1)..]);
+        }
+        var supplierSkus = skuProducts.Values.Select(v => v.SupplierSku).Distinct().ToList();
+
+        var productIds = allLines.Where(l => l.SupplierProductId.HasValue).Select(l => l.SupplierProductId!.Value)
+            .Concat(listings.Where(l => l.SupplierProductId.HasValue).Select(l => l.SupplierProductId!.Value))
+            .Concat(variants.Where(v => v.SupplierProductId.HasValue).Select(v => v.SupplierProductId!.Value))
+            .Distinct().ToList();
+        var products = await context.SupplierProducts.AsNoTracking()
+            .Where(p => productIds.Contains(p.Id) || (p.SupplierSku != null && supplierSkus.Contains(p.SupplierSku)))
+            .Select(p => new { p.Id, p.Supplier, p.SupplierSku, p.ProductUrl })
+            .ToListAsync(ct);
+        var productUrlById = products.ToDictionary(p => p.Id, p => p.ProductUrl);
+
+        string? ProductUrl(int? id) => id.HasValue ? productUrlById.GetValueOrDefault(id.Value) : null;
+        string? ListingUrl(int id) => listingById.TryGetValue(id, out var l) ? Web(l.SourceUrl) ?? Web(ProductUrl(l.SupplierProductId)) : null;
+
+        foreach (var order in orders)
+        {
+            var links = new List<SalesSourceLinkDto>();
+            foreach (var line in lines[order.Id])
+            {
+                var sku = line.Sku?.Trim();
+                var url = Web(ProductUrl(line.SupplierProductId))
+                    ?? (line.ListingId.HasValue ? ListingUrl(line.ListingId.Value) : null);
+
+                if (url == null && !string.IsNullOrEmpty(sku))
+                {
+                    var listing = listings
+                        .Where(l => string.Equals(l.Sku, sku, StringComparison.OrdinalIgnoreCase) && l.OwnerUserId == order.OwnerUserId)
+                        .OrderByDescending(l => l.Status == "Published").ThenByDescending(l => l.Id)
+                        .FirstOrDefault();
+                    url = listing != null ? ListingUrl(listing.Id) : null;
+                }
+                if (url == null && !string.IsNullOrEmpty(sku))
+                {
+                    var variant = variants.FirstOrDefault(v => string.Equals(v.Sku, sku, StringComparison.OrdinalIgnoreCase)
+                        && listingById.TryGetValue(v.ListingId, out var parent) && parent.OwnerUserId == order.OwnerUserId);
+                    if (variant != null) url = Web(ProductUrl(variant.SupplierProductId)) ?? ListingUrl(variant.ListingId);
+                }
+                if (url == null && sku != null && skuProducts.TryGetValue(sku, out var named))
+                {
+                    url = Web(products
+                        .Where(p => p.Supplier == named.Code && string.Equals(p.SupplierSku, named.SupplierSku, StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(p => p.Id).FirstOrDefault()?.ProductUrl);
+                }
+
+                if (url != null && links.All(l => l.Url != url)) links.Add(new SalesSourceLinkDto { Title = line.Title, Url = url });
+            }
+            if (links.Count > 0) result[order.Id] = links;
+        }
+        return result;
+    }
+
+    private static string? Web(string? url) => SalesReport.IsWebLink(url) ? url!.Trim() : null;
 }

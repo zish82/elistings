@@ -28,6 +28,8 @@ public class AppDbContext : DbContext
     public DbSet<ProductTag> ProductTags { get; set; }
     public DbSet<SupplierProductTag> SupplierProductTags { get; set; }
     public DbSet<ListingPublication> ListingPublications { get; set; }
+    public DbSet<ListingVariant> ListingVariants { get; set; }
+    public DbSet<EbayPictureUpload> EbayPictureUploads { get; set; }
     public DbSet<AccountUserAccess> AccountUserAccess { get; set; }
 
     /// <summary>
@@ -64,6 +66,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SupplierProductTag>().HasIndex(t => t.ProductTagId);
         modelBuilder.Entity<ListingPublication>().HasIndex(p => new { p.ListingId, p.Marketplace, p.AccountId }).IsUnique();
         modelBuilder.Entity<ListingPublication>().HasIndex(p => p.AccountId);
+        modelBuilder.Entity<ListingVariant>().HasIndex(v => v.ListingId);
+        modelBuilder.Entity<ListingVariant>().HasIndex(v => v.Sku).IsUnique();
+        modelBuilder.Entity<EbayPictureUpload>().HasIndex(p => new { p.AccountId, p.SourceHash }).IsUnique();
         modelBuilder.Entity<AccountUserAccess>().HasIndex(a => new { a.Marketplace, a.AccountId, a.UserId }).IsUnique();
     }
 }

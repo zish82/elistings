@@ -124,6 +124,11 @@ public class ListingService
         return await GetAsync<ListingDto>($"api/listings/{id}") ?? throw new Exception("Listing not found");
     }
 
+    public async Task<List<ListingVariantDto>> SaveVariantsAsync(int listingId, List<ListingVariantDto> variants)
+    {
+        return await SendAsync<List<ListingVariantDto>>(HttpMethod.Put, $"api/listings/{listingId}/variants", variants) ?? new List<ListingVariantDto>();
+    }
+
     public async Task UpdateListingAsync(int id, CreateListingRequest request)
     {
         await SendAsync<object>(HttpMethod.Put, $"api/listings/{id}", request);
@@ -258,6 +263,12 @@ public class ListingService
     {
         return await GetAsync<SupplierProductDetailDto>($"api/supplierproducts/{id}")
                ?? throw new Exception("Supplier product not found.");
+    }
+
+    public async Task<AddSupplierProductsResult> CreateVariationListingAsync(List<int> productIds, string? optionName = null)
+    {
+        return await SendAsync<AddSupplierProductsResult>(HttpMethod.Post, "api/supplierproducts/variation-listing",
+            new CreateVariationListingRequest { ProductIds = productIds, OptionName = optionName }) ?? new AddSupplierProductsResult();
     }
 
     public async Task<AddSupplierProductsResult> AddSupplierProductsToMyListingsAsync(List<int> productIds, bool allowDuplicates = false, bool allowSharedAccountDuplicates = false)

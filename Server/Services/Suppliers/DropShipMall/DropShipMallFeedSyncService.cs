@@ -145,7 +145,6 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
                 if (price.HasValue)
                 {
                     product.SupplierPrice = price;
-                    product.SuggestedPrice = PricingMath.SuggestItemPrice(PricingMath.CostIncVat(product.SupplierPrice, supplierSettings), supplierSettings?.DefaultMarginPercent ?? 20m);
                 }
 
                 product.UpdatedAtUtc = DateTime.UtcNow;
@@ -284,7 +283,6 @@ public class DropShipMallFeedSyncService : IFeedProductSyncService
                 if (price.HasValue)
                 {
                     entity.SupplierPrice = price;
-                    entity.SuggestedPrice = PricingMath.SuggestItemPrice(PricingMath.CostIncVat(price, supplierSettings), supplierSettings?.DefaultMarginPercent ?? 20m);
                 }
 
                 var stock = ParseInt(Pick(row, "Variant Inventory Qty", "Stock Level", "Stock", "Quantity"));

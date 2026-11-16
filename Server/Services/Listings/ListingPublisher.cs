@@ -113,11 +113,26 @@ public class ListingPublisher
         // Validation, default policies, SKU, auto category (throws InvalidOperationException with a clear message).
         var dto = await ListingPublishHelper.PrepareAsync(listing, _context, _ebay, _settings, _skus, _publisher);
         await _context.SaveChangesAsync(); // keep an auto-selected category / defaulted policies even if eBay rejects
+
+        // Suppliers that block this server's picture downloads: only pictures uploaded by hand (or already on eBay) are used.
+        var pictureSupplier = (await new SupplierCatalogService(_context).GetContextForListingAsync(listing)).Supplier;
+        if (pictureSupplier is { RequireUploadedPictures: true })
+        {
+            dto.ImageUrls = dto.ImageUrls
+                .Where(u => u.StartsWith("data:image", StringComparison.OrdinalIgnoreCase) || u.Contains("ebayimg.com", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (dto.ImageUrls.Count == 0)
+                throw new InvalidOperationException($"Upload at least one picture for this listing first: {pictureSupplier.Name} pictures can't be downloaded by this server (Suppliers page → Upload pictures manually).");
+        }
         if (!listing.EbayAccountId.HasValue)
         {
             throw new InvalidOperationException("Cannot publish: no eBay account connected. Connect one on the eBay Accounts page.");
         }
         if (targets.Count == 0) targets.Add(listing.EbayAccountId.Value);
+        if (dto.Variants.Count > 0 && targets.Count > 1)
+        {
+            throw new InvalidOperationException("A listing with variations can only be published to one account for now.");
+        }
 
         var primary = listing.EbayAccountId.Value;
         if (targets.Remove(primary)) targets.Insert(0, primary);
@@ -158,6 +173,12 @@ public class ListingPublisher
                 result.ExternalListingId = response.ListingId;
                 result.ImageWarnings = response.ImageWarnings ?? new List<string>();
 
+                if (response.VariantOfferIds.Count > 0)
+                {
+                    foreach (var variant in await _context.ListingVariants.Where(v => v.ListingId == listing.Id).ToListAsync())
+                        if (response.VariantOfferIds.TryGetValue(variant.Sku, out var variantOffer)) variant.OfferId = variantOffer;
+                }
+
                 publication ??= AddPublication(listing.Id, accountId, publications);
                 publication.Status = PublicationStatuses.Published;
                 publication.ExternalListingId = response.ListingId;
@@ -178,9 +199,14 @@ public class ListingPublisher
             catch (Exception ex)
             {
                 result.Error = ex.Message;
-                publication ??= AddPublication(listing.Id, accountId, publications);
                 // A listing that is live on this account stays "Published" (the update failed, not the listing).
-                if (publication.Status != PublicationStatuses.Published) publication.Status = PublicationStatuses.Failed;
+                // A publication created just now has never been live, so it is Failed.
+                if (publication == null)
+                {
+                    publication = AddPublication(listing.Id, accountId, publications);
+                    publication.Status = PublicationStatuses.Failed;
+                }
+                else if (publication.Status != PublicationStatuses.Published) publication.Status = PublicationStatuses.Failed;
                 publication.LastError = ex.Message;
                 publication.UpdatedAtUtc = DateTime.UtcNow;
             }

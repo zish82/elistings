@@ -20,7 +20,6 @@ public class SupplierProduct
     public string? ImageUrlsJson { get; set; } // JSON array of image URLs
     public decimal? SupplierPrice { get; set; }
     public int? StockLevel { get; set; }
-    public decimal? SuggestedPrice { get; set; }
     public string Currency { get; set; } = "GBP";
     public bool IsActive { get; set; } = true;
     public string? RawPayloadJson { get; set; }

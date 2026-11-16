@@ -37,10 +37,17 @@ public static class ListingPublishHelper
             ? new List<string>()
             : JsonSerializer.Deserialize<List<string>>(listing.ImageUrlsJson) ?? new List<string>();
 
+        var variants = await ListingVariants.LoadAsync(context, listing.Id);
+
         var problems = new List<string>();
         if (string.IsNullOrWhiteSpace(listing.Title)) problems.Add("title is empty");
         else if (listing.Title.Trim().Length > MaxTitleLength) problems.Add($"title is {listing.Title.Trim().Length} characters (eBay max is {MaxTitleLength})");
-        if (listing.Price <= 0m) problems.Add("item price is not set");
+        if (variants.Count == 1) problems.Add("a variation listing needs at least 2 variations (or remove the variation)");
+        if (variants.Count > 0)
+        {
+            if (variants.Any(v => PricingMath.ListingTotal(v.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice) < 0.99m)) problems.Add("every variation's total price must be at least £0.99");
+        }
+        else if (listing.Price <= 0m) problems.Add("item price is not set");
         else if (PricingMath.ListingTotal(listing.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice) < 0.99m) problems.Add("total price must be at least £0.99");
         if (!string.Equals(listing.Marketplace, "eBay", StringComparison.OrdinalIgnoreCase)) problems.Add($"marketplace '{listing.Marketplace}' is not supported yet");
         if (!images.Any()) problems.Add("no images");
@@ -113,7 +120,13 @@ public static class ListingPublishHelper
             Sku = listing.Sku,
             EbayOfferId = listing.EbayOfferId,
             ImageUrls = images,
-            SourceUrl = listing.SourceUrl
+            SourceUrl = listing.SourceUrl,
+            Variants = variants.Select(v => new ListingVariantDto
+            {
+                Id = v.Id, Sku = v.Sku, Options = v.Options, Quantity = v.Quantity, ImageUrl = v.ImageUrl, OfferId = v.OfferId,
+                SourcePrice = v.SourcePrice, SupplierProductId = v.SupplierProductId,
+                Price = PricingMath.ListingTotal(v.Price, listing.DeliveryCost, listing.IncludeDeliveryInPrice)
+            }).ToList()
         };
     }
 

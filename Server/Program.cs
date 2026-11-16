@@ -102,6 +102,13 @@ builder.Services.AddHangfireServer(options =>
     options.Queues = new[] { Server.Services.Jobs.BackgroundJobs.SafelincsQueue };
     options.WorkerCount = 1;
 });
+// ...and one for Godropship (also a website pass of a few hours).
+builder.Services.AddHangfireServer(options =>
+{
+    options.ServerName = $"{Environment.MachineName}:godropship";
+    options.Queues = new[] { Server.Services.Jobs.BackgroundJobs.GodropshipQueue };
+    options.WorkerCount = 1;
+});
 
 builder.Services.Configure<Server.Configuration.EbaySettings>(
     builder.Configuration.GetSection("EbaySettings"));
@@ -154,6 +161,7 @@ builder.Services.AddHttpClient<Server.Services.DropShipMallWebsiteClient>();
 builder.Services.AddScoped<Server.Services.ISupplierProductEnricher, Server.Services.DropShipMallProductEnricher>();
 builder.Services.AddScoped<Server.Services.ProductEnrichmentService>();
 builder.Services.AddScoped<Server.Services.ISupplierStockChecker, Server.Services.DropShipMallStockChecker>();
+builder.Services.AddScoped<Server.Services.ISupplierStockChecker, Server.Services.GodropshipStockChecker>();
 builder.Services.AddScoped<Server.Services.ISupplierStockChecker, Server.Services.EdenStockChecker>(); // before the legacy adapter, so it wins for imported Eden products
 builder.Services.AddScoped<Server.Services.ISupplierStockChecker, Server.Services.WebsiteStockCheckerAdapter>(); // Eden, Safelincs
 builder.Services.AddScoped<Server.Services.SupplierStockService>();
@@ -167,6 +175,13 @@ builder.Services.AddScoped<Server.Services.EbayCategoryService>();
 builder.Services.AddScoped<Server.Services.EbayOrderSyncService>();
 builder.Services.AddScoped<Server.Services.SafelincsCatalogImportService>();
 builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.SafelincsCatalogImportService>());
+builder.Services.AddHttpClient<Server.Services.GodropshipWebsiteClient>()
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli
+    });
+builder.Services.AddScoped<Server.Services.GodropshipCatalogImportService>();
+builder.Services.AddScoped<Server.Services.ISupplierCatalogImporter>(sp => sp.GetRequiredService<Server.Services.GodropshipCatalogImportService>());
 builder.Services.AddHttpClient("safelincs")
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
     {
@@ -186,6 +201,7 @@ builder.Services.AddHttpClient("eden-auth")
         CookieContainer = new CookieContainer()
     });
 builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.SafelincsProductScraper>();
+builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.GodropshipProductScraper>();
 builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.EdenHorticultureProductScraper>();
 builder.Services.AddSingleton<Server.Services.IProductScraper, Server.Services.GenericProductScraper>();
 builder.Services.AddHttpClient<Server.Services.IScraperService, Server.Services.ScraperService>()
@@ -359,6 +375,18 @@ using (var hangfireScope = app.Services.CreateScope())
         "safelincs-catalogue-import",
         svc => svc.RunScheduledAsync(),
         "30 3 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.Utc,
+            MisfireHandling = MisfireHandlingMode.Ignorable // app was off at the scheduled time: wait for the next one
+        });
+
+    // Godropship: a full website pass (~2,400 pages, about 2 hours), overnight. Only runs when background sync is
+    // switched on for Godropship on /supplier-feeds (off by default until Godropship gives written permission).
+    recurringJobs.AddOrUpdate<Server.Services.GodropshipCatalogImportService>(
+        "godropship-catalogue-import",
+        svc => svc.RunScheduledAsync(),
+        "30 4 * * *",
         new RecurringJobOptions
         {
             TimeZone = TimeZoneInfo.Utc,

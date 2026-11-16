@@ -21,6 +21,8 @@ public class BackgroundJobs
     public const string EdenQueue = "eden";
     /// <summary>Safelincs imports take hours (one page at a time), so they get their own single worker.</summary>
     public const string SafelincsQueue = "safelincs";
+    /// <summary>Godropship imports also take hours (one page every few seconds): own single worker.</summary>
+    public const string GodropshipQueue = "godropship";
     public const string DefaultQueue = "default";
 
     private readonly IServiceProvider _services;
@@ -65,6 +67,10 @@ public class BackgroundJobs
     [Queue(SafelincsQueue), AutomaticRetry(Attempts = 0)]
     public Task ImportSafelincsCatalogueAsync(string jobId, int userId)
         => RunAsync(jobId, userId, progress => ImportCoreAsync(progress, SafelincsCatalogImportService.Code));
+
+    [Queue(GodropshipQueue), AutomaticRetry(Attempts = 0)]
+    public Task ImportGodropshipCatalogueAsync(string jobId, int userId)
+        => RunAsync(jobId, userId, progress => ImportCoreAsync(progress, GodropshipCatalogImportService.Code));
 
     [Queue(DefaultQueue), AutomaticRetry(Attempts = 0)]
     public Task SetSupplierMarketplaceQuantityAsync(string jobId, int userId, string supplierCode, bool restore)

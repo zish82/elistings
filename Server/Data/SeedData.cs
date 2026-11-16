@@ -29,6 +29,8 @@ public static class SeedData
             new Supplier { Code = "DropShipMall", Name = "DropShipMall", WebsiteHost = "dropshipmall.co.uk", SkuPrefix = "DSM", PricesIncludeVat = false },
             new Supplier { Code = "EdenHorticulture", Name = "Eden Horticulture", WebsiteHost = "edenhorticulture.co.uk", SkuPrefix = "EDN", PricesIncludeVat = false },
             new Supplier { Code = "Safelincs", Name = "Safelincs", WebsiteHost = "safelincs.co.uk", SkuPrefix = "SFL", PricesIncludeVat = true },
+            // Background sync off until Godropship gives written permission for automated reading (robots.txt / terms 3.2).
+            new Supplier { Code = "Godropship", Name = "Godropship", WebsiteHost = "godropship.co.uk", SkuPrefix = "GDS", PricesIncludeVat = true, BackgroundSyncEnabled = false },
         };
 
         var existing = db.Suppliers.ToList();
@@ -85,6 +87,8 @@ public static class SeedData
                 Description = "Public catalogue + logged-in trade prices and stock. Runs in the background.", IsRecommended = true },
             new SupplierFeed { Supplier = "Safelincs", FeedType = "Website Catalogue", Url = "https://www.safelincs.co.uk/sitemap.xml",
                 Description = "Product pages from the sitemap (details, stock) + your uploaded trade price list. Runs in the background (a few hours).", IsRecommended = true },
+            new SupplierFeed { Supplier = "Godropship", FeedType = "Website Catalogue", Url = "https://www.godropship.co.uk/sitemapproducts.xml",
+                Description = "Product pages from the sitemap (details, price incl. UK delivery, UK stock). Runs in the background (about 2 hours).", IsRecommended = true },
         };
 
         var existing = db.SupplierFeeds.Select(f => new { f.Supplier, f.FeedType, f.Url }).ToList();

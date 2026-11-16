@@ -2,6 +2,14 @@ namespace Shared;
 
 public class SupplierProductListItemDto
 {
+    /// <summary>Tooltip text saying which price the suggestion is based on.</summary>
+    public string SuggestedPriceInfo => SuggestedPriceSource switch
+    {
+        PricingMath.SourceWebsite => "Based on the price on the supplier's website (inc VAT).",
+        PricingMath.SourceMargin => "Calculated from cost (inc VAT) + the supplier's default margin %. No website price is used.",
+        _ => "Calculated from cost + default margin."
+    };
+
     public int Id { get; set; }
     public string Supplier { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
@@ -11,8 +19,12 @@ public class SupplierProductListItemDto
     public decimal? SupplierPrice { get; set; }
     public int? StockLevel { get; set; }
     public decimal? SuggestedPrice { get; set; }
+    /// <summary>"Website" or "Margin" (see <see cref="PricingMath.SuggestPrice"/>).</summary>
+    public string? SuggestedPriceSource { get; set; }
     public bool AlreadyAdded { get; set; }
     public int? ExistingListingId { get; set; }
+    /// <summary>True when the product is one variation of a variation listing (ExistingListingId is that listing).</summary>
+    public bool InVariationListing { get; set; }
     public string? CategoryName { get; set; }
     public string? ImageUrlsJson { get; set; } // JSON array of image URLs
     public decimal? RrpPrice { get; set; }
@@ -83,6 +95,36 @@ public class SupplierProductDetailDto : SupplierProductListItemDto
     public string? Brand { get; set; }
     public string Currency { get; set; } = "GBP";
     public DateTime UpdatedAtUtc { get; set; }
+    /// <summary>The variation listing this product is part of (for the current user), with all its variations. Null when not part of one.</summary>
+    public VariationListingInfoDto? VariationListing { get; set; }
+    /// <summary>Delivery charge inc VAT: the product's own charge when the supplier gives one, else the supplier's option for its postage class (or the default). Same value the fee estimate uses. Null when unknown.</summary>
+    public decimal? DeliveryIncVat { get; set; }
+    /// <summary>Where <see cref="DeliveryIncVat"/> comes from, e.g. "Supplier charge for this product" or the option name.</summary>
+    public string? DeliverySource { get; set; }
+}
+
+public class VariationListingInfoDto
+{
+    public int ListingId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public List<VariationListingItemDto> Variations { get; set; } = new();
+}
+
+public class VariationListingItemDto
+{
+    public int? SupplierProductId { get; set; }
+    public string Sku { get; set; } = string.Empty;
+    public string Options { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public int Quantity { get; set; }
+}
+
+public class CreateVariationListingRequest
+{
+    public List<int> ProductIds { get; set; } = new();
+    /// <summary>What varies, e.g. "Size". Blank = taken from the products' options, else "Option".</summary>
+    public string? OptionName { get; set; }
 }
 
 public class AddSupplierProductsRequest

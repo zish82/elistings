@@ -107,7 +107,7 @@ public class ListingsController : ControllerBase
             })
             .ToListAsync();
 
-        var publications = await PublicationQueries.ForListingsAsync(_context, listings.Select(l => l.Id).ToList());
+        var publications = await PublicationQueries.ForListingsAsync(_context, listings.Select(l => l.Id).ToList(), _ebaySettings.Value.IsSandbox);
         foreach (var dto in listings) dto.Publications = publications.GetValueOrDefault(dto.Id) ?? new List<ListingPublicationDto>();
 
         // Estimated eBay fees and profit per sale.
@@ -155,8 +155,65 @@ public class ListingsController : ControllerBase
         var ebayAccountName = await _context.EbayTokens.Where(t => t.Id == l.EbayAccountId).Select(t => t.Name).FirstOrDefaultAsync();
         var ownerEmail = await _context.Users.Where(u => u.Id == l.OwnerUserId).Select(u => u.Email).FirstOrDefaultAsync();
         var dto = ToListingDto(l, ebayAccountName, ownerEmail);
-        dto.Publications = (await PublicationQueries.ForListingsAsync(_context, new[] { l.Id })).GetValueOrDefault(l.Id) ?? new List<ListingPublicationDto>();
+        dto.Publications = (await PublicationQueries.ForListingsAsync(_context, new[] { l.Id }, _ebaySettings.Value.IsSandbox)).GetValueOrDefault(l.Id) ?? new List<ListingPublicationDto>();
+        dto.Variants = await ListingVariants.LoadAsync(_context, l.Id);
         return Ok(dto);
+    }
+
+    // A variation's SKU can't equal any listing's SKU or a variation of another listing.
+    private async Task<bool> VariantSkuTakenAsync(string sku, int listingId)
+        => await _skuService.IsInUseAsync(sku, null) || await _context.ListingVariants.AnyAsync(v => v.Sku == sku && v.ListingId != listingId);
+
+    /// <summary>Replaces the listing's variations (an empty list removes them). Blank SKUs are generated from the listing's SKU.</summary>
+    [HttpPut("{id}/variants")]
+    public async Task<ActionResult<List<ListingVariantDto>>> SaveVariants(int id, [FromBody] List<ListingVariantDto> variants)
+    {
+        var listing = await FindAccessibleListing(id);
+        if (listing == null) return NotFound();
+        variants ??= new List<ListingVariantDto>();
+
+        var error = ListingVariants.Validate(variants);
+        if (error != null) return BadRequest(error);
+
+        await _skuService.EnsureSkuAsync(listing);
+        var existing = await _context.ListingVariants.Where(v => v.ListingId == id).ToListAsync();
+        var keep = new HashSet<int>();
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var order = 0;
+        foreach (var dto in variants)
+        {
+            var entity = dto.Id > 0 ? existing.FirstOrDefault(e => e.Id == dto.Id) : null;
+            var sku = SkuService.Normalize(dto.Sku);
+            if (sku == null)
+            {
+                var n = 1;
+                do { sku = $"{listing.Sku}-V{n++}"; } while (used.Contains(sku) || await VariantSkuTakenAsync(sku, id));
+            }
+            else if (used.Contains(sku) || await VariantSkuTakenAsync(sku, id))
+            {
+                return BadRequest($"SKU '{sku}' is already used.");
+            }
+            used.Add(sku);
+
+            if (entity == null)
+            {
+                entity = new ListingVariant { ListingId = id };
+                _context.ListingVariants.Add(entity);
+            }
+            else if (entity.Sku != sku) entity.OfferId = null; // a different SKU is a different offer
+            entity.Sku = sku;
+            entity.SortOrder = order++;
+            entity.OptionsJson = JsonSerializer.Serialize(dto.Options.ToDictionary(o => o.Key.Trim(), o => o.Value.Trim()));
+            entity.Price = dto.Price;
+            entity.Quantity = dto.Quantity;
+            entity.ImageUrl = string.IsNullOrWhiteSpace(dto.ImageUrl) ? null : dto.ImageUrl;
+            entity.SourcePrice = dto.SourcePrice;
+            entity.SupplierProductId = dto.SupplierProductId;
+            if (entity.Id > 0) keep.Add(entity.Id);
+        }
+        _context.ListingVariants.RemoveRange(existing.Where(e => !keep.Contains(e.Id)));
+        await _context.SaveChangesAsync();
+        return Ok(await ListingVariants.LoadAsync(_context, id));
     }
 
     /// <summary>
@@ -202,7 +259,9 @@ public class ListingsController : ControllerBase
         listing.Title = product.Title;
         listing.Description = product.Description ?? string.Empty;
         listing.Brand = string.IsNullOrWhiteSpace(product.Brand) ? listing.Brand : product.Brand;
-        listing.Price = product.SuggestedPrice ?? product.SupplierPrice ?? listing.Price;
+        var productSupplier = (await new SupplierCatalogService(_context).GetAllAsync())
+            .FirstOrDefault(s => s.Code.Equals(product.Supplier, StringComparison.OrdinalIgnoreCase));
+        listing.Price = SuggestedPricing.For(product, productSupplier).Price ?? product.SupplierPrice ?? listing.Price;
         listing.ImageUrlsJson = JsonSerializer.Serialize(imageUrls);
         listing.SourceUrl = product.ProductUrl;
         listing.SourcePrice = product.SupplierPrice;
@@ -411,6 +470,7 @@ public class ListingsController : ControllerBase
                 }
                 else
                 {
+                    _context.ListingVariants.RemoveRange(_context.ListingVariants.Where(v => v.ListingId == l.Id));
                     _context.Listings.Remove(l);
                     deleted++;
                 }
@@ -498,6 +558,11 @@ public class ListingsController : ControllerBase
         if (sourceUrl.Contains("safelincs.co.uk", StringComparison.OrdinalIgnoreCase))
         {
             return "safelincs";
+        }
+
+        if (sourceUrl.Contains("godropship.co.uk", StringComparison.OrdinalIgnoreCase))
+        {
+            return "godropship";
         }
 
         return "unknown";

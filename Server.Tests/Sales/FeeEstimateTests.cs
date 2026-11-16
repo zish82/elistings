@@ -137,7 +137,7 @@ public class FeeEstimateTests
         using var ctx = TestHelpers.NewContext();
         TestHelpers.AddSupplier(ctx); // DropShipMall, prices ex VAT
         ctx.SupplierDeliveryOptions.Add(new SupplierDeliveryOption { SupplierId = ctx.Suppliers.Single().Id, Name = "Standard", Cost = 4m, IsDefault = true, IsActive = true });
-        ctx.SupplierProducts.Add(new SupplierProduct { Supplier = "DropShipMall", Title = "Vase", SupplierPrice = 10m, SuggestedPrice = 14.99m });
+        ctx.SupplierProducts.Add(new SupplierProduct { Supplier = "DropShipMall", Title = "Vase", SupplierPrice = 10m }); // suggested: 10 + VAT = 12, +20% = 14.40 → 14.99
         ctx.SaveChanges();
         var catalog = new SupplierCatalogService(ctx);
         var controller = new SupplierProductsController(ctx, TestHelpers.User(), new Mock<IFeedProductSyncService>().Object,

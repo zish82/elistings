@@ -1,0 +1,155 @@
+@using Shared
+@using Client.Services
+@inject ListingService ListingService
+
+<div class="border rounded p-3 mb-3 bg-light">
+    <h6 class="mb-1">Variations <span class="badge bg-warning text-dark align-middle small">trial</span></h6>
+    <p class="small text-muted mb-3">
+        Sell several options (e.g. sizes) in one listing. Each has its own price and quantity; title, pictures, description and category are shared.
+        Variations are saved with their own button. Leave empty for a normal single listing. Trial limits: one account only, no supplier stock sync per variation.
+    </p>
+
+    @if (!loaded)
+    {
+        <div class="text-muted small">Loading...</div>
+    }
+    else
+    {
+        <div class="row g-2 mb-2">
+            <div class="col-md-4">
+                <label class="form-label small mb-0">What varies? (e.g. Size, Colour)</label>
+                <input class="form-control form-control-sm" @bind="optionName" placeholder="Size" />
+            </div>
+        </div>
+        @if (rows.Count > 0)
+        {
+            <table class="table table-sm align-middle">
+                <thead><tr><th>Value</th><th style="width:130px">Price (£)</th><th style="width:110px">Quantity</th><th>SKU</th><th></th><th></th></tr></thead>
+                <tbody>
+                @foreach (var r in rows)
+                {
+                    <tr class="@(ReferenceEquals(r, Selected) ? "table-primary" : "")">
+                        <td><input class="form-control form-control-sm" @bind="r.Value" @bind:after="NotifyRows" placeholder="e.g. 50 LEDs" /></td>
+                        <td><input type="number" step="0.01" class="form-control form-control-sm" @bind="r.Price" @bind:after="NotifyRows" /></td>
+                        <td><input type="number" class="form-control form-control-sm" @bind="r.Quantity" /></td>
+                        <td class="small text-muted">@(string.IsNullOrEmpty(r.Sku) ? "(generated on save)" : r.Sku)</td>
+                        <td class="text-nowrap">
+                            @if (ReferenceEquals(r, Selected))
+                            {
+                                <button type="button" class="btn btn-sm btn-link p-0 fw-semibold" @onclick="() => Select(null)" title="Back to the listing's own price">Showing price &amp; delivery ✓</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn btn-sm btn-link p-0" @onclick="() => Select(r)">See price &amp; delivery</button>
+                            }
+                        </td>
+                        <td><button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => Remove(r)">Remove</button></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddRow">Add variation</button>
+        <button type="button" class="btn btn-sm btn-primary ms-2" @onclick="Save" disabled="@saving">@(saving ? "Saving..." : "Save variations")</button>
+        @if (!string.IsNullOrEmpty(message))
+        {
+            <span class="ms-3 small @(isError ? "text-danger" : "text-success")">@message</span>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int ListingId { get; set; }
+    [Parameter] public decimal DefaultPrice { get; set; }
+    [Parameter] public int DefaultQuantity { get; set; } = 1;
+    /// <summary>The variation shown in the page's Price &amp; Delivery section (null = the listing's own price).</summary>
+    [Parameter] public Row? Selected { get; set; }
+    [Parameter] public EventCallback<Row?> SelectedChanged { get; set; }
+    /// <summary>Raised whenever the set of rows changes (load, add, remove, save).</summary>
+    [Parameter] public EventCallback<IReadOnlyList<Row>> RowsChanged { get; set; }
+
+    public class Row
+    {
+        public int Id { get; set; }
+        public string? Sku { get; set; }
+        public string Value { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+        public int Quantity { get; set; } = 1;
+        public string? ImageUrl { get; set; }
+        public decimal? SourcePrice { get; set; }
+        public int? SupplierProductId { get; set; }
+    }
+
+    private readonly List<Row> rows = new();
+    private string optionName = "Size";
+    private bool loaded, saving, isError;
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var listing = await ListingService.GetListingAsync(ListingId);
+            foreach (var v in listing.Variants)
+            {
+                if (v.Options.Count > 0) optionName = v.Options.Keys.First();
+                rows.Add(new Row
+                {
+                    Id = v.Id, Sku = v.Sku, Value = v.Options.Values.FirstOrDefault() ?? string.Empty, Price = v.Price, Quantity = v.Quantity,
+                    ImageUrl = v.ImageUrl, SourcePrice = v.SourcePrice, SupplierProductId = v.SupplierProductId
+                });
+            }
+        }
+        catch (Exception ex) { message = ex.Message; isError = true; }
+        loaded = true;
+        await RowsChanged.InvokeAsync(rows);
+    }
+
+    private async Task AddRow()
+    {
+        rows.Add(new Row { Price = rows.LastOrDefault()?.Price ?? DefaultPrice, Quantity = rows.LastOrDefault()?.Quantity ?? DefaultQuantity });
+        await RowsChanged.InvokeAsync(rows);
+    }
+
+    private async Task Remove(Row r)
+    {
+        rows.Remove(r);
+        if (ReferenceEquals(r, Selected)) await Select(null);
+        await RowsChanged.InvokeAsync(rows);
+    }
+
+    // Lets the page refresh the price/profit it shows for the selected variation.
+    private Task NotifyRows() => RowsChanged.InvokeAsync(rows);
+
+    private async Task Select(Row? r)
+    {
+        Selected = r;
+        await SelectedChanged.InvokeAsync(r);
+    }
+
+    private async Task Save()
+    {
+        saving = true; message = null;
+        try
+        {
+            var name = string.IsNullOrWhiteSpace(optionName) ? "Size" : optionName.Trim();
+            var dtos = rows.Select(r => new ListingVariantDto
+            {
+                Id = r.Id, Sku = r.Sku, Options = new Dictionary<string, string> { [name] = r.Value ?? string.Empty },
+                Price = r.Price, Quantity = r.Quantity, ImageUrl = r.ImageUrl, SourcePrice = r.SourcePrice, SupplierProductId = r.SupplierProductId
+            }).ToList();
+            var saved = await ListingService.SaveVariantsAsync(ListingId, dtos);
+            var selectedIndex = Selected == null ? -1 : rows.IndexOf(Selected);
+            rows.Clear();
+            foreach (var v in saved)
+                rows.Add(new Row { Id = v.Id, Sku = v.Sku, Value = v.Options.Values.FirstOrDefault() ?? string.Empty, Price = v.Price, Quantity = v.Quantity, ImageUrl = v.ImageUrl, SourcePrice = v.SourcePrice, SupplierProductId = v.SupplierProductId });
+            // Keep the same variation selected (rows are rebuilt from the saved copies).
+            await Select(selectedIndex >= 0 && selectedIndex < rows.Count ? rows[selectedIndex] : null);
+            await RowsChanged.InvokeAsync(rows);
+            message = saved.Count == 0 ? "Variations removed." : $"Saved {saved.Count} variations.";
+            isError = false;
+        }
+        catch (Exception ex) { message = ex.Message; isError = true; }
+        saving = false;
+    }
+}

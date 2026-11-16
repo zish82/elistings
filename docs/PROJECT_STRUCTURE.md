@@ -32,7 +32,7 @@ Server/                         ASP.NET Core API + hosts the Client
     Listings/                   publish helper, mapping, SKUs, product enrichment
     Scraping/                   product page scrapers, per-host request throttle
     Suppliers/                  shared supplier logic (access, catalogue, price lists, stock, tags)
-      DropShipMall/  Eden/  Safelincs/   one folder per supplier
+      DropShipMall/  Eden/  Godropship/  Safelincs/   one folder per supplier
     Users/                      current user, password hashing
 
 Shared/                         DTOs used by both Client and Server (namespace Shared)

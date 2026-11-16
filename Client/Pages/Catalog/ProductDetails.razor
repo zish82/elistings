@@ -84,7 +84,26 @@ else
                 </dd>
 
                 <dt class="col-sm-3">Suggested Price</dt>
-                <dd class="col-sm-9">@(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2}" : "-")</dd>
+                <dd class="col-sm-9">
+                    @(product.SuggestedPrice.HasValue ? $"£{product.SuggestedPrice.Value:F2} inc VAT" : "-")
+                    @if (product.SuggestedPrice.HasValue)
+                    {
+                        <span class="text-muted ms-1" style="cursor:help" title="@product.SuggestedPriceInfo"><i class="bi bi-info-circle"></i></span>
+                    }
+                </dd>
+
+                <dt class="col-sm-3">Delivery</dt>
+                <dd class="col-sm-9">
+                    @if (product.DeliveryIncVat.HasValue)
+                    {
+                        <span>£@product.DeliveryIncVat.Value.ToString("F2") inc VAT</span>
+                        <span class="text-muted ms-1" style="cursor:help" title="@product.DeliverySource"><i class="bi bi-info-circle"></i></span>
+                    }
+                    else
+                    {
+                        <span class="text-muted">-</span>
+                    }
+                </dd>
 
                 <dt class="col-sm-3">Last Updated</dt>
                 <dd class="col-sm-9">@product.UpdatedAtUtc.ToLocalTime().ToString("g")</dd>
@@ -109,6 +128,31 @@ else
             }
         </div>
     </div>
+
+    @if (product.VariationListing != null)
+    {
+        <div class="alert alert-info">
+            <div>This product is one variation of the listing
+                <a href="/edit-listing/@product.VariationListing.ListingId"><strong>@product.VariationListing.Title</strong></a>
+                (@product.VariationListing.Status) together with:</div>
+            <ul class="mb-0 mt-1">
+                @foreach (var v in product.VariationListing.Variations)
+                {
+                    <li>
+                        @if (v.SupplierProductId.HasValue && v.SupplierProductId != product.Id)
+                        {
+                            <a href="/products/@v.SupplierProductId.Value">@v.Options</a>
+                        }
+                        else
+                        {
+                            <strong>@v.Options</strong> <span class="text-muted">(this product)</span>
+                        }
+                        <span class="text-muted">· £@v.Price.ToString("F2") · qty @v.Quantity · @v.Sku</span>
+                    </li>
+                }
+            </ul>
+        </div>
+    }
 
     <div class="d-flex gap-2">
         <button class="btn btn-success" @onclick="() => Add(false)" disabled="@isBusy">Add to my listings</button>
